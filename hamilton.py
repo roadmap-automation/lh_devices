@@ -82,14 +82,9 @@ class HamiltonBase:
         Wraps self.serial.query with a trimmed response
         """
 
-        return self.trim_response(await self.serial.query(self.address, cmd))
-
-    def trim_response(self, response: str) -> str:
-
-        # cut off initial "/0" and ending "chr(3) chr(13) chr(10)"
-        response = response[2:-3]
-
-        return response
+        response = await self.serial.query(self.address, cmd)
+        
+        return response[2:-3]
 
     async def send_until_idle(self, cmd: str) -> str:
         """
