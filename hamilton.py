@@ -130,5 +130,8 @@ class HamiltonBase:
             case _ :
                 error = f'Error code: {c}'
 
+        if error:
+            self.idle = True
+
         return error
 
