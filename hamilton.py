@@ -79,19 +79,23 @@ class HamiltonSerial(aioserial.AioSerial):
     async def query(self, address: str, cmd: str) -> str:
         """User interface for async read/write query operations"""
 
+        # set up return value container
         return_value = {'value': None}
         async def get_value(rv):
             rv['value'] = await self.read_queue.get()
 
+        # write out message
         trial = 0
         data = HamiltonMessage(address, cmd, self.sequence_number)
         await self.write_queue.put(data)
 
+        # wait for results to come in, with timeout
         while trial < self.max_retries:
             try:
-                await asyncio.wait_for(get_value(return_value), timeout=self.delay*3)
-                trial = self.max_retries
+                await asyncio.wait_for(get_value(return_value), timeout=self.delay)
+                break
             except asyncio.TimeoutError:
+                # if not successful try again up to max_retries, changing repeat bit
                 trial += 1
                 data.repeat = '1'
                 print(f'Trial {trial}... {data}')
@@ -107,11 +111,20 @@ class HamiltonSerial(aioserial.AioSerial):
         Async reader. Should be started as part of asyncio loop
         """
         while self.is_open:
+            # read data
             data: bytes = await self.read_until_async(chr(3).encode())
+
+            # throw away first byte (always ASCII 255)
             data = data[1:].decode()
+
+            # calculate checksum
             data_chksum = ord(checksum(data))
+
+            # read checksum byte
             chksum: bytes = await self.read_async(1)
             recv_chksum = ord(chksum.decode())
+
+            # compare checksums; if they match, put in response queue
             if recv_chksum == data_chksum:
                 await self.read_queue.put(data)
             else:
@@ -162,7 +175,10 @@ class HamiltonBase:
 
         response = await self.serial.query(self.address_code, cmd)
         
-        return response[2:-1]
+        if response:
+            return response[2:-1]
+        else:
+            return None
 
     async def send_until_idle(self, cmd: str) -> str:
         """
