@@ -5,7 +5,7 @@ from typing import List, Union
 class HamiltonSerial(aioserial.AioSerial):
     """
     Asynchronous serial port interactor for Hamilton devices. Implements an async read/write sequence using Queues,
-    with a Hamilton-recommended 100 ms delay between IO operations on different devices
+    with a delay (Hamilton-recommended 100 ms) between IO operations on different devices
     """
 
     def __init__(self, **kwargs) -> None:
@@ -17,15 +17,18 @@ class HamiltonSerial(aioserial.AioSerial):
                                                 self.writer_async(),
                                                 self.query_timer(),
                                                 ]
+        
+        # delay time between I/O operations (Hamilton default = 100 ms)
+        self.delay = 0.1
 
     async def query_timer(self):
         """
-        Waits for write_started event to be triggered, then waits 100 ms and allows I/O again.
+        Waits for write_started event to be triggered, then waits a delay and allows I/O again.
         """
         while True:
             async with self.ioblocked:
                 await self.ioblocked.wait()
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(self.delay)
                 self.ioblocked.notify()
     
     async def query(self, address:int, cmd: str) -> str:
@@ -47,7 +50,7 @@ class HamiltonSerial(aioserial.AioSerial):
         """
         Async writer. Should be started as part of asyncio loop. Monitors the write_queue.
         Sends data to serial connection queues. Uses ioblocked Condition to
-        ensure write operations are separated by at least 100 ms
+        ensure write operations are separated by a minimum delay time
         """
 
         while self.is_open:
