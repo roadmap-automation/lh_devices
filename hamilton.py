@@ -69,23 +69,30 @@ class HamiltonSerial(aioserial.AioSerial):
 
 class HamiltonBase:
     """Base class for Hamilton multi-valve positioner (MVP) and syringe pump (PSD) devices.
+
+        Requires:
+        serial_instance -- HamiltonSerial instance for communication
+        address -- single character string from '0' to 'F' corresponding to the physical
+                    address switch position on the device. Automatically converted to the 
+                    correct address code.
      
        """
 
-    def __init__(self, serial_instance: HamiltonSerial, address: int) -> None:
+    def __init__(self, serial_instance: HamiltonSerial, address: str) -> None:
         
-        self.address = address
         self.serial = serial_instance
         self.idle = True
         self.busy_code = '@'
         self.idle_code = '`'
+        self.address = address
+        self.address_code = chr(int(address, base=16) + int('31', base=16))
 
     async def query(self, cmd: str) -> str:
         """
         Wraps self.serial.query with a trimmed response
         """
 
-        response = await self.serial.query(self.address, cmd)
+        response = await self.serial.query(self.address_code, cmd)
         
         return response[2:-3]
 

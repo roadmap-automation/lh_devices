@@ -27,7 +27,7 @@ class AsyncKeyboard:
 async def main():
     
     ser = HamiltonSerial(port='COM5', baudrate=9600)
-    mvp = HamiltonBase(ser, 1)
+    mvp = HamiltonBase(ser, '0')
     ak = AsyncKeyboard(ser, mvp)
 
     tasks = ser.async_tasks + ak.async_tasks
