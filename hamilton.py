@@ -1,6 +1,49 @@
 import asyncio
 import aioserial
+from dataclasses import dataclass
 from typing import List, Union
+
+def printcodes(p: str) -> None:
+    print(p, [hex(ord(b)) for b in p])
+
+def checksum(msg: str) -> str:
+    """
+    Calculates checksum of message as the character representing the bitwise xor operation over
+    all bytes in the message.
+    """
+    msg_binary = ''.join(format(ord(b), '08b') for b in msg)
+    chksum_binary = ''.join(str(sum(int(bt) for bt in msg_binary[i::8]) % 2) for i in range(8))
+
+    return chr(int(chksum_binary, base=2))
+
+@dataclass
+class HamiltonMessage:
+    """
+    Message for Hamilton communication protocols
+    """
+
+    address: str
+    cmd: str
+    sequence_number: int
+    repeat: str = '0'
+
+    def standard_encode(self):
+        """
+        Encodes message into Hamilton message format for use with standard communication protocol
+        """
+
+        sequence_byte = chr(int('0011' + self.repeat + format(self.sequence_number, '03b'), base=2))
+        data = chr(2) + self.address + sequence_byte + self.cmd + chr(3)
+        data += checksum(data)
+        #printcodes(data)
+        return data.encode()
+    
+    def terminal_encode(self):
+        """
+        Encodes message into Hamilton message format for use with terminal communication protocol
+        """
+        
+        return f'/{self.address}{self.cmd}\r'.encode()
 
 class HamiltonSerial(aioserial.AioSerial):
     """
@@ -20,6 +63,8 @@ class HamiltonSerial(aioserial.AioSerial):
         
         # delay time between I/O operations (Hamilton default = 100 ms)
         self.delay = 0.1
+        self.max_retries = 3
+        self.sequence_number = 1
 
     async def query_timer(self):
         """
@@ -31,20 +76,46 @@ class HamiltonSerial(aioserial.AioSerial):
                 await asyncio.sleep(self.delay)
                 self.ioblocked.notify()
     
-    async def query(self, address:int, cmd: str) -> str:
+    async def query(self, address: str, cmd: str) -> str:
         """User interface for async read/write query operations"""
 
-        data = {'address': address, 'cmd': cmd}
+        return_value = {'value': None}
+        async def get_value(rv):
+            rv['value'] = await self.read_queue.get()
+
+        trial = 0
+        data = HamiltonMessage(address, cmd, self.sequence_number)
         await self.write_queue.put(data)
-        return await self.read_queue.get()
+
+        while trial < self.max_retries:
+            try:
+                await asyncio.wait_for(get_value(return_value), timeout=self.delay*3)
+                trial = self.max_retries
+            except asyncio.TimeoutError:
+                trial += 1
+                data.repeat = '1'
+                print(f'Trial {trial}... {data}')
+                await self.write_queue.put(data)
+        
+        # increment sequence number, cycling between 1 and 7
+        self.sequence_number = max(1, (self.sequence_number + 1) % 8) 
+        
+        return return_value['value']
     
     async def reader_async(self) -> None:
         """
         Async reader. Should be started as part of asyncio loop
         """
         while self.is_open:
-            data: bytes = await self.read_until_async((chr(3) + chr(13) + chr(10)).encode())
-            await self.read_queue.put(data.decode())
+            data: bytes = await self.read_until_async(chr(3).encode())
+            data = data[1:].decode()
+            data_chksum = ord(checksum(data))
+            chksum: bytes = await self.read_async(1)
+            recv_chksum = ord(chksum.decode())
+            if recv_chksum == data_chksum:
+                await self.read_queue.put(data)
+            else:
+                print(f'Received checksum {recv_chksum}, calculated checksum {data_chksum}, for data {data}')
 
     async def writer_async(self) -> None:
         """
@@ -54,15 +125,12 @@ class HamiltonSerial(aioserial.AioSerial):
         """
 
         while self.is_open:
-            wdata = await self.write_queue.get()
-
-            # format data using address
-            data = f"/{wdata['address']}{wdata['cmd']}\r".encode()
+            wdata: HamiltonMessage = await self.write_queue.get()
 
             async with self.ioblocked:
 
                 # write data
-                await self.write_async(data)
+                await self.write_async(wdata.standard_encode())
 
                 # start query timer
                 self.ioblocked.notify()
@@ -94,7 +162,7 @@ class HamiltonBase:
 
         response = await self.serial.query(self.address_code, cmd)
         
-        return response[2:-3]
+        return response[2:-1]
 
     async def send_until_idle(self, cmd: str) -> str:
         """
