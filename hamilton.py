@@ -63,6 +63,7 @@ class HamiltonSerial(aioserial.AioSerial):
         
         # delay time between I/O operations (Hamilton default = 100 ms)
         self.delay = 0.1
+        self.wait_timeout = 1.0
         self.max_retries = 3
         self.sequence_number = 1
 
@@ -92,7 +93,7 @@ class HamiltonSerial(aioserial.AioSerial):
         # wait for results to come in, with timeout
         while trial < self.max_retries:
             try:
-                await asyncio.wait_for(get_value(return_value), timeout=self.delay)
+                await asyncio.wait_for(get_value(return_value), timeout=self.wait_timeout)
                 break
             except asyncio.TimeoutError:
                 # if not successful try again up to max_retries, changing repeat bit
@@ -113,6 +114,7 @@ class HamiltonSerial(aioserial.AioSerial):
         while self.is_open:
             # read data
             data: bytes = await self.read_until_async(chr(3).encode())
+            #printcodes(data.decode('latin-1'))
 
             # throw away first byte (always ASCII 255)
             data = data[1:].decode()
@@ -187,11 +189,19 @@ class HamiltonBase:
 
         self.idle = False
         response = await self.query(cmd)
-        error = self.parse_status_byte(response)
-        while (not self.idle) & (not error):
-            error = await self.update_status()
+        if response is not None:
 
-        return error
+            status_byte = response[0]
+            if len(response) > 1:
+                response = response[1:]
+
+            error = self.parse_status_byte(status_byte)
+            while (not self.idle) & (not error):
+                error = await self.update_status()
+
+            return response, error
+        else:
+            return None
 
     async def update_status(self) -> Union[str, None]:
         """
