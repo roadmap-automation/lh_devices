@@ -127,13 +127,13 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         stroke_length = self._stroke_length(volume)
         current_position = await self.get_syringe_position()
         max_position = self._full_stroke() / 2
-        print(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
+        #print(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
 
         if max_position < (stroke_length + current_position):
             print(f'Invalid syringe move from current position {current_position} with stroke length {stroke_length} and maximum position {max_position}')
         else:
             V = self._speed_code(flow_rate)
-            print(f'Speed: {V}')
+            #print(f'Speed: {V}')
 
             response, error = await self.run_until_idle(f'V{V}P{stroke_length}')
             if error:
@@ -148,7 +148,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         """
 
         stroke_length = self._stroke_length(volume)
-        print(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
+        #print(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
         current_position = await self.get_syringe_position()
 
         if (current_position - stroke_length) < 0:
