@@ -1,7 +1,8 @@
 import asyncio
 import aioserial
+import datetime
 from dataclasses import dataclass
-from typing import List, Union
+from typing import List, Union, Tuple
 
 def printcodes(p: str) -> None:
     print(p, [hex(ord(b)) for b in p])
@@ -35,6 +36,7 @@ class HamiltonMessage:
         sequence_byte = chr(int('0011' + self.repeat + format(self.sequence_number, '03b'), base=2))
         data = chr(2) + self.address + sequence_byte + self.cmd + chr(3)
         data += checksum(data)
+        #print(data)
         #printcodes(data)
         return data.encode()
     
@@ -73,8 +75,11 @@ class HamiltonSerial(aioserial.AioSerial):
         """
         while True:
             async with self.ioblocked:
+                #print(datetime.datetime.now().isoformat() + ': Waiting on ioblocked')
                 await self.ioblocked.wait()
+                #print(datetime.datetime.now().isoformat() + ': Sleeping on ioblocked')
                 await asyncio.sleep(self.delay)
+                #print(datetime.datetime.now().isoformat() + ': query_timer notifying on ioblocked')
                 self.ioblocked.notify()
     
     async def query(self, address: str, cmd: str) -> str:
@@ -88,6 +93,7 @@ class HamiltonSerial(aioserial.AioSerial):
         # write out message
         trial = 0
         data = HamiltonMessage(address, cmd, self.sequence_number)
+        #print(datetime.datetime.now().isoformat() + ': Writing to write queue')
         await self.write_queue.put(data)
 
         # wait for results to come in, with timeout
@@ -140,14 +146,19 @@ class HamiltonSerial(aioserial.AioSerial):
         """
 
         while self.is_open:
+            #print(datetime.datetime.now().isoformat() + ': writer_async waiting for write data')
             wdata: HamiltonMessage = await self.write_queue.get()
 
             async with self.ioblocked:
 
                 # write data
+                #print(wdata)
+                #printcodes(wdata.standard_encode().decode())
+                #print(datetime.datetime.now().isoformat() + ': writer_async writing')
                 await self.write_async(wdata.standard_encode())
 
                 # start query timer
+                #print(datetime.datetime.now().isoformat() + ': writer_async notify ioblocked')
                 self.ioblocked.notify()
 
 class HamiltonBase:
@@ -182,13 +193,13 @@ class HamiltonBase:
         else:
             return None
 
-    async def send_until_idle(self, cmd: str) -> str:
+    async def run_until_idle(self, cmd: str) -> Tuple[str, str]:
         """
         Sends from serial connection and waits until idle
         """
 
         self.idle = False
-        response = await self.query(cmd)
+        response = await self.query(cmd + 'R')
         if response is not None:
 
             status_byte = response[0]
@@ -201,7 +212,7 @@ class HamiltonBase:
 
             return response, error
         else:
-            return None
+            return None, None
 
     async def update_status(self) -> Union[str, None]:
         """
