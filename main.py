@@ -3,7 +3,7 @@ import asyncio
 import aioserial
 import aioconsole
 from hamilton import HamiltonSerial, HamiltonBase, printcodes
-from hamiltonvalve import LoopFlowValve, DistributionValve, HamiltonValvePositioner
+from hamiltonvalve import HamiltonSerial, HamiltonValvePositioner, LoopFlowValve
 
 class AsyncKeyboard:
 
@@ -11,7 +11,10 @@ class AsyncKeyboard:
         self.serial = serial_instance
         self.console_queue: asyncio.Queue = asyncio.Queue()
         self.dev = test_device
-        self.async_tasks = [self.get_input(), self.send_mvp_command()]
+        
+    async def initialize(self) -> None:
+
+        await asyncio.gather(self.get_input(), self.send_mvp_command())
 
     async def get_input(self) -> None:
         while True:
@@ -42,9 +45,7 @@ async def main():
     #await mvp.initialize()
     ak = AsyncKeyboard(ser, mvp)
 
-    tasks = ser.async_tasks + [mvp.initialize()] + ak.async_tasks
-
-    await asyncio.gather(*tasks)
+    await asyncio.gather(ser.initialize(), mvp.initialize(), ak.initialize())
 
 if __name__ == '__main__':
     asyncio.run(main(), debug=True)

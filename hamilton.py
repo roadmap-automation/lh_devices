@@ -58,16 +58,16 @@ class HamiltonSerial(aioserial.AioSerial):
         self.read_queue: asyncio.Queue = asyncio.Queue()
         self.write_queue: asyncio.Queue = asyncio.Queue()
         self.ioblocked: asyncio.Condition = asyncio.Condition()
-        self.async_tasks: List[asyncio.Task] = [self.reader_async(),
-                                                self.writer_async(),
-                                                self.query_timer(),
-                                                ]
         
         # delay time between I/O operations (Hamilton default = 100 ms)
         self.delay = 0.1
         self.wait_timeout = 1.0
         self.max_retries = 3
         self.sequence_number = 1
+
+    async def initialize(self) -> None:
+
+        await asyncio.gather(self.reader_async(), self.writer_async(), self.query_timer())
 
     async def query_timer(self):
         """
