@@ -96,6 +96,21 @@ class LoopFlowValve(ValveBase):
         
         self._portmap = dict(kv)
 
+class TValve(ValveBase):
+    """T Valve (each position connects two adjacent inlets / outlets)
+
+    """
+
+    def __init__(self, n_ports: int, position: int = 1, ports: List[Port] = []) -> None:
+        super().__init__(n_ports, n_ports, position, ports)
+
+    def update_map(self):
+        """Updates the port map.
+        """
+        super().update_map()
+        self._portmap[self.position - 1] = self.position % self.n_ports
+        self._portmap[self.position % self.n_ports] = self.position - 1
+
 class HamiltonValvePositioner(HamiltonBase):
     """Hamilton MVP4 device
     """
@@ -115,7 +130,7 @@ class HamiltonValvePositioner(HamiltonBase):
         else:
             print(f'Initialization error {error}')
 
-    async def move(self, position: int) -> None:
+    async def move_valve(self, position: int) -> None:
         """Moves to a particular valve position. See specific valve documentation.
 
         Args:
