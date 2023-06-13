@@ -1,8 +1,9 @@
 from typing import List
 
 from connections import Port, Node
+from components import ComponentBase
 
-class ValveBase:
+class ValveBase(ComponentBase):
     """
     Valve base representation.
     
@@ -26,7 +27,7 @@ class ValveBase:
                 raise ValueError(f'{len(ports)} ports specified but {n_ports} required')
             self.ports = ports
 
-        self.nodes = [Node(port) for port in self.ports]
+        self.generate_nodes()
 
         self.position = None
         self.move(position)
