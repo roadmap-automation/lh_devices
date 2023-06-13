@@ -2,9 +2,9 @@ import time
 import asyncio
 import aioserial
 import aioconsole
-from hamilton import HamiltonSerial, HamiltonBase, printcodes
-from hamiltonvalve import HamiltonSerial, HamiltonValvePositioner, LoopFlowValve
-from syringepump import HamiltonSyringePump, SyringeYValve
+from HamiltonComm import HamiltonSerial
+from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
+from valve import LoopFlowValve, SyringeYValve
 
 class AsyncKeyboard:
 

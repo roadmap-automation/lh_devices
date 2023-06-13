@@ -1,8 +1,6 @@
 import asyncio
 import aioserial
-import datetime
 from dataclasses import dataclass
-from typing import List, Union, Tuple
 
 def printcodes(p: str) -> None:
     print(p, [hex(ord(b)) for b in p])
@@ -160,88 +158,3 @@ class HamiltonSerial(aioserial.AioSerial):
                 # start query timer
                 #print(datetime.datetime.now().isoformat() + ': writer_async notify ioblocked')
                 self.ioblocked.notify()
-
-class HamiltonBase:
-    """Base class for Hamilton multi-valve positioner (MVP) and syringe pump (PSD) devices.
-
-        Requires:
-        serial_instance -- HamiltonSerial instance for communication
-        address -- single character string from '0' to 'F' corresponding to the physical
-                    address switch position on the device. Automatically converted to the 
-                    correct address code.
-     
-       """
-
-    def __init__(self, serial_instance: HamiltonSerial, address: str) -> None:
-        
-        self.serial = serial_instance
-        self.idle = True
-        self.busy_code = '@'
-        self.idle_code = '`'
-        self.address = address
-        self.address_code = chr(int(address, base=16) + int('31', base=16))
-
-    async def query(self, cmd: str) -> str:
-        """
-        Wraps self.serial.query with a trimmed response
-        """
-
-        response = await self.serial.query(self.address_code, cmd)
-        
-        if response:
-            return response[2:-1]
-        else:
-            return None
-
-    async def run_until_idle(self, cmd: str) -> Tuple[str, str]:
-        """
-        Sends from serial connection and waits until idle
-        """
-
-        self.idle = False
-        response = await self.query(cmd + 'R')
-        if response is not None:
-
-            status_byte = response[0]
-            if len(response) > 1:
-                response = response[1:]
-
-            error = self.parse_status_byte(status_byte)
-            while (not self.idle) & (not error):
-                error = await self.update_status()
-
-            return response, error
-        else:
-            return None, None
-
-    async def update_status(self) -> Union[str, None]:
-        """
-        Polls the status of the device using 'Q'
-        """
-
-        response = await self.query('Q')
-        error = self.parse_status_byte(response)
-
-        return error
-
-    def parse_status_byte(self, c: str) -> Union[str, None]:
-        """
-        Parses status byte
-        """
-
-        error = None
-        match c:
-            case self.busy_code:
-                self.idle = False
-            case self.idle_code:
-                self.idle = True
-            case 'b':
-                error = 'Bad command'
-            case _ :
-                error = f'Error code: {c}'
-
-        if error:
-            self.idle = True
-
-        return error
-

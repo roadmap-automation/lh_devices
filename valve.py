@@ -1,11 +1,6 @@
 from typing import List
 
-from hamilton import HamiltonBase, HamiltonSerial
-
-class Port:
-    """
-    Representation of a valve port
-    """
+from connections import Port, Node
 
 class ValveBase:
     """
@@ -31,6 +26,8 @@ class ValveBase:
                 raise ValueError(f'{len(ports)} ports specified but {n_ports} required')
             self.ports = ports
 
+        self.nodes = [Node(port) for port in self.ports]
+
         self.position = None
         self.move(position)
 
@@ -43,9 +40,25 @@ class ValveBase:
 
         return self.ports[port_idx] if port_idx is not None else None
 
-    def update_map(self):
+    def clear_connections(self) -> None:
+        """Clears internal connections
+        """
+
+        for node in self.nodes:
+            for prt in node.connections.keys():
+                if prt in self.ports:
+                    node.disconnect(prt)
+
+    def update_connections(self) -> None:
+        """Updates internal connections
+        """
+
+        for k, v in self._portmap.items():
+            self.nodes[k].connect(self.nodes[v].base_port)
+
+    def update_map(self) -> None:
         
-        self._portmap = {i: None for i in range(self.n_ports)}
+        self._portmap: dict[int, int] = {}
 
     def move(self, position) -> None:
         if position not in range(1, self.n_positions + 1):
@@ -53,6 +66,8 @@ class ValveBase:
         
         self.position = position
         self.update_map()
+        self.clear_connections()
+        self.update_connections()
 
 class DistributionValve(ValveBase):
     """Distribution valve representation. "Position" corresponds to the port number of the outlet port.
@@ -68,8 +83,9 @@ class DistributionValve(ValveBase):
     def update_map(self):
         """Updates the port map.
         """
-        self._portmap = {i: (0 if i == self.position else None) for i in range(1, self.n_ports)}
+        self._portmap = {}
         self._portmap[0] = self.position
+        self._portmap[self.position] = 0
 
 class LoopFlowValve(ValveBase):
     """Loop flow valve representation, with n_ports and 2 positions. Port 0 is the bottom port, 
@@ -107,43 +123,14 @@ class TValve(ValveBase):
     def update_map(self):
         """Updates the port map.
         """
-        super().update_map()
+        self._portmap = {}
         self._portmap[self.position - 1] = self.position % self.n_ports
         self._portmap[self.position % self.n_ports] = self.position - 1
 
-class HamiltonValvePositioner(HamiltonBase):
-    """Hamilton MVP4 device
+class SyringeYValve(TValve):
+    """Y valve to sit atop syringe pump. Port 0 is down, and ports are number clockwise.
+        Implementation is that of a 3-port T valve.
     """
 
-    def __init__(self, serial_instance: HamiltonSerial, address: str, valve: ValveBase) -> None:
-        super().__init__(serial_instance, address)
-
-        self.valve = valve
-        self.initialized = False
-
-    async def initialize(self) -> None:
-
-        # TODO: might be Y!!! Depends on whether left or right is facing front or back.
-        response, error = await self.run_until_idle('Z')
-        if not error:
-            self.initialized = True
-        else:
-            print(f'Initialization error {error}')
-
-    async def move_valve(self, position: int) -> None:
-        """Moves to a particular valve position. See specific valve documentation.
-
-        Args:
-            position (int): position to move the valve to
-        """
-
-        initial_value = self.valve.position
-        
-        # this checks for errors
-        self.valve.move(position)
-
-        response, error = await self.run_until_idle(f'I{position}')
-        if error:
-            print(f'Move error {error}')
-            self.valve.position = initial_value
-
+    def __init__(self, position: int = 1, ports: List[Port] = []) -> None:
+        super().__init__(3, position, ports)

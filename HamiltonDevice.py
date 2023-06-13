@@ -1,16 +1,139 @@
-import asyncio
-from typing import List
+from typing import Tuple, List
+from HamiltonComm import HamiltonSerial
+from valve import ValveBase
+from connections import Node
 
-from hamilton import HamiltonSerial
-from hamiltonvalve import Port, TValve, HamiltonValvePositioner, ValveBase
+class HamiltonBase:
+    """Base class for Hamilton multi-valve positioner (MVP) and syringe pump (PSD) devices.
 
-class SyringeYValve(TValve):
-    """Y valve to sit atop syringe pump. Port 0 is down, and ports are number clockwise.
-        Implementation is that of a 3-port T valve.
+        Requires:
+        serial_instance -- HamiltonSerial instance for communication
+        address -- single character string from '0' to 'F' corresponding to the physical
+                    address switch position on the device. Automatically converted to the 
+                    correct address code.
+     
+       """
+
+    def __init__(self, serial_instance: HamiltonSerial, address: str) -> None:
+        
+        self.serial = serial_instance
+        self.idle = True
+        self.busy_code = '@'
+        self.idle_code = '`'
+        self.address = address
+        self.address_code = chr(int(address, base=16) + int('31', base=16))
+
+    def get_nodes(self) -> List[Node]:
+
+        return []
+
+    async def initialize(self) -> None:
+        pass
+
+    async def query(self, cmd: str) -> str:
+        """
+        Wraps self.serial.query with a trimmed response
+        """
+
+        response = await self.serial.query(self.address_code, cmd)
+        
+        if response:
+            return response[2:-1]
+        else:
+            return None
+
+    async def run_until_idle(self, cmd: str) -> Tuple[str, str]:
+        """
+        Sends from serial connection and waits until idle
+        """
+
+        self.idle = False
+        response = await self.query(cmd + 'R')
+        if response is not None:
+
+            status_byte = response[0]
+            if len(response) > 1:
+                response = response[1:]
+
+            error = self.parse_status_byte(status_byte)
+            while (not self.idle) & (not error):
+                error = await self.update_status()
+
+            return response, error
+        else:
+            return None, None
+
+    async def update_status(self) -> str | None:
+        """
+        Polls the status of the device using 'Q'
+        """
+
+        response = await self.query('Q')
+        error = self.parse_status_byte(response)
+
+        return error
+
+    def parse_status_byte(self, c: str) -> str | None:
+        """
+        Parses status byte
+        """
+
+        error = None
+        match c:
+            case self.busy_code:
+                self.idle = False
+            case self.idle_code:
+                self.idle = True
+            case 'b':
+                error = 'Bad command'
+            case _ :
+                error = f'Error code: {c}'
+
+        if error:
+            self.idle = True
+
+        return error
+
+class HamiltonValvePositioner(HamiltonBase):
+    """Hamilton MVP4 device
     """
 
-    def __init__(self, position: int = 1, ports: List[Port] = []) -> None:
-        super().__init__(3, position, ports)
+    def __init__(self, serial_instance: HamiltonSerial, address: str, valve: ValveBase) -> None:
+        super().__init__(serial_instance, address)
+
+        self.valve = valve
+        self.initialized = False
+
+    def get_nodes(self) -> List[Node]:
+        
+        return self.valve.nodes
+
+    async def initialize(self) -> None:
+
+        # TODO: might be Y!!! Depends on whether left or right is facing front or back.
+        response, error = await self.run_until_idle('Z')
+        if not error:
+            self.initialized = True
+        else:
+            print(f'Initialization error {error}')
+
+    async def move_valve(self, position: int) -> None:
+        """Moves to a particular valve position. See specific valve documentation.
+
+        Args:
+            position (int): position to move the valve to
+        """
+
+        initial_value = self.valve.position
+        
+        # this checks for errors
+        self.valve.move(position)
+
+        response, error = await self.run_until_idle(f'I{position}')
+        if error:
+            print(f'Move error {error}')
+            self.valve.position = initial_value
+
 
 class HamiltonSyringePump(HamiltonValvePositioner):
     """Hamilton syringe pump device. Includes both a syringe motor and a built-in valve positioner.
