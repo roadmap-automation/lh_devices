@@ -1,5 +1,5 @@
 from typing import List
-from connections import Port, Node, connect_nodes
+from connections import Port, Node, connect_nodes, disconnect_nodes
 
 class ComponentBase:
     """Base class for fluid components
@@ -8,9 +8,9 @@ class ComponentBase:
     def __init__(self) -> None:
 
         self.ports: List[Port] = []
-        self.generate_nodes()
+        self._generate_nodes()
 
-    def generate_nodes(self) -> None:
+    def _generate_nodes(self) -> None:
 
         self.nodes = [Node(port) for port in self.ports]
 
@@ -22,11 +22,32 @@ class FlowCell(ComponentBase):
     """Representation of a unidirectional flow cell
     """
 
-    def __init__(self, volume=0.0) -> None:
+    def __init__(self, volume: float = 0.0) -> None:
         
         self.inlet_port = Port()
         self.outlet_port = Port()
         self.ports = [self.inlet_port, self.outlet_port]
         
-        self.generate_nodes()
+        self._generate_nodes()
+        self._volume = 0.0
+        self.set_volume(volume)
+
+    def set_volume(self, volume: float):
+        """Sets volume of flow cell
+
+        Args:
+            volume (float): volume of flow cell in uL
+        """
+
+        self._volume = volume
+        disconnect_nodes(*self.nodes)
         connect_nodes(*self.nodes, dead_volume=volume)
+
+    def get_volume(self):
+        """Gets volume of flow cell
+
+        Returns:
+            float: volume of flow cell in uL
+        """
+
+        return self._volume

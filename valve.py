@@ -27,7 +27,7 @@ class ValveBase(ComponentBase):
                 raise ValueError(f'{len(ports)} ports specified but {n_ports} required')
             self.ports = ports
 
-        self.generate_nodes()
+        self._generate_nodes()
 
         self.position = None
         self.move(position)
