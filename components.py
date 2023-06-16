@@ -5,8 +5,9 @@ class ComponentBase:
     """Base class for fluid components
     """
 
-    def __init__(self) -> None:
+    def __init__(self, name: str = '') -> None:
 
+        self.name = name
         self.ports: List[Port] = []
         self._generate_nodes()
 
@@ -22,10 +23,11 @@ class FlowCell(ComponentBase):
     """Representation of a unidirectional flow cell
     """
 
-    def __init__(self, volume: float = 0.0) -> None:
+    def __init__(self, volume: float = 0.0, name: str = '') -> None:
         
-        self.inlet_port = Port()
-        self.outlet_port = Port()
+        self.name = name
+        self.inlet_port = Port(name=f'{self.name}.inlet_port')
+        self.outlet_port = Port(name=f'{self.name}.outlet_port')
         self.ports = [self.inlet_port, self.outlet_port]
         
         self._generate_nodes()
@@ -41,7 +43,7 @@ class FlowCell(ComponentBase):
 
         self._volume = volume
         disconnect_nodes(*self.nodes)
-        connect_nodes(*self.nodes, dead_volume=volume)
+        connect_nodes(*self.nodes, dead_volume=volume, name=f'{self.name}.cell')
 
     def get_volume(self):
         """Gets volume of flow cell

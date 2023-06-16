@@ -1,5 +1,4 @@
 import math
-import asyncio
 from typing import List, Tuple, Dict
 
 class Port:
@@ -7,15 +6,19 @@ class Port:
     Representation of a valve port
     """
 
+    def __init__(self, name: str | None = None):
+        self.name = name
+
 class Connection:
     """Representation of a connection between two Ports
 
         Contains dead volume information (in uL)
     """
 
-    def __init__(self, dead_volume: float = 0) -> None:
+    def __init__(self, dead_volume: float = 0, name: str | None = None) -> None:
         
         # dead volume in uL
+        self.name = name
         self.dead_volume = dead_volume
 
     def set_dead_volume_from_tubing(self, tubing_id: float, tubing_length: float) -> None:
@@ -31,14 +34,20 @@ class Node:
     """Representation of a network node that wraps a Port object
     """
 
-    def __init__(self, base_port: Port) -> None:
+    def __init__(self, base_port: Port, name: str | None = None) -> None:
         
         # node is centered on this port
         self.base_port = base_port
 
+        if not name:
+            if base_port.name:
+                name = 'node_' + base_port.name
+
+        self.name = name
+
         self.connections: dict[Port, Connection] = {}
 
-    def connect(self, new_port: Port, dead_volume: float = 0.0, connection = None) -> Connection:
+    def connect(self, new_port: Port, dead_volume: float = 0.0, connection = None, name=None) -> Connection:
         """connects node to other ports
 
         Args:
@@ -50,7 +59,7 @@ class Node:
             Connection: connection object describing connection (or optional provided connection)
         """
 
-        new_connection = connection if connection else Connection(dead_volume)
+        new_connection = connection if connection else Connection(dead_volume, name=name)
         self.connections[new_port] = new_connection
 
         return new_connection
@@ -81,8 +90,8 @@ class Node:
         Args:
             port (Port): port to disconnect
         """
-
-        self.connections.pop(port)
+        if port in self.connections.keys():
+            self.connections.pop(port)
 
 def connect_nodes(node1: Node, node2: Node, dead_volume: float = 0.0) -> None:
     """Connects two nodes. Order is arbitrary.
@@ -93,7 +102,12 @@ def connect_nodes(node1: Node, node2: Node, dead_volume: float = 0.0) -> None:
         dead_volume (float, optional): dead volume of connection
     """
 
-    connection = node1.connect(node2.base_port, dead_volume=dead_volume)
+    if node1.name & node2.name:
+        name = f'{node1.name}-{node2.name}'
+    else:
+        name = None
+
+    connection = node1.connect(node2.base_port, dead_volume=dead_volume, name=name)
     node2.connect(node1.base_port, connection=connection)
 
 def disconnect_nodes(node1: Node, node2: Node) -> None:

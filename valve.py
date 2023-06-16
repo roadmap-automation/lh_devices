@@ -16,12 +16,15 @@ class ValveBase(ComponentBase):
                  n_ports: int,
                  n_positions: int,
                  position: int = 1,
-                 ports: List[Port] = []) -> None:
+                 ports: List[Port] = [],
+                 name: str = '') -> None:
+        self.name = name
+        
         self.n_ports = n_ports
         self.n_positions = n_positions
 
         if not len(ports):
-            self.ports = [Port() for _ in range(n_ports)]
+            self.ports = [Port(name=f'{self.name}.port_{i}') for i in range(n_ports)]
         else:
             if len(ports) != n_ports:
                 raise ValueError(f'{len(ports)} ports specified but {n_ports} required')
