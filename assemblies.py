@@ -1,8 +1,8 @@
 import asyncio
 from typing import List, Tuple
 
-from HamiltonDevice import HamiltonBase
-from connections import Port, Node, Connection
+from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
+from connections import Port, Node, Connection, connect_nodes
 
 class Network:
     """Representation of a node network
@@ -13,12 +13,6 @@ class Network:
         self._port_to_node_map: dict[Port, Node] = {}
         self.nodes: List[Node] = []
         self.update()
-
-    async def initialize(self) -> None:
-        """Initialize network of devices
-        """
-
-        await asyncio.gather(device.initialize() for device in self.devices)
 
     def update(self) -> None:
         """Updates the node network
@@ -56,4 +50,47 @@ class Network:
 
         return dead_volume
 
+def merge_networks(network1: Network, node1: Node, network2: Network, node2: Node, dead_volume: float = 0.0) -> Network:
+    """Merge two networks by connecting network1.node1 and network2.node2
 
+    Args:
+        network1 (Network): first network to connect
+        node1 (Node): node in first network to connect
+        network2 (Network): second network to connect
+        node2 (Node): node in second network to connect
+        dead_volume (float, optional): dead volume of connection from node1 to node2; default 0.0
+
+    Returns:
+        Network: merged network
+    """
+
+    connect_nodes(node1, node2, dead_volume=dead_volume)
+    unique_devices = set(network1.devices) | set(network2.devices)
+    return Network(list(unique_devices))
+
+class AssemblyBase:
+    """Assembly of Hamilton LH devices
+    """
+
+    def __init__(self, devices: List[HamiltonBase]) -> None:
+        
+        self.devices = devices
+        self.network = Network(self.devices)
+    
+    async def initialize(self) -> None:
+        """Initialize network of devices
+        """
+
+        await asyncio.gather(device.initialize() for device in self.devices)
+
+class RoadmapChannel(AssemblyBase):
+    """Assembly of MVP and PSD devices creating one ROADMAP channel
+    """
+
+    def __init__(self, loop_valve: HamiltonValvePositioner, cell_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump) -> None:
+        connect_nodes(loop_valve.valve.nodes[0], cell_valve.valve.nodes[1], dead_volume=100)
+        # make any additional connections here; network initialization will then know about all the connections
+        super().__init__([loop_valve, cell_valve, syringe_pump])
+
+# TODO: Think about serialization / deserialization or loading from a config file. Should be
+#           straightforward to reconstruct the network, if not the comm information
