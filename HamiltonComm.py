@@ -1,6 +1,7 @@
 import asyncio
 import aioserial
 from dataclasses import dataclass
+import datetime
 
 def printcodes(p: str) -> None:
     print(p, [hex(ord(b)) for b in p])
@@ -55,31 +56,17 @@ class HamiltonSerial(aioserial.AioSerial):
         super().__init__(**kwargs)
         self.read_queue: asyncio.Queue = asyncio.Queue()
         self.write_queue: asyncio.Queue = asyncio.Queue()
-        self.ioblocked: asyncio.Condition = asyncio.Condition()
         
         # delay time between I/O operations (Hamilton default = 100 ms)
         self.delay = 0.1
-        self.wait_timeout = 1.0
+        self.wait_timeout = 0.5
         self.max_retries = 3
         self.sequence_number = 1
 
     async def initialize(self) -> None:
 
-        await asyncio.gather(self.reader_async(), self.writer_async(), self.query_timer())
+        await asyncio.gather(self.reader_async(), self.writer_async())
 
-    async def query_timer(self):
-        """
-        Waits for write_started event to be triggered, then waits a delay and allows I/O again.
-        """
-        while True:
-            async with self.ioblocked:
-                #print(datetime.datetime.now().isoformat() + ': Waiting on ioblocked')
-                await self.ioblocked.wait()
-                #print(datetime.datetime.now().isoformat() + ': Sleeping on ioblocked')
-                await asyncio.sleep(self.delay)
-                #print(datetime.datetime.now().isoformat() + ': query_timer notifying on ioblocked')
-                self.ioblocked.notify()
-    
     async def query(self, address: str, cmd: str) -> str:
         """User interface for async read/write query operations"""
 
@@ -133,6 +120,7 @@ class HamiltonSerial(aioserial.AioSerial):
             # compare checksums; if they match, put in response queue
             if recv_chksum == data_chksum:
                 await self.read_queue.put(data)
+                print(datetime.datetime.now().isoformat() + ': <= ' + data)
             else:
                 print(f'Received checksum {recv_chksum}, calculated checksum {data_chksum}, for data {data}')
 
@@ -147,14 +135,14 @@ class HamiltonSerial(aioserial.AioSerial):
             #print(datetime.datetime.now().isoformat() + ': writer_async waiting for write data')
             wdata: HamiltonMessage = await self.write_queue.get()
 
-            async with self.ioblocked:
+            #async with self.ioblocked:
 
-                # write data
-                #print(wdata)
-                #printcodes(wdata.standard_encode().decode())
-                #print(datetime.datetime.now().isoformat() + ': writer_async writing')
-                await self.write_async(wdata.standard_encode())
-
-                # start query timer
-                #print(datetime.datetime.now().isoformat() + ': writer_async notify ioblocked')
-                self.ioblocked.notify()
+            # write data
+            print(datetime.datetime.now().isoformat() + ': => ' + repr(wdata))
+            #printcodes(wdata.standard_encode().decode())
+            #print(datetime.datetime.now().isoformat() + ': writer_async writing')
+            await self.write_async(wdata.standard_encode())
+            await asyncio.sleep(self.delay)
+            # start query timer
+            #print(datetime.datetime.now().isoformat() + ': writer_async notify ioblocked')
+    #            self.ioblocked.notify()
