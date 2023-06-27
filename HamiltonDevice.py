@@ -165,10 +165,11 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             high_resolution (bool): turn high resolution on (True) or off (False)
         """
         
-        self._high_resolution = high_resolution
         response, error = await self.run_until_idle(f'N{int(high_resolution)}')
         if error:
             print(f'Error setting resolution: {error}')
+        else:
+            self._high_resolution = high_resolution
 
     def _full_stroke(self) -> int:
         """Calculates syringe stroke (# half steps for full volume) based on resolution mode
