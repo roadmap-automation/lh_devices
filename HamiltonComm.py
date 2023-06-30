@@ -65,8 +65,12 @@ class HamiltonSerial(aioserial.AioSerial):
 
     async def initialize(self) -> None:
 
-        await asyncio.gather(self.reader_async(), self.writer_async())
-
+        try:
+            await asyncio.gather(self.reader_async(), self.writer_async())
+        except asyncio.CancelledError:
+            print('Closing serial connection...')
+            self.close()
+            
     async def query(self, address: str, cmd: str) -> str:
         """User interface for async read/write query operations"""
 
@@ -130,7 +134,6 @@ class HamiltonSerial(aioserial.AioSerial):
         Sends data to serial connection queues. Uses ioblocked Condition to
         ensure write operations are separated by a minimum delay time
         """
-
         while self.is_open:
             #print(datetime.datetime.now().isoformat() + ': writer_async waiting for write data')
             wdata: HamiltonMessage = await self.write_queue.get()
