@@ -1,13 +1,10 @@
-from typing import List
-import time
 import asyncio
-import aioserial
 import aioconsole
 
 from HamiltonComm import HamiltonSerial
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from valve import LoopFlowValve, SyringeYValve
-from assemblies import AssemblyBase
+from assemblies import AssemblyTest
 
 class AsyncKeyboard:
 
@@ -54,19 +51,19 @@ class AsyncKeyboard:
         while not self.stopped:
             cmd = await self.console_queue.get()
             if cmd.startswith('?'):
-                response = await self.dev.query(cmd)
+                response = await self.dev.run(self.dev.query(cmd))
             elif cmd.startswith('d'):
                 volume, flow_rate = cmd[1:].split('f')
-                response = await self.dev.dispense(float(volume), float(flow_rate))
+                response = await self.dev.run_until_idle(self.dev.dispense(float(volume), float(flow_rate)))
             elif cmd.startswith('a'):
                 volume, flow_rate = cmd[1:].split('f')
-                response = await self.dev.aspirate(float(volume), float(flow_rate))
+                response = await self.dev.run_until_idle(self.dev.aspirate(float(volume), float(flow_rate)))
             elif cmd.startswith('r'):
                 resolution = int(cmd[1:])
-                response = await self.dev.set_high_resolution(bool(resolution))
+                response = await self.dev.run_until_idle(self.dev.set_high_resolution(bool(resolution)))
                 print(self.dev._high_resolution)
             else:
-                response = await self.dev.run_until_idle(cmd)
+                response = await self.dev.run_until_idle(self.dev.query(cmd))
             if response is not None:
                 print(response)
 
@@ -106,7 +103,9 @@ async def main():
     #await mvp.initialize()
     stop_event = asyncio.Event()
     ak = AsyncKeyboard(ser, sp, stop_event)
-    launch = Launcher([ser.initialize(), mvp.initialize(), sp.initialize(), ak.initialize()], stop_event)
+    at = AssemblyTest(mvp, sp)
+    #launch = Launcher([ser.initialize(), mvp.initialize(), sp.initialize(), ak.initialize()], stop_event)
+    launch = Launcher([ser.initialize(), at.initialize(), ak.initialize()], stop_event)
     await launch.run()
 
     #await asyncio.gather(ser.initialize(), sp.initialize(), ak.initialize())

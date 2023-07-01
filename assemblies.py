@@ -1,8 +1,8 @@
 import asyncio
 from typing import List, Tuple
 
-from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
-from connections import Port, Node, Connection, connect_nodes
+from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump, batch_run
+from connections import Port, Node, connect_nodes
 
 class Network:
     """Representation of a node network
@@ -76,12 +76,24 @@ class AssemblyBase:
         
         self.devices = devices
         self.network = Network(self.devices)
+        self.batch_queue = asyncio.Queue()
     
     async def initialize(self) -> None:
         """Initialize network of devices
         """
 
         await asyncio.gather(device.initialize() for device in self.devices)
+
+class AssemblyTest(AssemblyBase):
+
+    def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump) -> None:
+        super().__init__(devices=[loop_valve, syringe_pump])
+
+    async def initialize(self) -> None:
+        
+        await batch_run([dev.run_in_batch(dev.initialize_device(), self.batch_queue) for dev in self.devices], self.batch_queue)
+        await asyncio.gather(*[dev.poll_until_idle() for dev in self.devices])
+
 
 class RoadmapChannel(AssemblyBase):
     """Assembly of MVP and PSD devices creating one ROADMAP channel
