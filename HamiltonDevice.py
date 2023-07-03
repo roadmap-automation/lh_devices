@@ -21,6 +21,7 @@ class HamiltonBase:
         self.idle = True
         self.busy_code = '@'
         self.idle_code = '`'
+        self.poll_delay = 0.1   # Hamilton-recommended 100 ms delay when polling
         self.address = address
         self.address_code = chr(int(address, base=16) + int('31', base=16))
         self.command_queue: asyncio.Queue = asyncio.Queue()
@@ -87,37 +88,35 @@ class HamiltonBase:
         else:
             return None, None
 
-    async def poll_until_idle(self) -> str:
+    async def poll_until_idle(self) -> None:
         """Polls device until idle
 
         Returns:
             str: error string
         """
-        error = None
-        while (not self.idle) & (not error):
-            error = await self.run(self.update_status())
-        
-        return error
+        while (not self.idle):
+            await asyncio.gather(self.run(self.update_status()),
+                                 asyncio.sleep(self.poll_delay))    # delays before sending next polling request
 
-    async def run_until_idle(self, cmd: asyncio.Future) -> str:
+    async def run_until_idle(self, cmd: asyncio.Future) -> None:
         """
         Sends from serial connection and waits until idle
         """
 
         self.idle = False
         await self.run(cmd)
-        error = await self.poll_until_idle()
+        await self.poll_until_idle()
 
-        return error
-
-    async def update_status(self) -> str | None:
+    async def update_status(self) -> None:
         """
         Polls the status of the device using 'Q'
         """
 
         _, error = await self.query('Q')
 
-        return error
+        # TODO: Handle error
+        if error:
+            print(f'Error in update_status: {error}')
 
     def parse_status_byte(self, c: str) -> str | None:
         """

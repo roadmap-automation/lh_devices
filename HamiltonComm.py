@@ -117,8 +117,8 @@ class HamiltonSerial(aioserial.AioSerial):
         """
 
         # write out message
-        data = HamiltonMessage(address, cmd, self.sequence_number)
         async with self.write_lock:
+            data = HamiltonMessage(address, cmd, self.sequence_number)
             await self._write_message(data, response_queue)
 
     async def batch_query(self, addresses: List[str], cmds: List[str], response_queues: List[asyncio.Queue]) -> None:
@@ -188,7 +188,7 @@ class HamiltonSerial(aioserial.AioSerial):
             #printcodes(wdata.standard_encode().decode())
             #print(datetime.datetime.now().isoformat() + ': writer_async writing')
             await self.write_async(wdata.standard_encode())
-            await asyncio.sleep(self.delay)
+            #await asyncio.sleep(self.delay)
             # start query timer
             #print(datetime.datetime.now().isoformat() + ': writer_async notify ioblocked')
     #            self.ioblocked.notify()
