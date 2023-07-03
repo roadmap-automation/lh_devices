@@ -199,9 +199,13 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         # default high resolution mode is False
         self._high_resolution = high_resolution
 
+        # syringe position
+        self.syringe_position: int = 0.0
+
     async def initialize(self) -> None:
-        await self.run_until_idle(self.set_high_resolution(self._high_resolution))
         await super().initialize()
+        await self.run_until_idle(self.set_high_resolution(self._high_resolution))
+        await self.run_until_idle(self.get_syringe_position())
 
     async def set_high_resolution(self, high_resolution: bool) -> None:
         """Turns high resolution mode on or off
@@ -280,9 +284,9 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             int: absolute position of syringe in steps
         """
 
-        response = await self.query('?')
+        response, error = await self.query('?')
         
-        return int(response[1:])
+        self.syringe_position = int(response[1:])
 
 
     async def aspirate(self, volume: float, flow_rate: float) -> None:
@@ -293,16 +297,19 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             flow_rate (float): flow rate in uL / s
         """
 
+        await self.run(self.get_syringe_position())
         stroke_length = self._stroke_length(volume)
-        current_position = await self.get_syringe_position()
         max_position = self._full_stroke() / 2
         #print(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
 
-        if max_position < (stroke_length + current_position):
-            print(f'Invalid syringe move from current position {current_position} with stroke length {stroke_length} and maximum position {max_position}')
+        if max_position < (stroke_length + self.syringe_position):
+            print(f'Invalid syringe move from current position {self.syringe_position} with stroke length {stroke_length} and maximum position {max_position}')
+            
+            # TODO: this is a hack to clear the response queue...need to fix this
+            await self.update_status()
         else:
             V = self._speed_code(flow_rate)
-            #print(f'Speed: {V}')
+            print(f'Speed: {V}')
 
             response, error = await self.query(f'V{V}P{stroke_length}R')
             if error:
@@ -316,12 +323,13 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             flow_rate (float): flow rate in uL / s
         """
 
+        await self.run(self.get_syringe_position())
         stroke_length = self._stroke_length(volume)
         #print(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
-        current_position = await self.get_syringe_position()
 
-        if (current_position - stroke_length) < 0:
-            print(f'Invalid syringe move from current position {current_position} with stroke length {stroke_length} and minimum position 0')
+        if (self.syringe_position - stroke_length) < 0:
+            print(f'Invalid syringe move from current position {self.syringe_position} with stroke length {stroke_length} and minimum position 0')
+            await self.update_status()
         else:
             V = self._speed_code(flow_rate)
 

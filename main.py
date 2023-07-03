@@ -49,7 +49,8 @@ class AsyncKeyboard:
 
     async def send_sp_command(self) -> None:
         while not self.stopped:
-            cmd = await self.console_queue.get()
+            cmd: str = await self.console_queue.get()
+            print(cmd)
             if cmd.startswith('?'):
                 response = await self.dev.run(self.dev.query(cmd))
             elif cmd.startswith('d'):
@@ -57,6 +58,7 @@ class AsyncKeyboard:
                 response = await self.dev.run_until_idle(self.dev.dispense(float(volume), float(flow_rate)))
             elif cmd.startswith('a'):
                 volume, flow_rate = cmd[1:].split('f')
+                print(volume, flow_rate)
                 response = await self.dev.run_until_idle(self.dev.aspirate(float(volume), float(flow_rate)))
             elif cmd.startswith('r'):
                 resolution = int(cmd[1:])

@@ -168,7 +168,7 @@ class HamiltonSerial(aioserial.AioSerial):
             # compare checksums; if they match, put in response queue
             if recv_chksum == data_chksum:
                 await self.read_queue.put(data)
-                print(datetime.datetime.now().isoformat() + ': <= ' + data)
+                print(f'{datetime.datetime.now().isoformat()}: {self.port} <= {data}')
             else:
                 print(f'Received checksum {recv_chksum}, calculated checksum {data_chksum}, for data {data}')
 
@@ -184,7 +184,7 @@ class HamiltonSerial(aioserial.AioSerial):
             #async with self.ioblocked:
 
             # write data
-            print(datetime.datetime.now().isoformat() + ': => ' + repr(wdata))
+            print(f'{datetime.datetime.now().isoformat()}: {self.port} => {repr(wdata)}')
             #printcodes(wdata.standard_encode().decode())
             #print(datetime.datetime.now().isoformat() + ': writer_async writing')
             await self.write_async(wdata.standard_encode())
