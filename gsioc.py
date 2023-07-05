@@ -28,7 +28,7 @@ class GSIOC(aioserial.AioSerial):
     Virtual GSIOC object.
     """
 
-    def __init__(self, gsioc_address, port='COM13', baudrate=19200, parity=aioserial.PARITY_EVEN):
+    def __init__(self, gsioc_address: int, port: str='COM13', baudrate: int=19200, parity=aioserial.PARITY_EVEN):
         """
         Connects to a virtual COM port.
 
@@ -43,9 +43,8 @@ class GSIOC(aioserial.AioSerial):
         super().__init__(port=port, baudrate=baudrate, parity=parity)
 
         self.address = gsioc_address    # between 1 and 63
-        self.active = True
-        self.interrupt = False
-        self.connected = False
+        self.interrupt: bool = False
+        self.connected: bool = False
 
         #signal.signal(signal.SIGINT, self.signal_handler)
 
