@@ -65,14 +65,19 @@ class GSIOC(aioserial.AioSerial):
         # infinite loop to wait for a command
         while not self.interrupt:
 
+            print('Waiting for connection...')
+
             await self.wait_for_connection()
 
             if self.connected: # address received
+                print('Connection established, waiting for command')
                 # waits for a command
                 cmd = await self.wait_for_command()
 
                 # parses received command
                 await self.parse_command(cmd)
+
+            print('Connection broken...')
 
         # close serial port before exiting when interrupt is received
         self.close()
