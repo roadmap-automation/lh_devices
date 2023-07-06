@@ -115,6 +115,7 @@ class GSIOC(aioserial.AioSerial):
             # buffered command...read until line feed is sent
             if comm == 10:
                 print(f'got LF, starting buffered command read')
+                await self.write1(chr(comm))
                 msg = ''
                 while comm != 13:
                     # get a character
@@ -127,7 +128,7 @@ class GSIOC(aioserial.AioSerial):
 
                 print(f'got CR, end of message: {msg}')
 
-                return msg[-1] if len(msg) else None
+                return msg
             
             # immediate command...read a single character
             else:
@@ -142,10 +143,11 @@ class GSIOC(aioserial.AioSerial):
         if cmd is not None:
             if cmd.endswith(chr(13)):
                 # buffered command
-                cmd = cmd[-1]
+                cmd = cmd[:-1]
 
                 # TODO: do stuff
                 print(f'Buffered command received: {cmd}')
+                #await self.send(f'You sent me buffered command {cmd}')
             else:
                 # immediate (single-character) command
                 if cmd == '%':
