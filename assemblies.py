@@ -84,6 +84,10 @@ class AssemblyBase:
 
         await asyncio.gather(device.initialize() for device in self.devices)
 
+    @property
+    def idle(self) -> bool:
+        return all(dev.idle for dev in self.devices)
+
 class AssemblyTest(AssemblyBase):
 
     def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump) -> None:
