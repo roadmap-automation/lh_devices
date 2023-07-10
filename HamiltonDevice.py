@@ -1,8 +1,52 @@
 from typing import Tuple, List
 import asyncio
+import datetime
 from HamiltonComm import HamiltonSerial
 from valve import ValveBase
 from connections import Node
+
+class PollTimer:
+    """Async timer for polling delay
+
+    Usage:
+    while <condition>:
+        # starts timer at the same time as the future
+        await asyncio.gather(<future to run periodically>, timer.cycle())
+
+        # ensures that the timer has expired before the future is run again
+        await timer.wait_until_set()
+    """
+    def __init__(self, poll_delay: float, address: str) -> None:
+        """Initializate timer
+
+        Args:
+            poll_delay (float): poll delay in seconds
+            address (str): address code of parent class. Used only for logging
+        """
+        self.poll_delay = poll_delay
+        self.address = address
+
+        # internal event to track polling expiration
+        self.expired = asyncio.Event()
+
+    async def cycle(self) -> None:
+        """Cycle the timer
+        """
+
+        # clear the event
+        self.expired.clear()
+        #print(f'{datetime.datetime.now().isoformat()}: timer {self.address} started')
+
+        # sleep the required delay
+        await asyncio.sleep(self.poll_delay)
+        #print(f'{datetime.datetime.now().isoformat()}: timer {self.address} ended')
+
+        # set the event
+        self.expired.set()
+
+    async def wait_until_set(self) -> None:
+        """Waits until the internal timer has expired"""
+        await self.expired.wait()
 
 class HamiltonBase:
     """Base class for Hamilton multi-valve positioner (MVP) and syringe pump (PSD) devices.
@@ -94,9 +138,15 @@ class HamiltonBase:
         Returns:
             str: error string
         """
+
+        timer = PollTimer(self.poll_delay, self.address_code)
+
         while (not self.idle):
-            await asyncio.gather(self.run(self.update_status()),
-                                 asyncio.sleep(self.poll_delay))    # delays before sending next polling request
+            # run update_status and start the poll_delay timer
+            await asyncio.gather(self.run(self.update_status()), timer.cycle())
+
+            # wait until poll_delay timer has ended before asking for new status.
+            await timer.wait_until_set()
 
     async def run_until_idle(self, cmd: asyncio.Future) -> None:
         """
