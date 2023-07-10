@@ -49,33 +49,19 @@ class HamiltonMessage:
 
 class HamiltonSerial(aioserial.AioSerial):
     """
-    Asynchronous serial port interactor for Hamilton devices. Implements an async read/write sequence using Queues,
-    with a delay (Hamilton-recommended 100 ms) between IO operations on different devices
+    Asynchronous serial port interactor for Hamilton devices.
     """
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.read_queue: asyncio.Queue = asyncio.Queue()
-        self.write_queue: asyncio.Queue = asyncio.Queue()
         self.write_lock: asyncio.Lock = asyncio.Lock()
         
-        # delay time between I/O operations (Hamilton default = 100 ms)
-        self.delay = 0.1
         self.wait_timeout = 0.5
         self.max_retries = 3
         self.sequence_number = 1
 
-    async def initialize(self) -> None:
-
-        try:
-            await asyncio.gather(self.reader_async(), self.writer_async())
-        except asyncio.CancelledError:
-            print('Closing serial connection...')
-            self.close()
-
-    @staticmethod
-    async def get_value(rv: dict, queue: asyncio.Queue):
-        rv['value'] = await queue.get()
+    async def get_value(self, rv: dict):
+        rv['value'] = await self.reader_async()
 
     async def _write_message(self, data: HamiltonMessage, response_queue: asyncio.Queue):
         """Basic write/read operation
@@ -86,20 +72,29 @@ class HamiltonSerial(aioserial.AioSerial):
         """
 
         return_value = {'value': None}
-        await self.write_queue.put(data)
+        print(f'{datetime.datetime.now().isoformat()}: {self.port} => {repr(data)}')
+        await self.write_async(data.standard_encode())
 
         # wait for results to come in, with timeout
         trial = 0
         while trial < self.max_retries:
             try:
-                await asyncio.wait_for(self.get_value(return_value, self.read_queue), timeout=self.wait_timeout)
-                break
+                await asyncio.wait_for(self.get_value(return_value), timeout=self.wait_timeout)
+
+                # break out of while if return_value is not None, else try again (finally)
+                if return_value['value']:
+                    #print(f'Return value: {return_value["value"]}')
+                    break
             except asyncio.TimeoutError:
-                # if not successful try again up to max_retries, changing repeat bit
-                trial += 1
-                data.repeat = '1'
-                print(f'Trial {trial}... {data}')
-                await self.write_queue.put(data)
+                print('Timed out!')
+                pass
+
+            # if not successful try again up to max_retries, changing repeat bit
+            trial += 1
+            data.repeat = '1'
+            #print(f'Trial {trial}... {data}')
+            print(f'{datetime.datetime.now().isoformat()}: {self.port} => {repr(data)}')
+            await self.write_async(data.standard_encode())
         
         # increment sequence number, cycling between 1 and 7
         self.sequence_number = max(1, (self.sequence_number + 1) % 8) 
@@ -108,7 +103,7 @@ class HamiltonSerial(aioserial.AioSerial):
         await response_queue.put(return_value['value'])
 
     async def query(self, address: str, cmd: str, response_queue: asyncio.Queue) -> None:
-        """User interface for async read/write query operations
+        """User interface for single async read/write query operation
 
         Args:
             address (str): device address (single character)
@@ -117,12 +112,10 @@ class HamiltonSerial(aioserial.AioSerial):
         """
 
         # write out message
-        async with self.write_lock:
-            data = HamiltonMessage(address, cmd, self.sequence_number)
-            await self._write_message(data, response_queue)
+        await self.batch_query([address], [cmd], [response_queue])
 
     async def batch_query(self, addresses: List[str], cmds: List[str], response_queues: List[asyncio.Queue]) -> None:
-        """Batch processing without write delays.
+        """Batch processing of multiple query operations
 
         Args:
             addresses (List[str]): List of address characters, one for each command
@@ -134,21 +127,14 @@ class HamiltonSerial(aioserial.AioSerial):
         # lock writing until all batch messages are written
         async with self.write_lock:
 
-            # set delay to 0.0 (send/receive all batch messages quickly)
-            init_delay = self.delay
-            self.delay = 0.0
-
             # send each message
             for address, cmd, response_queue in zip(addresses, cmds, response_queues):
                 data = HamiltonMessage(address, cmd, self.sequence_number)
                 await self._write_message(data, response_queue)
-            
-            # reset write delay
-            self.delay = init_delay
 
-    async def reader_async(self) -> None:
+    async def reader_async(self) -> str | None:
         """
-        Async reader. Should be started as part of asyncio loop
+        Async reader.
         """
         while self.is_open:
             # read data
@@ -157,6 +143,7 @@ class HamiltonSerial(aioserial.AioSerial):
 
             # throw away first byte (always ASCII 255)
             data = data[1:].decode()
+            print(f'{datetime.datetime.now().isoformat()}: {self.port} <= {data}')
 
             # calculate checksum
             data_chksum = ord(checksum(data))
@@ -167,28 +154,7 @@ class HamiltonSerial(aioserial.AioSerial):
 
             # compare checksums; if they match, put in response queue
             if recv_chksum == data_chksum:
-                await self.read_queue.put(data)
-                print(f'{datetime.datetime.now().isoformat()}: {self.port} <= {data}')
+                return data
             else:
                 print(f'Received checksum {recv_chksum}, calculated checksum {data_chksum}, for data {data}')
-
-    async def writer_async(self) -> None:
-        """
-        Async writer. Should be started as part of asyncio loop. Monitors the write_queue.
-        """
-
-        while self.is_open:
-            #print(datetime.datetime.now().isoformat() + ': writer_async waiting for write data')
-            wdata: HamiltonMessage = await self.write_queue.get()
-
-            #async with self.ioblocked:
-
-            # write data
-            print(f'{datetime.datetime.now().isoformat()}: {self.port} => {repr(wdata)}')
-            #printcodes(wdata.standard_encode().decode())
-            #print(datetime.datetime.now().isoformat() + ': writer_async writing')
-            await self.write_async(wdata.standard_encode())
-            #await asyncio.sleep(self.delay)
-            # start query timer
-            #print(datetime.datetime.now().isoformat() + ': writer_async notify ioblocked')
-    #            self.ioblocked.notify()
+                return None

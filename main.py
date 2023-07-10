@@ -107,7 +107,7 @@ async def main():
     ak = AsyncKeyboard(ser, sp, stop_event)
     at = AssemblyTest(mvp, sp)
     #launch = Launcher([ser.initialize(), mvp.initialize(), sp.initialize(), ak.initialize()], stop_event)
-    launch = Launcher([ser.initialize(), at.initialize(), ak.initialize()], stop_event)
+    launch = Launcher([at.initialize(), ak.initialize()], stop_event)
     await launch.run()
 
     #await asyncio.gather(ser.initialize(), sp.initialize(), ak.initialize())
