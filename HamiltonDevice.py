@@ -224,7 +224,7 @@ class HamiltonValvePositioner(HamiltonBase):
         
         # this checks for errors
         self.valve.move(position)
-        _, error = await self.query(f'I{position}')
+        _, error = await self.query(f'I{position}R')
         if error:
             print(f'Move error {error}')
             self.valve.position = initial_value
