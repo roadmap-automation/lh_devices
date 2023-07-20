@@ -1,3 +1,6 @@
+from typing import Dict
+from enum import Enum
+from dataclasses import dataclass
 import asyncio
 import aioserial
 
@@ -22,13 +25,21 @@ This routes all traffic from CNCA1 (<->COM12) back and forth to CNCA2 (<-> virtu
 """
 
 interrupt = False
+class GSIOCCommandType(Enum):
+    BUFFERED = 'buffered'
+    IMMEDIATE = 'immediate'
+
+@dataclass
+class GSIOCMessage:
+    messagetype: str
+    data: str
 
 class GSIOC(aioserial.AioSerial):
     """
     Virtual GSIOC object.
     """
 
-    def __init__(self, gsioc_address: int, port: str='COM13', baudrate: int=19200, parity=aioserial.PARITY_EVEN):
+    def __init__(self, gsioc_address: int, port: str='COM13', baudrate: int=19200, parity=aioserial.PARITY_EVEN, gsioc_name: str='Virtual GSIOC'):
         """
         Connects to a virtual COM port.
 
@@ -45,6 +56,9 @@ class GSIOC(aioserial.AioSerial):
         self.address = gsioc_address    # between 1 and 63
         self.interrupt: bool = False
         self.connected: bool = False
+        self.gsioc_name = gsioc_name
+        self.message_queue: asyncio.Queue = asyncio.Queue(1)
+        self.response_queue: asyncio.Queue = asyncio.Queue(1)
 
         #signal.signal(signal.SIGINT, self.signal_handler)
 
@@ -54,7 +68,7 @@ class GSIOC(aioserial.AioSerial):
         """
         self.interrupt = True
 
-    async def listen(self):
+    async def listen(self) -> None:
         """
         Starts GSIOC listener. Only ends when an interrupt signal is received.
         """
@@ -74,10 +88,25 @@ class GSIOC(aioserial.AioSerial):
                 # waits for a command
                 cmd = await self.wait_for_command()
 
-                # parses received command
-                await self.parse_command(cmd)
+                if cmd:
 
-            print('Connection broken...')
+                    # process ID request immediately
+                    if cmd == '%':
+                        await self.send(self.gsioc_name)
+                    
+                    else:
+                        # parses received command into a GSIOCMessage
+                        data = await self.parse_command(cmd)
+
+                        # put message in listener queue
+                        await self.message_queue.put(data)
+
+                        if data.messagetype == GSIOCCommandType.IMMEDIATE:
+                            print('Waiting for response to immediate command')
+                            response: str = await self.response_queue.get()
+                            await self.send(response)
+
+            print('Connection reset...')
 
         # close serial port before exiting when interrupt is received
         self.close()
@@ -134,29 +163,25 @@ class GSIOC(aioserial.AioSerial):
             else:
                 return chr(comm)
 
-    async def parse_command(self, cmd: str | None):
+    async def parse_command(self, cmd: str | None) -> GSIOCMessage:
         """
         Parses various command bytes.
 
         cmd -- the ascii code number of the command byte
         """
-        if cmd is not None:
-            if cmd.endswith(chr(13)):
-                # buffered command
-                cmd = cmd[:-1]
 
-                # TODO: do stuff
-                print(f'Buffered command received: {cmd}')
-                #await self.send(f'You sent me buffered command {cmd}')
-            else:
-                # immediate (single-character) command
-                if cmd == '%':
-                    # identification request
-                    await self.send('Virtual GSIOC')
-                else:
-                    # all other commands
-                    print(f'Immediate command received: {cmd}')
-                    await self.send(f'You sent me immediate command {cmd}')
+        if cmd.endswith(chr(13)):
+            # buffered command
+            cmd = cmd[:-1]
+
+            # TODO: do stuff
+            print(f'Buffered command received: {cmd}')
+            return GSIOCMessage(GSIOCCommandType.BUFFERED, cmd)
+
+            #await self.send(f'You sent me buffered command {cmd}')
+        else:
+            # immediate (single-character) command
+            return GSIOCMessage(GSIOCCommandType.IMMEDIATE, cmd)
 
     async def read1(self):
         """
@@ -208,7 +233,7 @@ async def main():
 #    signal.signal(signal.SIGINT, signal_handler)
 
     gsioc = GSIOC(gsioc_address, port=virtual_port, baudrate=baud_rate, parity=aioserial.PARITY_EVEN)
-    await asyncio.gather(gsioc.listen())
+    await gsioc.listen()
 
 
 if __name__ == '__main__':
