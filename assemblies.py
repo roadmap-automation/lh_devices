@@ -83,8 +83,7 @@ class AssemblyBase:
     async def initialize(self) -> None:
         """Initialize network of devices
         """
-
-        await asyncio.gather(device.initialize() for device in self.devices)
+        await asyncio.gather(*(device.initialize() for device in self.devices))
 
     async def change_mode(self, mode: str) -> None:
         """Changes to given assembly mode (valve configuration) defined in self.modes
@@ -107,7 +106,7 @@ class AssemblyBase:
         """
 
         await batch_run([dev.run_in_batch(dev.move_valve(pos), self.batch_queue) for dev, pos in valve_config.items()], self.batch_queue)
-        await asyncio.gather(*[dev.poll_until_idle() for dev in valve_config.keys()])
+        await asyncio.gather(*(dev.poll_until_idle() for dev in valve_config.keys()))
 
     @property
     def idle(self) -> bool:
@@ -174,10 +173,13 @@ class AssemblyTest(AssemblyBase):
     def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump) -> None:
         super().__init__(devices=[loop_valve, syringe_pump])
 
-    async def initialize(self) -> None:
-        
-        await batch_run([dev.run_in_batch(dev.initialize_device(), self.batch_queue) for dev in self.devices], self.batch_queue)
-        await asyncio.gather(*[dev.poll_until_idle() for dev in self.devices])
+        self.modes = {'LoopInject': 
+                    {loop_valve: 2,
+                     syringe_pump: 2},
+                 'LHInject':
+                    {loop_valve: 1,
+                     syringe_pump: 1}
+                 }
 
 
 class RoadmapChannel(AssemblyBase):
