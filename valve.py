@@ -1,5 +1,5 @@
 from typing import List
-
+from copy import copy
 from connections import Port, Node
 from components import ComponentBase
 
@@ -49,7 +49,7 @@ class ValveBase(ComponentBase):
         """
 
         for node in self.nodes:
-            for prt in node.connections.keys():
+            for prt in list(node.connections.keys()):
                 if prt in self.ports:
                     node.disconnect(prt)
 
