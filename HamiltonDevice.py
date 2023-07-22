@@ -59,9 +59,10 @@ class HamiltonBase:
      
        """
 
-    def __init__(self, serial_instance: HamiltonSerial, address: str) -> None:
+    def __init__(self, serial_instance: HamiltonSerial, address: str, name=None) -> None:
         
         self.serial = serial_instance
+        self.name = name
         self.idle = True
         self.busy_code = '@'
         self.idle_code = '`'
@@ -193,8 +194,8 @@ class HamiltonValvePositioner(HamiltonBase):
     """Hamilton MVP4 device
     """
 
-    def __init__(self, serial_instance: HamiltonSerial, address: str, valve: ValveBase) -> None:
-        super().__init__(serial_instance, address)
+    def __init__(self, serial_instance: HamiltonSerial, address: str, valve: ValveBase, name=None) -> None:
+        super().__init__(serial_instance, address, name)
 
         self.valve = valve
         self.initialized = False
@@ -239,9 +240,10 @@ class HamiltonSyringePump(HamiltonValvePositioner):
                  address: str,
                  valve: ValveBase,
                  syringe_volume: float = 5000,
-                 high_resolution = False
+                 high_resolution = False,
+                 name = None,
                  ) -> None:
-        super().__init__(serial_instance, address, valve)
+        super().__init__(serial_instance, address, valve, name)
 
         # Syringe volume in uL
         self.syringe_volume = syringe_volume
