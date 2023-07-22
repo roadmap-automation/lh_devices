@@ -9,6 +9,13 @@ class Port:
     def __init__(self, name: str | None = None):
         self.name = name
 
+    def __repr__(self):
+
+        if self.name:
+            return self.name
+        else:
+            return object.__repr__(self)
+        
 class Connection:
     """Representation of a connection between two Ports
 
@@ -20,6 +27,13 @@ class Connection:
         # dead volume in uL
         self.name = name
         self.dead_volume = dead_volume
+
+    def __repr__(self):
+
+        if self.name:
+            return self.name
+        else:
+            return object.__repr__(self)
 
     def set_dead_volume_from_tubing(self, tubing_id: float, tubing_length: float) -> None:
         """Set dead volume in uL by tubing parameters
@@ -47,6 +61,13 @@ class Node:
 
         self.connections: dict[Port, Connection] = {}
 
+    def __repr__(self):
+
+        if self.name:
+            return self.name
+        else:
+            return object.__repr__(self)
+
     def connect(self, new_port: Port, dead_volume: float = 0.0, connection = None, name=None) -> Connection:
         """connects node to other ports
 
@@ -68,7 +89,8 @@ class Node:
         """Traces connectivity in a network of ports.
 
         Args:
-            source_port (Port): "upstream" port from which connection is being traced
+            source_port (Port): "upstream" port from which connection is being traced. If equal
+                                 to the node's base_port, returns all connections.
 
         Returns:
             Port: "downstream" port from current node
@@ -76,11 +98,18 @@ class Node:
         """
 
         connected_ports = list(self.connections.keys())
-        if source_port in connected_ports:
-            connected_ports.pop(connected_ports.index(source_port))
-            dead_volumes = [self.connections[p].dead_volume for p in connected_ports]
-        else:
-            raise ValueError('Specified source port is not in connections')
+
+        # if this node is the start point, return all connections
+        if source_port != self.base_port:
+
+            # if this is not the start point, remove the upstream port from the list of connections
+            if source_port in connected_ports:
+                connected_ports.pop(connected_ports.index(source_port))
+            else:
+                raise ValueError('Specified source port is not in connections')
+        
+        # calculate all dead volumes
+        dead_volumes = [self.connections[p].dead_volume for p in connected_ports]
         
         return connected_ports, dead_volumes
     
@@ -102,7 +131,7 @@ def connect_nodes(node1: Node, node2: Node, dead_volume: float = 0.0) -> None:
         dead_volume (float, optional): dead volume of connection
     """
 
-    if node1.name & node2.name:
+    if (node1.name is not None) & (node2.name is not None):
         name = f'{node1.name}-{node2.name}'
     else:
         name = None

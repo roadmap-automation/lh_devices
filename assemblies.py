@@ -24,7 +24,7 @@ class Network:
 
     def get_dead_volume(self, source_port: Port, destination_port: Port) -> float:
         """Gets dead volume in the fluid path from a source to destination port. Both
-            ports must be in the network
+            ports must be in the network. Source port can have only one connection.
 
         Args:
             source_port (Port): port representing the source
@@ -35,19 +35,35 @@ class Network:
         """
 
         dead_volume = 0.0
+        current_node = self._port_to_node_map[source_port]
+        previous_port = source_port
         current_port = source_port
-
         # iterate through the network
-        while current_port != destination_port:
-            current_node = self._port_to_node_map[current_port]
-            new_port, dv = current_node.trace_connection(current_port)
+        while True:
+            # find node associated with previous port
+            new_port, dv = current_node.trace_connection(previous_port)
 
-            if not new_port:
+            if len(new_port) == 0:
                 print('Warning: chain broken, destination_port not reached')
                 break
 
+            if len(new_port) > 1:
+                print('Warning: ambiguous connection chain')
+                break
+            
+            # update dead volume from traced connection
             dead_volume += sum(dv)
-            current_port = new_port
+
+            # set previous port to the current port
+            previous_port = current_port
+
+            # update current port and current node
+            current_port = new_port[0]
+            current_node = self._port_to_node_map[current_port]
+
+            # break if we've reached destination port
+            if current_port == destination_port:
+                break
 
         return dead_volume
 
@@ -79,6 +95,7 @@ class AssemblyBase:
         self.network = Network(self.devices)
         self.batch_queue = asyncio.Queue()
         self.modes = {}
+        self.current_mode = None
     
     async def initialize(self) -> None:
         """Initialize network of devices
@@ -94,6 +111,7 @@ class AssemblyBase:
 
         if mode in self.modes:
             await self.move_valves(self.modes[mode])
+            self.current_mode = mode
         else:
             raise ValueError('Mode not in modes dictionary')
 
@@ -105,8 +123,18 @@ class AssemblyBase:
                                                         position as value
         """
 
-        await batch_run([dev.run_in_batch(dev.move_valve(pos), self.batch_queue) for dev, pos in valve_config.items()], self.batch_queue)
-        await asyncio.gather(*(dev.poll_until_idle() for dev in valve_config.keys()))
+        await batch_run([dev.run_in_batch(dev.move_valve(pos), self.batch_queue) for dev, pos in valve_config.items() if dev in self.devices], self.batch_queue)
+        await asyncio.gather(*(dev.poll_until_idle() for dev in valve_config.keys() if dev in self.devices))
+
+    def get_dead_volume(self) -> float:
+        """Gets dead volume of current configuration mode
+
+        Returns:
+            float: dead volume in uL
+        """
+
+        nodes: List[Node] = self.modes[self.current_mode]['dead_volume_nodes']
+        return self.network.get_dead_volume(nodes[0].base_port, nodes[1].base_port)
 
     @property
     def idle(self) -> bool:
@@ -151,6 +179,10 @@ class AssemblyBasewithGSIOC(AssemblyBase):
             # busy query
             return 'idle' if self.idle else 'busy'
         
+        # get dead volume of current mode in uL
+        if data.data == 'D':
+            return f'{self.get_dead_volume():0.0f}'
+        
         elif data.data.startswith('mode: '):
             mode = data.data.split('mode: ', 1)[1]
             self.gsioc_command_queue.put(asyncio.create_task(self.change_mode(mode)))
@@ -173,12 +205,17 @@ class AssemblyTest(AssemblyBase):
     def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump) -> None:
         super().__init__(devices=[loop_valve, syringe_pump])
 
+        connect_nodes(syringe_pump.valve.nodes[1], loop_valve.valve.nodes[0], 101)
+        connect_nodes(syringe_pump.valve.nodes[2], loop_valve.valve.nodes[1], 102)
+
         self.modes = {'LoopInject': 
                     {loop_valve: 2,
-                     syringe_pump: 2},
+                     syringe_pump: 2,
+                     'dead_volume_nodes': [syringe_pump.valve.nodes[0], loop_valve.valve.nodes[0]]},
                  'LHInject':
                     {loop_valve: 1,
-                     syringe_pump: 1}
+                     syringe_pump: 1,
+                     'dead_volume_nodes': [syringe_pump.valve.nodes[2], loop_valve.valve.nodes[1]]}
                  }
 
 
