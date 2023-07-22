@@ -81,8 +81,8 @@ class DistributionValve(ValveBase):
         "position" corresponds to the port number of the valve outlet
     """
 
-    def __init__(self, n_ports: int, position: int = 1, ports: List[Port] = []) -> None:
-        super().__init__(n_ports + 1, n_ports, position, ports)
+    def __init__(self, n_ports: int, position: int = 1, ports: List[Port] = [], name=None) -> None:
+        super().__init__(n_ports + 1, n_ports, position, ports, name)
 
     def update_map(self):
         """Updates the port map.
@@ -103,8 +103,8 @@ class LoopFlowValve(ValveBase):
 
     """
 
-    def __init__(self, n_ports: int, position: int = 1, ports: List[Port] = []) -> None:
-        super().__init__(n_ports, 2, position, ports)
+    def __init__(self, n_ports: int, position: int = 1, ports: List[Port] = [], name=None) -> None:
+        super().__init__(n_ports, 2, position, ports, name)
     
     def update_map(self) -> None:
         
@@ -121,8 +121,8 @@ class TValve(ValveBase):
 
     """
 
-    def __init__(self, n_ports: int, position: int = 1, ports: List[Port] = []) -> None:
-        super().__init__(n_ports, n_ports, position, ports)
+    def __init__(self, n_ports: int, position: int = 1, ports: List[Port] = [], name=None) -> None:
+        super().__init__(n_ports, n_ports, position, ports, name)
 
     def update_map(self):
         """Updates the port map.
@@ -136,5 +136,5 @@ class SyringeYValve(TValve):
         Implementation is that of a 3-port T valve.
     """
 
-    def __init__(self, position: int = 1, ports: List[Port] = []) -> None:
-        super().__init__(3, position, ports)
+    def __init__(self, position: int = 1, ports: List[Port] = [], name=None) -> None:
+        super().__init__(3, position, ports, name)
