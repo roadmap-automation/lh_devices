@@ -98,8 +98,8 @@ class Launcher:
 async def main():
     
     ser = HamiltonSerial(port='COM5', baudrate=38400)
-    mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(8))
-    sp = HamiltonSyringePump(ser, '0', SyringeYValve(), 5000, False)
+    mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(8, name='loop_valve'), name='loop_valve_positioner')
+    sp = HamiltonSyringePump(ser, '0', SyringeYValve(name='syringe_y_valve'), 5000, False, name='syringe_pump')
     #mvp = HamiltonValvePositioner(ser, '0', DistributionValve(8))
     #mvp = HamiltonBase(ser, '0')
     #await mvp.initialize()
@@ -109,11 +109,16 @@ async def main():
     #launch = Launcher([ser.initialize(), mvp.initialize(), sp.initialize(), ak.initialize()], stop_event)
     #launch = Launcher([at.initialize(), ak.initialize()], stop_event)
     #await launch.run()
-    await at.initialize()
-    await asyncio.sleep(3)
-    await at.change_mode('LHInject')
-    await asyncio.sleep(3)
-    await at.change_mode('LoopInject')
+    at.current_mode='LoopInject'
+    print(at.network.nodes)
+    print(at.get_dead_volume())
+    #await at.initialize()
+    #await asyncio.sleep(3)
+    #await at.change_mode('LHInject')
+    #print(at.get_dead_volume())
+    #await asyncio.sleep(3)
+    #await at.change_mode('LoopInject')
+    #print(at.get_dead_volume())
 
     #await asyncio.gather(ser.initialize(), sp.initialize(), ak.initialize())
 
