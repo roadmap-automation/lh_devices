@@ -3,9 +3,10 @@ import asyncio
 import aioserial
 from dataclasses import dataclass
 import datetime
+import logging
 
 def printcodes(p: str) -> None:
-    print(p, [hex(ord(b)) for b in p])
+    logging.debug(p, [hex(ord(b)) for b in p])
 
 def checksum(msg: str) -> str:
     """
@@ -72,7 +73,7 @@ class HamiltonSerial(aioserial.AioSerial):
         """
 
         return_value = {'value': None}
-        print(f'{datetime.datetime.now().isoformat()}: {self.port} => {repr(data)}')
+        logging.info(f'{self.port} => {repr(data)}')
         await self.write_async(data.standard_encode())
 
         # wait for results to come in, with timeout
@@ -86,14 +87,13 @@ class HamiltonSerial(aioserial.AioSerial):
                     #print(f'Return value: {return_value["value"]}')
                     break
             except asyncio.TimeoutError:
-                print('Timed out!')
-                pass
+                logging.warning('Warning: serial connection timed out!')
 
             # if not successful try again up to max_retries, changing repeat bit
             trial += 1
             data.repeat = '1'
             #print(f'Trial {trial}... {data}')
-            print(f'{datetime.datetime.now().isoformat()}: {self.port} => {repr(data)}')
+            logging.info(f'{self.port} => {repr(data)}')
             await self.write_async(data.standard_encode())
         
         # increment sequence number, cycling between 1 and 7
@@ -143,7 +143,7 @@ class HamiltonSerial(aioserial.AioSerial):
 
             # throw away first byte (always ASCII 255)
             data = data[1:].decode()
-            print(f'{datetime.datetime.now().isoformat()}: {self.port} <= {data}')
+            logging.info(f'{datetime.datetime.now().isoformat()}: {self.port} <= {data}')
 
             # calculate checksum
             data_chksum = ord(checksum(data))
@@ -156,5 +156,5 @@ class HamiltonSerial(aioserial.AioSerial):
             if recv_chksum == data_chksum:
                 return data
             else:
-                print(f'Received checksum {recv_chksum}, calculated checksum {data_chksum}, for data {data}')
+                logging.error(f'Received checksum {recv_chksum}, calculated checksum {data_chksum}, for data {data}')
                 return None

@@ -1,6 +1,6 @@
 from typing import Tuple, List
 import asyncio
-import datetime
+import logging
 from HamiltonComm import HamiltonSerial
 from valve import ValveBase
 from connections import Node
@@ -35,11 +35,11 @@ class PollTimer:
 
         # clear the event
         self.expired.clear()
-        #print(f'{datetime.datetime.now().isoformat()}: timer {self.address} started')
+        logging.debug(f'timer {self.address} started')
 
         # sleep the required delay
         await asyncio.sleep(self.poll_delay)
-        #print(f'{datetime.datetime.now().isoformat()}: timer {self.address} ended')
+        logging.debug(f'timer {self.address} ended')
 
         # set the event
         self.expired.set()
@@ -72,6 +72,13 @@ class HamiltonBase:
         self.command_queue: asyncio.Queue = asyncio.Queue()
         self.response_queue: asyncio.Queue = asyncio.Queue()
         self.batch_queue: asyncio.Queue = asyncio.Queue()
+
+    def __repr__(self):
+
+        if self.name:
+            return self.name
+        else:
+            return object.__repr__(self)
 
     def get_nodes(self) -> List[Node]:
 
@@ -167,7 +174,7 @@ class HamiltonBase:
 
         # TODO: Handle error
         if error:
-            print(f'Error in update_status: {error}')
+            logging.error(f'{self}: Error in update_status: {error}')
 
     def parse_status_byte(self, c: str) -> str | None:
         """
@@ -212,7 +219,7 @@ class HamiltonValvePositioner(HamiltonBase):
         if not error:
             self.initialized = True
         else:
-            print(f'Initialization error {error}')
+            logging.error(f'{self}: Initialization error {error}')
 
     async def move_valve(self, position: int) -> None:
         """Moves to a particular valve position. See specific valve documentation.
@@ -227,7 +234,7 @@ class HamiltonValvePositioner(HamiltonBase):
         self.valve.move(position)
         _, error = await self.query(f'I{position}R')
         if error:
-            print(f'Move error {error}')
+            logging.error(f'{self}: Move error {error}')
             self.valve.position = initial_value
 
 
@@ -268,7 +275,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         
         response, error = await self.query(f'N{int(high_resolution)}R')
         if error:
-            print(f'Error setting resolution: {error}')
+            logging.error(f'{self}: Error setting resolution: {error}')
         else:
             self._high_resolution = high_resolution
 
@@ -297,10 +304,10 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         calcV = float(desired_flow_rate * 6000) / self.syringe_volume
 
         if calcV < minV:
-            print(f'Warning: clipping desired flow rate {desired_flow_rate} to lowest possible value {self._flow_rate(minV)}')
+            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to lowest possible value {self._flow_rate(minV)}')
             return minV
         elif calcV > maxV:
-            print(f'Warning: clipping desired flow rate {desired_flow_rate} to highest possible value {self._flow_rate(maxV)}')
+            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to highest possible value {self._flow_rate(maxV)}')
             return maxV
         else:
             return round(calcV)
@@ -352,20 +359,20 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         await self.run(self.get_syringe_position())
         stroke_length = self._stroke_length(volume)
         max_position = self._full_stroke() / 2
-        #print(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
+        logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
 
         if max_position < (stroke_length + self.syringe_position):
-            print(f'Invalid syringe move from current position {self.syringe_position} with stroke length {stroke_length} and maximum position {max_position}')
+            logging.error(f'{self}: Invalid syringe move from current position {self.syringe_position} with stroke length {stroke_length} and maximum position {max_position}')
             
             # TODO: this is a hack to clear the response queue...need to fix this
             await self.update_status()
         else:
             V = self._speed_code(flow_rate)
-            print(f'Speed: {V}')
+            logging.debug(f'Speed: {V}')
 
             response, error = await self.query(f'V{V}P{stroke_length}R')
             if error:
-                print(f'Syringe move error {error}')
+                logging.error(f'{self}: Syringe move error {error}')
 
     async def dispense(self, volume: float, flow_rate: float) -> None:
         """Dispense
@@ -377,17 +384,17 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         await self.run(self.get_syringe_position())
         stroke_length = self._stroke_length(volume)
-        #print(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
+        logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
 
         if (self.syringe_position - stroke_length) < 0:
-            print(f'Invalid syringe move from current position {self.syringe_position} with stroke length {stroke_length} and minimum position 0')
+            logging.error(f'{self}: Invalid syringe move from current position {self.syringe_position} with stroke length {stroke_length} and minimum position 0')
             await self.update_status()
         else:
             V = self._speed_code(flow_rate)
 
             response, error = await self.query(f'V{V}D{stroke_length}R')
             if error:
-                print(f'Syringe move error {error}')
+                logging.error(f'{self}: Syringe move error {error}')
 
     async def home(self) -> None:
         """Home syringe.
@@ -395,7 +402,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         response, error = await self.query(f'A0R')
         if error:
-            print(f'Syringe homing error {error}')
+            logging.error(f'{self}: Syringe homing error {error}')
 
 # ======== batch running tools
 # by having these separate from the individual classes, they can be used for both single and

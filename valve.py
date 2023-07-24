@@ -1,5 +1,5 @@
+import logging
 from typing import List
-from copy import copy
 from connections import Port, Node
 from components import ComponentBase
 
@@ -27,7 +27,8 @@ class ValveBase(ComponentBase):
             self.ports = [Port(name=f'{self.name}.port_{i}') for i in range(n_ports)]
         else:
             if len(ports) != n_ports:
-                raise ValueError(f'{len(ports)} ports specified but {n_ports} required')
+                logging.error(f'{len(ports)} ports specified but {n_ports} required')
+                return
             self.ports = ports
 
         self._generate_nodes()
@@ -38,7 +39,8 @@ class ValveBase(ComponentBase):
     def get_connection(self, port: Port) -> Port | None:
 
         if port not in self.ports:
-            raise ValueError(f'Port is not associated with this valve')
+            logging.error(f'Port {port} is not associated with valve {self}')
+            return
 
         port_idx = self._portmap[self.ports.index(port)]
 
@@ -66,7 +68,8 @@ class ValveBase(ComponentBase):
 
     def move(self, position) -> None:
         if position not in range(1, self.n_positions + 1):
-            raise ValueError(f'Requested position {position} is not an integer between 1 and {self.n_positions}')
+            logging.error(f'Requested position {position} is not an integer between 1 and {self.n_positions}')
+            return
         
         self.position = position
         self.update_map()

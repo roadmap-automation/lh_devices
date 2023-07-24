@@ -1,4 +1,5 @@
 from typing import Dict
+import logging
 from enum import Enum
 from dataclasses import dataclass
 import datetime
@@ -74,24 +75,24 @@ class GSIOC(aioserial.AioSerial):
         Starts GSIOC listener. Only ends when an interrupt signal is received.
         """
 
-        print('Starting GSIOC listener... Ctrl+C to exit.')
+        logging.info('Starting GSIOC listener... Ctrl+C to exit.')
         self.interrupt = False
 
         # infinite loop to wait for a command
         while not self.interrupt:
 
-            #print('Waiting for connection...')
+            logging.debug('Waiting for connection...')
 
             await self.wait_for_connection()
 
             if self.connected: # address received
-                #print('Connection established, waiting for command')
+                logging.debug('Connection established, waiting for command')
                 # waits for a command
                 cmd = await self.wait_for_command()
 
                 if cmd:
 
-                    print(f'{datetime.datetime.now().isoformat()}: {self.port} (GSIOC) <= {cmd}')
+                    logging.info(f'{self.port} (GSIOC) <= {cmd}')
 
                     # process ID request immediately
                     if cmd == '%':
@@ -105,11 +106,11 @@ class GSIOC(aioserial.AioSerial):
                         await self.message_queue.put(data)
 
                         if data.messagetype == GSIOCCommandType.IMMEDIATE:
-                            #print('Waiting for response to immediate command')
+                            logging.debug('Waiting for response to immediate command')
                             response: str = await self.response_queue.get()
                             await self.send(response)
 
-            #print('Connection reset...')
+            logging.debug('Connection reset...')
 
         # close serial port before exiting when interrupt is received
         self.close()
@@ -124,14 +125,14 @@ class GSIOC(aioserial.AioSerial):
 
         # if address matches, echo the address
         if comm == self.address + 128:
-            #print(f'address matches, writing {chr(self.address + 128).encode()}')
+            logging.debug(f'address matches, writing {chr(self.address + 128).encode()}')
             await self.write1(chr(self.address + 128))
             self.connected = True
         
         # if result is byte 255, send a break character
         # TODO: check if this should be self.ser.send_break
         elif comm == 255:
-            #print('sending break')
+            logging.debug('sending break')
             await self.write1(chr(10))
             self.connected = False
 
@@ -146,7 +147,7 @@ class GSIOC(aioserial.AioSerial):
 
             # buffered command...read until line feed is sent
             if comm == 10:
-                #print(f'got LF, starting buffered command read')
+                logging.debug(f'got LF, starting buffered command read')
                 await self.write1(chr(comm))
                 msg = ''
                 while comm != 13:
@@ -158,7 +159,7 @@ class GSIOC(aioserial.AioSerial):
 
                     msg += chr(comm)
 
-                #print(f'got CR, end of message: {msg}')
+                logging.debug(f'got CR, end of message: {msg}')
 
                 return msg
             
@@ -178,7 +179,7 @@ class GSIOC(aioserial.AioSerial):
             cmd = cmd[:-1]
 
             # TODO: do stuff
-            #print(f'Buffered command received: {cmd}')
+            logging.debug(f'Buffered command received: {cmd}')
             return GSIOCMessage(GSIOCCommandType.BUFFERED, cmd)
 
             #await self.send(f'You sent me buffered command {cmd}')
@@ -193,7 +194,7 @@ class GSIOC(aioserial.AioSerial):
         comm = await self.read_async()
         if len(comm):
             #print(comm)
-            #print(int(comm.hex(), base=16))#, len(comm), [ord(c) for c in comm])
+            logging.debug(int(comm.hex(), base=16))#, len(comm), [ord(c) for c in comm])
             return int(comm.hex(), base=16)
         else:
             return None
@@ -204,7 +205,7 @@ class GSIOC(aioserial.AioSerial):
         """
         ret = await self.read1()
         if ret != 6:
-            print(f'Warning: wrong acknowledgement character received: {ret}')
+            logging.warning(f'Warning: wrong acknowledgement character received: {ret}')
 
     async def write1(self, char: str):
         """
@@ -223,7 +224,7 @@ class GSIOC(aioserial.AioSerial):
         # last character gets sent with high bit (add ASCII 128)
         await self.write1(chr(ord(msg[-1]) + 128))
 
-        print(f'{datetime.datetime.now().isoformat()}: {self.port} (GSIOC) => {msg}')
+        logging.info(f'{self.port} (GSIOC) => {msg}')
 
 class GSIOCTestDevice:
 
@@ -270,7 +271,7 @@ class GSIOCTestDevice:
         """Sleeps a time sleeptime and updates idle flag"""
 
         self.idle = False
-        print(f'Sleeping {sleeptime} s...')
+        logging.info(f'Sleeping {sleeptime} s...')
         await asyncio.sleep(sleeptime)
         self.idle = True
 
@@ -298,5 +299,9 @@ async def main():
 
 
 if __name__ == '__main__':
+
+    logging.basicConfig(format='%(asctime)s %(message)s',
+                        datefmt='%m/%d/%Y %I:%M:%S %p',
+                        level=logging.INFO)
 
     asyncio.run(main(), debug=True)

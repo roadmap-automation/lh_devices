@@ -1,7 +1,8 @@
 import asyncio
-from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
+import logging
 from typing import List, Tuple, Dict
 
+from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump, batch_run
 from connections import Port, Node, connect_nodes
 
@@ -44,11 +45,11 @@ class Network:
             new_port, dv = current_node.trace_connection(previous_port)
 
             if len(new_port) == 0:
-                print('Warning: chain broken, destination_port not reached')
+                logging.warning('Warning: chain broken, destination_port not reached, dead volume incomplete')
                 break
 
             if len(new_port) > 1:
-                print('Warning: ambiguous connection chain')
+                logging.warning('Warning: ambiguous connection chain, dead volume incomplete')
                 break
             
             # update dead volume from traced connection
@@ -110,10 +111,11 @@ class AssemblyBase:
         """
 
         if mode in self.modes:
+            logging.info(f'{self}: Changing mode to {mode}')
             await self.move_valves(self.modes[mode])
             self.current_mode = mode
         else:
-            raise ValueError('Mode not in modes dictionary')
+            logging.error(f'Mode {mode} not in modes dictionary of {self}')
 
     async def move_valves(self, valve_config: Dict[HamiltonValvePositioner, int]) -> None:
         """Batch change valve conditions. Enables predefined valve modes.

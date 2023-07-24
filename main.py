@@ -1,5 +1,13 @@
 import asyncio
 import aioconsole
+import logging
+import datetime
+
+#logging.basicConfig(filename=datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_log.txt',
+#                    filemode='w',
+logging.basicConfig(format='%(asctime)s.%(msecs)03d %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S',
+                    level=logging.INFO)
 
 from HamiltonComm import HamiltonSerial
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
@@ -17,7 +25,7 @@ class AsyncKeyboard:
     
     def stop(self) -> None:
         self.stop_event.set()
-        print('stopping keyboard input...')
+        logging.info('stopping keyboard input...')
         self.stopped = True
         
     async def initialize(self) -> None:
@@ -38,7 +46,7 @@ class AsyncKeyboard:
             #response = cmd
             response = await self.dev.run_until_idle(cmd)
             if response is not None:
-                print(response)
+                logging.debug(response)
 
     async def send_mvp_command(self) -> None:
         while not self.stopped:
@@ -50,7 +58,7 @@ class AsyncKeyboard:
     async def send_sp_command(self) -> None:
         while not self.stopped:
             cmd: str = await self.console_queue.get()
-            print(cmd)
+            logging.debug(cmd)
             if cmd.startswith('?'):
                 response = await self.dev.run(self.dev.query(cmd))
             elif cmd.startswith('d'):
@@ -58,16 +66,16 @@ class AsyncKeyboard:
                 response = await self.dev.run_until_idle(self.dev.dispense(float(volume), float(flow_rate)))
             elif cmd.startswith('a'):
                 volume, flow_rate = cmd[1:].split('f')
-                print(volume, flow_rate)
+                logging.debug(volume, flow_rate)
                 response = await self.dev.run_until_idle(self.dev.aspirate(float(volume), float(flow_rate)))
             elif cmd.startswith('r'):
                 resolution = int(cmd[1:])
                 response = await self.dev.run_until_idle(self.dev.set_high_resolution(bool(resolution)))
-                print(self.dev._high_resolution)
+                logging.debug(self.dev._high_resolution)
             else:
                 response = await self.dev.run_until_idle(self.dev.query(cmd))
             if response is not None:
-                print(response)
+                logging.debug(response)
 
             #if response is not None:
             #    print(response)
@@ -84,7 +92,7 @@ class Launcher:
         try:
             await asyncio.gather(*(self.tasks + [self.on_stop()]))
         except asyncio.CancelledError:
-            print('Exiting launcher...')
+            logging.info('Exiting launcher...')
 
     async def on_stop(self):
         """Stops stuff"""
@@ -92,7 +100,7 @@ class Launcher:
         for task in self.tasks:
             task.cancel()
 
-        print('Cleaning up...')
+        logging.info('Cleaning up...')
         await asyncio.sleep(2)
 
 async def main():
@@ -110,8 +118,8 @@ async def main():
     #launch = Launcher([at.initialize(), ak.initialize()], stop_event)
     #await launch.run()
     at.current_mode='LoopInject'
-    print(at.network.nodes)
-    print(at.get_dead_volume())
+    logging.debug(at.network.nodes)
+    logging.debug(at.get_dead_volume())
     #await at.initialize()
     #await asyncio.sleep(3)
     #await at.change_mode('LHInject')

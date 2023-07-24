@@ -19,6 +19,13 @@ class ComponentBase:
 
         return self.nodes
     
+    def __repr__(self):
+
+        if self.name:
+            return self.name
+        else:
+            return object.__repr__(self)
+    
 class FlowCell(ComponentBase):
     """Representation of a unidirectional flow cell
     """
