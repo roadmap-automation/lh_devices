@@ -1,6 +1,7 @@
 from typing import Dict
 from enum import Enum
 from dataclasses import dataclass
+import datetime
 import asyncio
 import aioserial
 
@@ -79,16 +80,18 @@ class GSIOC(aioserial.AioSerial):
         # infinite loop to wait for a command
         while not self.interrupt:
 
-            print('Waiting for connection...')
+            #print('Waiting for connection...')
 
             await self.wait_for_connection()
 
             if self.connected: # address received
-                print('Connection established, waiting for command')
+                #print('Connection established, waiting for command')
                 # waits for a command
                 cmd = await self.wait_for_command()
 
                 if cmd:
+
+                    print(f'{datetime.datetime.now().isoformat()}: {self.port} (GSIOC) <= {cmd}')
 
                     # process ID request immediately
                     if cmd == '%':
@@ -102,11 +105,11 @@ class GSIOC(aioserial.AioSerial):
                         await self.message_queue.put(data)
 
                         if data.messagetype == GSIOCCommandType.IMMEDIATE:
-                            print('Waiting for response to immediate command')
+                            #print('Waiting for response to immediate command')
                             response: str = await self.response_queue.get()
                             await self.send(response)
 
-            print('Connection reset...')
+            #print('Connection reset...')
 
         # close serial port before exiting when interrupt is received
         self.close()
@@ -121,14 +124,14 @@ class GSIOC(aioserial.AioSerial):
 
         # if address matches, echo the address
         if comm == self.address + 128:
-            print(f'address matches, writing {chr(self.address + 128).encode()}')
+            #print(f'address matches, writing {chr(self.address + 128).encode()}')
             await self.write1(chr(self.address + 128))
             self.connected = True
         
         # if result is byte 255, send a break character
         # TODO: check if this should be self.ser.send_break
         elif comm == 255:
-            print('sending break')
+            #print('sending break')
             await self.write1(chr(10))
             self.connected = False
 
@@ -143,7 +146,7 @@ class GSIOC(aioserial.AioSerial):
 
             # buffered command...read until line feed is sent
             if comm == 10:
-                print(f'got LF, starting buffered command read')
+                #print(f'got LF, starting buffered command read')
                 await self.write1(chr(comm))
                 msg = ''
                 while comm != 13:
@@ -155,7 +158,7 @@ class GSIOC(aioserial.AioSerial):
 
                     msg += chr(comm)
 
-                print(f'got CR, end of message: {msg}')
+                #print(f'got CR, end of message: {msg}')
 
                 return msg
             
@@ -175,7 +178,7 @@ class GSIOC(aioserial.AioSerial):
             cmd = cmd[:-1]
 
             # TODO: do stuff
-            print(f'Buffered command received: {cmd}')
+            #print(f'Buffered command received: {cmd}')
             return GSIOCMessage(GSIOCCommandType.BUFFERED, cmd)
 
             #await self.send(f'You sent me buffered command {cmd}')
@@ -189,8 +192,8 @@ class GSIOC(aioserial.AioSerial):
         """
         comm = await self.read_async()
         if len(comm):
-            print(comm)
-            print(int(comm.hex(), base=16))#, len(comm), [ord(c) for c in comm])
+            #print(comm)
+            #print(int(comm.hex(), base=16))#, len(comm), [ord(c) for c in comm])
             return int(comm.hex(), base=16)
         else:
             return None
@@ -200,10 +203,8 @@ class GSIOC(aioserial.AioSerial):
         Waits for acknowledgement of a sent byte from the master
         """
         ret = await self.read1()
-        if ret == 6:
-            print('acknowledgement received')
-        else:
-            print(f'wrong acknowledgement character received: {ret}')
+        if ret != 6:
+            print(f'Warning: wrong acknowledgement character received: {ret}')
 
     async def write1(self, char: str):
         """
@@ -222,6 +223,65 @@ class GSIOC(aioserial.AioSerial):
         # last character gets sent with high bit (add ASCII 128)
         await self.write1(chr(ord(msg[-1]) + 128))
 
+        print(f'{datetime.datetime.now().isoformat()}: {self.port} (GSIOC) => {msg}')
+
+class GSIOCTestDevice:
+
+    def __init__(self, gsioc: GSIOC) -> None:
+        self.gsioc = gsioc
+        self.gsioc_command_queue: asyncio.Queue = asyncio.Queue()
+        self.idle = True
+
+    async def monitor_gsioc(self) -> None:
+        """Monitor GSIOC queue
+        """
+
+        while True:
+            data: GSIOCMessage = await self.gsioc.message_queue.get()
+
+            response = await self.handle_gsioc(data)
+            if data.messagetype == GSIOCCommandType.IMMEDIATE:
+                await self.gsioc.response_queue.put(response)
+
+    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
+        """Handles GSIOC messages. Base version only handles idle requests
+
+        Args:
+            data (GSIOCMessage): GSIOC Message to be parsed / handled
+
+        Returns:
+            str: response (only for GSIOC immediate commands)
+        """
+
+        if data.data == 'Q':
+            # busy query
+            return 'idle' if self.idle else 'busy'
+        
+        elif data.data.startswith('sleep: '):
+            sleeptime = float(data.data.split('sleep: ', 1)[1])
+            await self.gsioc_command_queue.put(asyncio.create_task(self.sleep(sleeptime)))
+        
+        else:
+            return 'error: unknown command'
+        
+        return None
+
+    async def sleep(self, sleeptime: float) -> None:
+        """Sleeps a time sleeptime and updates idle flag"""
+
+        self.idle = False
+        print(f'Sleeping {sleeptime} s...')
+        await asyncio.sleep(sleeptime)
+        self.idle = True
+
+    async def gsioc_actions(self) -> None:
+        """Monitors GSIOC command queue and performs actions asynchronously
+        """
+
+        while True:
+            task: asyncio.Future = self.gsioc_command_queue.get()
+            await task
+
 async def main():
 
     virtual_port = 'COM13'
@@ -233,7 +293,8 @@ async def main():
 #    signal.signal(signal.SIGINT, signal_handler)
 
     gsioc = GSIOC(gsioc_address, port=virtual_port, baudrate=baud_rate, parity=aioserial.PARITY_EVEN)
-    await gsioc.listen()
+    gtd = GSIOCTestDevice(gsioc)
+    await asyncio.gather(gsioc.listen(), gtd.monitor_gsioc(), gtd.gsioc_actions())
 
 
 if __name__ == '__main__':
