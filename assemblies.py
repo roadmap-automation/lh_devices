@@ -5,12 +5,13 @@ from typing import List, Tuple, Dict
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump, batch_run
 from connections import Port, Node, connect_nodes
+from components import ComponentBase
 
 class Network:
     """Representation of a node network
     """
 
-    def __init__(self, devices: List[HamiltonBase]) -> None:
+    def __init__(self, devices: List[HamiltonBase | ComponentBase]) -> None:
         self.devices = devices
         self._port_to_node_map: dict[Port, Node] = {}
         self.nodes: List[Node] = []
@@ -42,6 +43,7 @@ class Network:
         # iterate through the network
         while True:
             # find node associated with previous port
+            #logging.debug((current_node, current_port))
             new_port, dv = current_node.trace_connection(previous_port)
 
             if len(new_port) == 0:
@@ -90,8 +92,9 @@ class AssemblyBase:
     """Assembly of Hamilton LH devices
     """
 
-    def __init__(self, devices: List[HamiltonBase]) -> None:
+    def __init__(self, devices: List[HamiltonBase], name='') -> None:
         
+        self.name = name
         self.devices = devices
         self.network = Network(self.devices)
         self.batch_queue = asyncio.Queue()
@@ -146,8 +149,8 @@ class AssemblyBasewithGSIOC(AssemblyBase):
     """Assembly with GSIOC support
     """
 
-    def __init__(self, devices: List[HamiltonBase], gsioc: GSIOC) -> None:
-        super().__init__(devices)
+    def __init__(self, devices: List[HamiltonBase], gsioc: GSIOC, name='') -> None:
+        super().__init__(devices, name=name)
         self.gsioc = gsioc
         self.gsioc_command_queue: asyncio.Queue = asyncio.Queue()
 
@@ -204,8 +207,8 @@ class AssemblyBasewithGSIOC(AssemblyBase):
 
 class AssemblyTest(AssemblyBase):
 
-    def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump) -> None:
-        super().__init__(devices=[loop_valve, syringe_pump])
+    def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump, name='') -> None:
+        super().__init__(devices=[loop_valve, syringe_pump], name=name)
 
         connect_nodes(syringe_pump.valve.nodes[1], loop_valve.valve.nodes[0], 101)
         connect_nodes(syringe_pump.valve.nodes[2], loop_valve.valve.nodes[1], 102)
@@ -225,10 +228,10 @@ class RoadmapChannel(AssemblyBase):
     """Assembly of MVP and PSD devices creating one ROADMAP channel
     """
 
-    def __init__(self, loop_valve: HamiltonValvePositioner, cell_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump) -> None:
+    def __init__(self, loop_valve: HamiltonValvePositioner, cell_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump, name='') -> None:
         connect_nodes(loop_valve.valve.nodes[0], cell_valve.valve.nodes[1], dead_volume=100)
         # make any additional connections here; network initialization will then know about all the connections
-        super().__init__([loop_valve, cell_valve, syringe_pump])
+        super().__init__([loop_valve, cell_valve, syringe_pump], name=name)
 
 # TODO: Think about serialization / deserialization or loading from a config file. Should be
 #           straightforward to reconstruct the network, if not the comm information
