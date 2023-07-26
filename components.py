@@ -27,7 +27,8 @@ class ComponentBase:
             return object.__repr__(self)
     
 class FlowCell(ComponentBase):
-    """Representation of a unidirectional flow cell
+    """Representation of a flow cell or sample loop. Inlet and outlet ports are essentially
+        arbitrary.
     """
 
     def __init__(self, volume: float = 0.0, name: str = '') -> None:
@@ -50,7 +51,7 @@ class FlowCell(ComponentBase):
 
         self._volume = volume
         disconnect_nodes(*self.nodes)
-        connect_nodes(*self.nodes, dead_volume=volume, name=f'{self.name}.cell')
+        connect_nodes(*self.nodes, dead_volume=volume)
 
     def get_volume(self):
         """Gets volume of flow cell
@@ -60,3 +61,14 @@ class FlowCell(ComponentBase):
         """
 
         return self._volume
+
+class InjectionPort(ComponentBase):
+    """Representation of an injection port
+    """
+    
+    def __init__(self, name: str = '') -> None:
+        super().__init__(name)
+
+        self.inlet_port = Port(name=f'{self.name}.inlet_port')
+        self.ports = [self.inlet_port]
+        self._generate_nodes()
