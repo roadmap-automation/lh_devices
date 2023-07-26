@@ -95,8 +95,9 @@ class DistributionValve(ValveBase):
         self._portmap[self.position] = 0
 
 class LoopFlowValve(ValveBase):
-    """Loop flow valve representation, with n_ports and 2 positions. Port 0 is the bottom port, 
-        and ports are numbered consecutively clockwise.
+    """Loop flow valve representation, with n_ports and 2 positions. Port 0 is the bottom port. 
+        and ports are numbered consecutively clockwise. If there is no bottom port, 0 is the 
+        first in the clockwise direction.
 
     For loop flow valves (n_positions = 2):
         position = 1 corresponds to a connection between ports 0 and 1, 2 and 3, ...
