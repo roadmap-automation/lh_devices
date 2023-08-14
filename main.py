@@ -107,6 +107,7 @@ async def main():
     
     ser = HamiltonSerial(port='COM5', baudrate=38400)
     mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
+    #mvp = HamiltonValvePositioner(ser, '1', SyringeYValve(name='syringe_y_valve'), name='loop_valve_positioner')
     sp = HamiltonSyringePump(ser, '0', SyringeYValve(name='syringe_y_valve'), 5000, False, name='syringe_pump')
     #mvp = HamiltonValvePositioner(ser, '0', DistributionValve(8))
     #mvp = HamiltonBase(ser, '0')
@@ -115,12 +116,49 @@ async def main():
     ak = AsyncKeyboard(ser, sp, stop_event)
     at = AssemblyTest(mvp, sp)
     #launch = Launcher([ser.initialize(), mvp.initialize(), sp.initialize(), ak.initialize()], stop_event)
-    launch = Launcher([at.initialize(), ak.initialize()], stop_event)
+    #launch = Launcher([at.initialize(), ak.initialize()], stop_event)
     #await launch.run()
     #at.current_mode='LoopInject'
     #logging.debug(at.network.nodes)
     #logging.debug(at.get_dead_volume())
     await at.initialize()
+
+    #await mvp.query('?25000')
+    #await asyncio.sleep(2)
+    #for i in [30, 0, 60, 30]:
+    #    await mvp.run_until_idle(mvp.query(f'h29{i:03.0f}R'))
+    #    await mvp.query('?25000')
+    #    await asyncio.sleep(4)
+
+    #await mvp.query('h30003R')
+    #await asyncio.sleep(2)
+    #await mvp.initialize()
+    #await mvp.move_valve(0)
+    #await asyncio.sleep(4)
+    #await mvp.move_valve(1)
+    #await asyncio.sleep(4)
+    #await mvp.move_valve(2)
+
+    #await mvp.set_valve_code(0)
+    #await mvp.get_valve_code()
+    #await mvp.set_valve_code(3)
+    #await mvp.get_valve_code()
+
+    #for i in range(7):
+    #    await mvp.run_until_idle(mvp.query(f'h2400{i}R'))
+    #    await mvp.query('?25000')
+    #    await asyncio.sleep(2)
+    
+    #await mvp.run_until_idle(mvp.query('I1R'))
+    #await mvp.query('?25000')
+    #await asyncio.sleep(10)
+    
+    #await mvp.run_until_idle(mvp.query('I2R'))
+    #await mvp.query('?25000')
+    #await asyncio.sleep(10)
+    #print(mvp.valve.hamilton_valve_code)
+    #await sp.query('?21000')
+    #await mvp.query('?21000')
     await asyncio.sleep(3)
     await at.change_mode('LHInject')
     #print(at.get_dead_volume())
