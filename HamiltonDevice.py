@@ -101,7 +101,7 @@ class HamiltonBase:
         # process response
         if response:
             response = response[2:-1]
-            error = self.parse_status_byte(response)
+            response, error = self.parse_status_byte(response)
             return response, error
         else:
             return None, None
@@ -142,10 +142,11 @@ class HamiltonBase:
         if error:
             logging.error(f'{self}: Error in update_status: {error}')
 
-    def parse_status_byte(self, c: str) -> str | None:
+    def parse_status_byte(self, response: str) -> str | None:
         """
         Parses status byte
         """
+        c = response[0]
 
         error = None
         match c:
@@ -161,7 +162,7 @@ class HamiltonBase:
         if error:
             self.idle = True
 
-        return error
+        return response.split(c, 1)[1], error
 
 class HamiltonValvePositioner(HamiltonBase):
     """Hamilton MVP4 device
@@ -177,6 +178,11 @@ class HamiltonValvePositioner(HamiltonBase):
         
         return self.valve.nodes
 
+    async def initialize(self) -> None:
+        await super().initialize()
+        await self.set_valve_code()
+        await self.move_valve(0)
+
     async def initialize_device(self) -> None:
         """Initialize the device"""
 
@@ -187,6 +193,65 @@ class HamiltonValvePositioner(HamiltonBase):
         else:
             logging.error(f'{self}: Initialization error {error}')
 
+    async def set_valve_code(self, code: int | None = None) -> None:
+        """Set valve code on MVP/4 device. Supposed to override DIP switches but does not appear to.
+
+        Args:
+            code (int | None, optional): Optionally specify valve code on MVP/4 device. Defaults to None.
+        """
+        
+        code = self.valve.hamilton_valve_code if code is None else code
+
+        if code is not None:
+            _, error = await self.query(f'h2100{code}R')
+            await self.poll_until_idle()
+            if not error:
+                await self.get_valve_code()
+            else:
+                logging.error(f'{self}: Valve code could not be set, got error {error}')
+        else:
+            logging.error(f'{self}: Unknown Hamilton valve code {code}')
+
+    async def get_valve_code(self) -> None:
+        """Reads the valve code from the device and checks against internal value
+        """
+
+        response, error = await self.query('?21000')
+        if not error:
+            code = int(response)
+            if code != self.valve.hamilton_valve_code:
+                logging.error(f'{self}: Valve code {code} from instrument does not match expected {self.valve.hamilton_valve_code}')
+        else:
+            logging.error(f'{self}: Valve code could not be read, got response {response} and error {error}')
+
+    async def get_valve_position(self) -> None:
+        """Reads the valve position from the device and updates the internal value
+        """
+
+        response, error = await self.query('?25000')
+        if not error:
+            angle = int(response)
+
+            # convert to position
+            delta_angle = 360 / self.valve.n_ports
+            position = angle / delta_angle + 1
+
+            # if non-integer position, check for off position or error
+            if position != int(position):
+                if angle == (delta_angle // 6) * 3:
+                    position = 0
+                else:
+                    logging.error(f'{self}: valve is at unknown position {position} with angle {angle}')
+                    position = None
+            else:
+                position = int(position)
+
+            # record position
+            logging.debug(f'{self}: Valve is at position {position}')
+            self.valve.move(position)
+        else:
+            logging.error(f'{self}: Valve position could not be read, got response {response} and error {error}')
+
     async def move_valve(self, position: int) -> None:
         """Moves to a particular valve position. See specific valve documentation.
 
@@ -194,14 +259,26 @@ class HamiltonValvePositioner(HamiltonBase):
             position (int): position to move the valve to
         """
 
-        initial_value = self.valve.position
-        
         # this checks for errors
         self.valve.move(position)
-        _, error = await self.query(f'I{position}R')
+
+        # convert to angle
+        delta_angle = 360 / self.valve.n_ports
+
+        # in special case of zero, move valve to "off" position between angles
+        angle = delta_angle // 6 * 3 if position == 0 else (position - 1) * delta_angle
+
+        _, error = await self.query(f'h29{angle:03.0f}R')
+        await self.poll_until_idle()
         if error:
             logging.error(f'{self}: Move error {error}')
-            self.valve.position = initial_value
+
+        # check that valve actually moved
+        await self.get_valve_position()
+        if self.valve.position != position:
+            logging.error(f'{self}: Valve did not move to new position {position}, actually at {self.valve.position}')
+        else:
+            logging.debug(f'{self}: Move successful to position {position}')
 
 
 class HamiltonSyringePump(HamiltonValvePositioner):
@@ -311,8 +388,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         response, error = await self.query('?')
         
-        self.syringe_position = int(response[1:])
-
+        self.syringe_position = int(response)
 
     async def aspirate(self, volume: float, flow_rate: float) -> None:
         """Aspirate (Pick-up)
