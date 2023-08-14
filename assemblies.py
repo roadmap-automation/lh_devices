@@ -3,7 +3,7 @@ import logging
 from typing import List, Tuple, Dict
 
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
-from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump, batch_run
+from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from connections import Port, Node, connect_nodes
 from components import ComponentBase
 
@@ -128,8 +128,7 @@ class AssemblyBase:
                                                         position as value
         """
 
-        await batch_run([dev.run_in_batch(dev.move_valve(pos), self.batch_queue) for dev, pos in valve_config.items() if dev in self.devices], self.batch_queue)
-        await asyncio.gather(*(dev.poll_until_idle() for dev in valve_config.keys() if dev in self.devices))
+        await asyncio.gather(*(dev.run_until_idle(dev.move_valve(pos)) for dev, pos in valve_config.items() if dev in self.devices))
 
     def get_dead_volume(self) -> float:
         """Gets dead volume of current configuration mode

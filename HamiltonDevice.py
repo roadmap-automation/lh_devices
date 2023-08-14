@@ -69,9 +69,7 @@ class HamiltonBase:
         self.poll_delay = 0.1   # Hamilton-recommended 100 ms delay when polling
         self.address = address
         self.address_code = chr(int(address, base=16) + int('31', base=16))
-        self.command_queue: asyncio.Queue = asyncio.Queue()
         self.response_queue: asyncio.Queue = asyncio.Queue()
-        self.batch_queue: asyncio.Queue = asyncio.Queue()
 
     def __repr__(self):
 
@@ -91,43 +89,11 @@ class HamiltonBase:
     async def initialize_device(self) -> None:
         pass
 
-    async def _serial_query(self) -> str:
-        """
-        Gets command from command queue and runs a serial query
-        """
-
-        # Get command from command queue
-        addr, cmd, queue = await self.command_queue.get()
-
-        # Send address, command string, and response queue to serial connection
-        await self.serial.query(addr, cmd, queue)
-    
-    async def run(self, cmd: asyncio.Future) -> None:
-        """Runs a method using command and response queues
-
-        Args:
-            cmd (asyncio.Future): method to run. Sending command to self.command_queue will
-                                    trigger the command to be run. Command should process the
-                                    response.
-        """
-
-        await asyncio.gather(cmd, self._serial_query())
-
-    async def run_in_batch(self, cmd: asyncio.Future, batch_queue: asyncio.Queue) -> None:
-        """Runs a method as part of a batch (called from higher-level devices)
-
-        Args:
-            cmd (asyncio.Future): command to run (see self.run)
-            batch_queue (asyncio.Queue): queue in which to put the command future
-        """
-
-        await batch_queue.put((self.serial, cmd, self.command_queue))
-
     async def query(self, cmd: str) -> Tuple[str | None, str | None]:
         """Adds command to command queue and waits for response"""
         
         # push command to command queue
-        await self.command_queue.put((self.address_code, cmd, self.response_queue))
+        await self.serial.query(self.address_code, cmd, self.response_queue)
 
         # wait for response
         response = await self.response_queue.get()
@@ -151,7 +117,7 @@ class HamiltonBase:
 
         while (not self.idle):
             # run update_status and start the poll_delay timer
-            await asyncio.gather(self.run(self.update_status()), timer.cycle())
+            await asyncio.gather(self.update_status(), timer.cycle())
 
             # wait until poll_delay timer has ended before asking for new status.
             await timer.wait_until_set()
@@ -162,7 +128,7 @@ class HamiltonBase:
         """
 
         self.idle = False
-        await self.run(cmd)
+        await cmd
         await self.poll_until_idle()
 
     async def update_status(self) -> None:
@@ -356,7 +322,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             flow_rate (float): flow rate in uL / s
         """
 
-        await self.run(self.get_syringe_position())
+        await self.get_syringe_position()
         stroke_length = self._stroke_length(volume)
         max_position = self._full_stroke() / 2
         logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
@@ -365,7 +331,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             logging.error(f'{self}: Invalid syringe move from current position {self.syringe_position} with stroke length {stroke_length} and maximum position {max_position}')
             
             # TODO: this is a hack to clear the response queue...need to fix this
-            await self.update_status()
+            #await self.update_status()
         else:
             V = self._speed_code(flow_rate)
             logging.debug(f'Speed: {V}')
@@ -382,13 +348,13 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             flow_rate (float): flow rate in uL / s
         """
 
-        await self.run(self.get_syringe_position())
+        await self.get_syringe_position()
         stroke_length = self._stroke_length(volume)
         logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
 
         if (self.syringe_position - stroke_length) < 0:
             logging.error(f'{self}: Invalid syringe move from current position {self.syringe_position} with stroke length {stroke_length} and minimum position 0')
-            await self.update_status()
+            #await self.update_status()
         else:
             V = self._speed_code(flow_rate)
 
@@ -404,88 +370,3 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         if error:
             logging.error(f'{self}: Syringe homing error {error}')
 
-# ======== batch running tools
-# by having these separate from the individual classes, they can be used for both single and
-# multiple devices
-#
-""" TODO: This seems unnecessarily complicated. Requires calling syntax of the type:
-    await batch_run([dev.run_in_batch(dev.<command>(), batch_queue) for dev in devices], batch_queue)
-
-    It would be nice if batch_run could just accept dev.<command>() and the device in question 
-    would be automatically retrieved. This would allow batch_run to generate its own temporary
-    batch_queue and simplify everything.
-"""
-
-async def _batch_serial_query(ncmds: int, batch_queue: asyncio.Queue) -> None:
-    """Handles batch of serial queries
-
-    Args:
-        ncmds (int): number of serial queries in the batch
-        batch_queue (asyncio.Queue): batch queue containing the queries
-    """
-
-    # create a container for parsing serial requests by serial port
-    unique_serial: dict[HamiltonSerial, List[asyncio.Queue]] = {}
-    tasks = []
-
-    # loop through commands in batch request
-    for _ in range(ncmds):
-        # get serial port, command future, and the command queue
-        item: Tuple[HamiltonSerial, asyncio.Future, asyncio.Queue] = await batch_queue.get()
-        ser, cmd, command_queue = item
-
-        # unique serial ports get a new entry
-        if ser not in unique_serial.keys():
-            unique_serial[ser] = []
-        
-        # maintqain a list of command queues for each item
-        unique_serial[ser].append(command_queue)
-
-        # maintain a list of tasks
-        tasks.append(cmd)
-
-    # run concurrently the tasks and the command / response handler
-    tasks.append(_batch_run_tasks(unique_serial))
-    await asyncio.gather(*tasks)
-
-async def _batch_run_tasks(unique_serial: dict[HamiltonSerial, List[asyncio.Queue]]) -> None:
-    """Command / response handler for batch requests
-
-    Args:
-        unique_serial (dict[HamiltonSerial, List[asyncio.Queue]]): parsed serial requests from
-            _batch_serial_query
-    """
-
-    # loop through serial connections
-    for ser, queuelist in unique_serial.items():
-        addrlist = []
-        cmdstrlist = []
-        rqlist = []
-
-        # for each request in the serial connection, get the command queue
-        for command_queue in queuelist:
-
-            # get query information from command queue
-            item: Tuple[int, str, asyncio.Queue] =  await command_queue.get()
-            addr, cmdstr, response_queue = item
-
-            # populate lists for batch_query
-            addrlist.append(addr)
-            cmdstrlist.append(cmdstr)
-            rqlist.append(response_queue)
-        
-        # execute the batch query
-        await ser.batch_query(addrlist, cmdstrlist, rqlist)
-
-async def batch_run(cmds: List[asyncio.Future], batch_queue: asyncio.Queue) -> None:
-    """Run a batch of async commands of type run_in_batch. Might involve different serial ports
-
-    Args:
-        cmds (List[asyncio.Future]): List of asyncio futures from HamiltonBase.run_in_batch
-        batch_queue (asyncio.Queue): Queue to handle batches (sync with run_in_batch)
-    """
-
-    tasks = cmds
-    tasks.append(_batch_serial_query(len(cmds), batch_queue))
-
-    await asyncio.gather(*tasks)

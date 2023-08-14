@@ -7,7 +7,7 @@ import datetime
 #                    filemode='w',
 logging.basicConfig(format='%(asctime)s.%(msecs)03d %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S',
-                    level=logging.INFO)
+                    level=logging.DEBUG)
 
 from HamiltonComm import HamiltonSerial
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
@@ -106,7 +106,7 @@ class Launcher:
 async def main():
     
     ser = HamiltonSerial(port='COM5', baudrate=38400)
-    mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(8, name='loop_valve'), name='loop_valve_positioner')
+    mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
     sp = HamiltonSyringePump(ser, '0', SyringeYValve(name='syringe_y_valve'), 5000, False, name='syringe_pump')
     #mvp = HamiltonValvePositioner(ser, '0', DistributionValve(8))
     #mvp = HamiltonBase(ser, '0')
@@ -115,17 +115,17 @@ async def main():
     ak = AsyncKeyboard(ser, sp, stop_event)
     at = AssemblyTest(mvp, sp)
     #launch = Launcher([ser.initialize(), mvp.initialize(), sp.initialize(), ak.initialize()], stop_event)
-    #launch = Launcher([at.initialize(), ak.initialize()], stop_event)
+    launch = Launcher([at.initialize(), ak.initialize()], stop_event)
     #await launch.run()
-    at.current_mode='LoopInject'
-    logging.debug(at.network.nodes)
-    logging.debug(at.get_dead_volume())
-    #await at.initialize()
-    #await asyncio.sleep(3)
-    #await at.change_mode('LHInject')
+    #at.current_mode='LoopInject'
+    #logging.debug(at.network.nodes)
+    #logging.debug(at.get_dead_volume())
+    await at.initialize()
+    await asyncio.sleep(3)
+    await at.change_mode('LHInject')
     #print(at.get_dead_volume())
-    #await asyncio.sleep(3)
-    #await at.change_mode('LoopInject')
+    await asyncio.sleep(3)
+    await at.change_mode('LoopInject')
     #print(at.get_dead_volume())
 
     #await asyncio.gather(ser.initialize(), sp.initialize(), ak.initialize())
