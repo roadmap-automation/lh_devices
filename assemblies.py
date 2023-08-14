@@ -152,6 +152,7 @@ class AssemblyBasewithGSIOC(AssemblyBase):
         super().__init__(devices, name=name)
         self.gsioc = gsioc
         self.gsioc_command_queue: asyncio.Queue = asyncio.Queue()
+        self.trigger: asyncio.Event = asyncio.Event()
 
     async def initialize(self) -> None:
         """Initialize but start GSIOC handlers
@@ -187,6 +188,11 @@ class AssemblyBasewithGSIOC(AssemblyBase):
         if data.data == 'D':
             return f'{self.get_dead_volume():0.0f}'
         
+        # set trigger
+        elif data.data == 'T':
+            self.trigger.set()
+
+        # requested mode change
         elif data.data.startswith('mode: '):
             mode = data.data.split('mode: ', 1)[1]
             self.gsioc_command_queue.put(asyncio.create_task(self.change_mode(mode)))
