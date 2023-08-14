@@ -235,3 +235,11 @@ class RoadmapChannel(AssemblyBase):
 
 # TODO: Think about serialization / deserialization or loading from a config file. Should be
 #           straightforward to reconstruct the network, if not the comm information
+
+# TODO: Make Modes a dataclass with "movement" and "dead_volume_nodes" properties. Needs to use
+#        device names or internal names instead of direct device references if dataclass.
+
+# TODO: Make a method class (?) / decorator (?) 
+
+# TODO: Decide whether to require the entire method string from the LH (passed through eventually)
+#        or make a more integrated system

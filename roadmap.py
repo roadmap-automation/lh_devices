@@ -59,15 +59,15 @@ if __name__=='__main__':
                     datefmt='%Y-%m-%d %H:%M:%S',
                     level=logging.DEBUG)
 
-    if False:
+    if True:
         async def main():
             ser = HamiltonSerial(port='COM5', baudrate=38400)
             mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
             sp = HamiltonSyringePump(ser, '0', SyringeYValve(name='syringe_y_valve'), 5000, False, name='syringe_pump')
             ip = InjectionPort('LH_injection_port')
             fc = FlowCell(0.444, 'flow_cell')
-            sampleloop = FlowCell(5500, 'sample_loop')
-            at = LoopInjectAssembly(loop_valve=mvp, syringe_pump=sp, injection_port=ip, flow_cell=fc, name='LoopInject0')
+            sampleloop = FlowCell(5500., 'sample_loop')
+            at = LoopInjectAssembly(loop_valve=mvp, syringe_pump=sp, injection_port=ip, flow_cell=fc, sample_loop=sampleloop, name='LoopInject0')
             
             await at.initialize()
             await asyncio.sleep(3)
