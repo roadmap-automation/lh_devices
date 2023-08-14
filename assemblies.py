@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import List, Tuple, Dict
 
-from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
+from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType, GSIOCDeviceBase
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from connections import Port, Node, connect_nodes
 from components import ComponentBase
@@ -144,31 +144,19 @@ class AssemblyBase:
     def idle(self) -> bool:
         return all(dev.idle for dev in self.devices)
     
-class AssemblyBasewithGSIOC(AssemblyBase):
+class AssemblyBasewithGSIOC(AssemblyBase, GSIOCDeviceBase):
     """Assembly with GSIOC support
     """
 
     def __init__(self, devices: List[HamiltonBase], gsioc: GSIOC, name='') -> None:
-        super().__init__(devices, name=name)
-        self.gsioc = gsioc
-        self.gsioc_command_queue: asyncio.Queue = asyncio.Queue()
+        AssemblyBase.__init__(self, devices, name=name)
+        GSIOCDeviceBase.__init__(self, gsioc)
         self.trigger: asyncio.Event = asyncio.Event()
 
     async def initialize(self) -> None:
         """Initialize but start GSIOC handlers
         """
-        await asyncio.gather(super().initialize(), self.gsioc.listen(), self.monitor_gsioc(), self.gsioc_actions())
-
-    async def monitor_gsioc(self) -> None:
-        """Monitor GSIOC queue
-        """
-
-        while True:
-            data: GSIOCMessage = await self.gsioc.message_queue.get()
-
-            response = self.handle_gsioc(data)
-            if data.messagetype == GSIOCCommandType.IMMEDIATE:
-                await self.gsioc.response_queue.put(response)
+        await asyncio.gather(AssemblyBase.initialize(self), GSIOCDeviceBase.initialize(self))
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
         """Handles GSIOC messages. Base version only handles idle requests
@@ -201,14 +189,6 @@ class AssemblyBasewithGSIOC(AssemblyBase):
             return 'error: unknown command'
         
         return None
-
-    async def gsioc_actions(self) -> None:
-        """Monitors GSIOC command queue and performs actions asynchronously
-        """
-
-        while True:
-            task: asyncio.Future = self.gsioc_command_queue.get()
-            await task
 
 class AssemblyTest(AssemblyBase):
 
