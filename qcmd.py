@@ -1,4 +1,3 @@
-import json
 import aiohttp
 import asyncio
 import logging
@@ -54,11 +53,10 @@ class QCMDRecorder(GSIOCTimer):
 
     def __init__(self, gsioc: GSIOC, qcmd_address: str = 'localhost', qcmd_port: int = 5011, name='QCMDRecorder') -> None:
         super().__init__(gsioc, name)
-        self.qcmd_address = qcmd_address
-        self.qcmd_port = qcmd_port
         self.sleep_time = None
         self.record_time = None
         self.tag_name = None
+        self.session = aiohttp.ClientSession(f'http://{qcmd_address}:{qcmd_port}')
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
         """Handles GSIOC messages.
@@ -68,6 +66,8 @@ class QCMDRecorder(GSIOCTimer):
         Returns:
             str: response (only for GSIOC immediate commands)
         """
+
+        logging.debug(f'{self.name}: Received {data.data}')
 
         if data.data == 'Q':
             # busy query
@@ -100,24 +100,27 @@ class QCMDRecorder(GSIOCTimer):
         # wait the full time
         await super().timer()
 
-        # send an http request to 
-        response = await aiohttp.request(method='POST',
-                              url=f'http://{self.qcmd_address}:{self.qcmd_port}/QCMD/',
-                              json={'command': 'set_tag',
-                                               'value': {'tag': self.tag_name,
-                                                         'delta_t': self.record_time}})
-        
-        logging.info(f'{self}: received response {response}')
+        post_data = {'command': 'set_tag',
+                     'value': {'tag': self.tag_name,
+                               'delta_t': self.record_time}}
+
+        logging.info(f'{self.session._base_url}/QCMD/ => {post_data}')
+
+        # send an http request to QCMD server
+        async with self.session.post('/QCMD/', json=post_data) as resp:
+            response_json = await resp.json()
+            logging.info(f'{self.session._base_url}/QCMD/ <= {response_json}')
 
 async def main():
     gsioc = GSIOC(62, 'COM13', 19200)
     qcmd_recorder = QCMDRecorder(gsioc, 'localhost', 5011)
     await qcmd_recorder.initialize()
+    qcmd_recorder.session.close()
 
 if __name__=='__main__':
 
-    logging.basicConfig(format='%(asctime)s %(message)s',
-                        datefmt='%m/%d/%Y %I:%M:%S %p',
-                        level=logging.DEBUG)
+    logging.basicConfig(format='%(asctime)s.%(msecs)03d %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S',
+                        level=logging.INFO)
 
     asyncio.run(main(), debug=True)
