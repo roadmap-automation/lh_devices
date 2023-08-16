@@ -114,8 +114,11 @@ class QCMDRecorder(GSIOCTimer):
 async def main():
     gsioc = GSIOC(62, 'COM13', 19200)
     qcmd_recorder = QCMDRecorder(gsioc, 'localhost', 5011)
-    await qcmd_recorder.initialize()
-    qcmd_recorder.session.close()
+    try:
+        await qcmd_recorder.initialize()
+    finally:
+        logging.info('Cleaning up...')
+        qcmd_recorder.session.close()
 
 if __name__=='__main__':
 
