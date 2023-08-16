@@ -119,11 +119,11 @@ class QCMDLoop(AssemblyBasewithGSIOC):
                         'dead_volume_nodes': [injection_port.nodes[0], syringe_pump.valve.nodes[2]]},
                     'PumpPrimeLoop': 
                         {loop_valve: 1,
-                        syringe_pump: 1,
+                        syringe_pump: 4,
                         'dead_volume_nodes': [injection_port.nodes[0], syringe_pump.valve.nodes[2]]},
                     'PumpInject':
                         {loop_valve: 2,
-                        syringe_pump: 2,
+                        syringe_pump: 4,
                         'dead_volume_nodes': [injection_port.nodes[0], syringe_pump.valve.nodes[2]]},
                     }
 
@@ -168,7 +168,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
     async def LoopInject(self,
                          pump_volume: str | float = 0, # uL
                          pump_flow_rate: str | float = 1, # mL/min
-                         air_gap_plus_extra_volume: str | float = 0, #L
+                         air_gap_plus_extra_volume: str | float = 0, #uL
                          tag_name: str = '',
                          sleep_time: str | float = 0, # seconds
                          record_time: str | float = 0 # seconds
