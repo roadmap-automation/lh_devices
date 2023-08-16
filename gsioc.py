@@ -1,4 +1,5 @@
-from typing import Dict
+import json
+from typing import Dict, Tuple
 import logging
 from enum import Enum
 from dataclasses import dataclass
@@ -228,9 +229,15 @@ class GSIOC(aioserial.AioSerial):
 
 class GSIOCDeviceBase:
 
-    def __init__(self, gsioc: GSIOC) -> None:
+    def __init__(self, gsioc: GSIOC, name='') -> None:
         self.gsioc = gsioc
         self.gsioc_command_queue: asyncio.Queue = asyncio.Queue()
+        self.running_tasks: int = 0
+        self.name = name
+
+    @property
+    def idle(self):
+        return self.running_tasks == 0
 
     async def initialize(self) -> None:
         """Starts async processes"""
@@ -256,9 +263,34 @@ class GSIOCDeviceBase:
 
         Returns:
             str: response (only for GSIOC immediate commands)
+            str: error
         """
         
-        return None
+        response = None
+
+        if data.data == 'Q':
+            # busy query
+            response = 'idle' if self.idle else 'busy'
+        
+        # received JSON data for initializing a method
+        elif data.data.startswith('{'):
+            dd: dict = json.loads(data.data)
+            if 'method' in dd.keys():
+                method_name, method_kwargs = dd['method'], dd['kwargs']
+                logging.debug(f'{self.name}: Method {method_name} requested')
+                if hasattr(self, method_name):
+                    logging.debug(f'{self.name}: Starting method {method_name} with kwargs {method_kwargs}')
+                    method = getattr(self, method_name)
+
+                await self.gsioc_command_queue.put(asyncio.create_task(method(**method_kwargs)))
+            
+            else:
+                response = 'error: unknown JSON data'
+        
+        else:
+            response = 'error: unknown command'
+
+        return response
 
     async def gsioc_actions(self) -> None:
         """Monitors GSIOC command queue and performs actions asynchronously
@@ -266,54 +298,11 @@ class GSIOCDeviceBase:
 
         while True:
             task: asyncio.Future = self.gsioc_command_queue.get()
-            await task
-
-class GSIOCTimer(GSIOCDeviceBase):
-    """Basic GSIOC Timer. When timer command is received, starts a timer for specified time,
-        during which idle queries will return a busy signal. Designed for use with Gilson LH,
-        which can pause until timer is no longer idle."""
-
-    def __init__(self, gsioc: GSIOC, name='GSIOCTimer') -> None:
-        super().__init__(gsioc)
-        self.idle = True
-        self.name = name
-
-    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
-        """Handles GSIOC messages.
-        Args:
-            data (GSIOCMessage): GSIOC Message to be parsed / handled
-
-        Returns:
-            str: response (only for GSIOC immediate commands)
-        """
-
-        if data.data == 'Q':
-            # busy query
-            return 'idle' if self.idle else 'busy'
-        
-        elif data.data.startswith('timer: '):
-            timer_time = float(data.data.split('timer: ', 1)[1])
-            await self.gsioc_command_queue.put(asyncio.create_task(self.timer(timer_time)))
-        
-        else:
-            return 'error: unknown command'
-        
-        return None
-
-    async def timer(self, wait_time: float) -> None:
-        """Executes timer
-
-        Args:
-            wait_time (float): Time to wait in seconds
-        """
-
-        # don't start another timer if one is already running
-        if self.idle:
-            self.idle = False
-            await asyncio.sleep(wait_time)
-            self.idle = True
-        else:
-            logging.warning(f'{self.name}: Timer is already running...')
+            try:
+                self.running_tasks += 1
+                await task
+            finally:
+                self.running_tasks -= 1
 
 async def main():
 
@@ -326,8 +315,8 @@ async def main():
 #    signal.signal(signal.SIGINT, signal_handler)
 
     gsioc = GSIOC(gsioc_address, port=virtual_port, baudrate=baud_rate, parity=aioserial.PARITY_EVEN)
-    gtd = GSIOCTimer(gsioc)
-    await gtd.initialize()
+    #gtd = GSIOCTimer(gsioc)
+    #await gtd.initialize()
     #await asyncio.gather(gsioc.listen(), gtd.monitor_gsioc(), gtd.gsioc_actions())
 
 

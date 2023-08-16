@@ -1,3 +1,4 @@
+import json
 import asyncio
 import logging
 from typing import List, Tuple, Dict
@@ -159,36 +160,35 @@ class AssemblyBasewithGSIOC(AssemblyBase, GSIOCDeviceBase):
         await asyncio.gather(AssemblyBase.initialize(self), GSIOCDeviceBase.initialize(self))
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
-        """Handles GSIOC messages. Base version only handles idle requests
+        """Handles additional GSIOC messages.
 
         Args:
             data (GSIOCMessage): GSIOC Message to be parsed / handled
 
         Returns:
-            str: response (only for GSIOC immediate commands)
+            str: response (only for GSIOC immediate commands, else None)
         """
 
-        if data.data == 'Q':
-            # busy query
-            return 'idle' if self.idle else 'busy'
-        
+        response = None
+
         # get dead volume of current mode in uL
-        if data.data == 'D':
-            return f'{self.get_dead_volume():0.0f}'
+        if data.data == 'V':
+            response = f'{self.get_dead_volume():0.0f}'
         
         # set trigger
         elif data.data == 'T':
-            self.trigger.set()
+            await self.trigger.set()
+            response = 'ok'
 
-        # requested mode change
+        # requested mode change (deprecated)
         elif data.data.startswith('mode: '):
             mode = data.data.split('mode: ', 1)[1]
-            self.gsioc_command_queue.put(asyncio.create_task(self.change_mode(mode)))
+            await self.gsioc_command_queue.put(asyncio.create_task(self.change_mode(mode)))
         
         else:
-            return 'error: unknown command'
+            response = super().handle_gsioc(data)
         
-        return None
+        return response
 
 class AssemblyTest(AssemblyBase):
 
