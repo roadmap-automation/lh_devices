@@ -226,12 +226,16 @@ class GSIOC(aioserial.AioSerial):
 
         logging.info(f'{self.port} (GSIOC) => {msg}')
 
-class GSIOCTestDevice:
+class GSIOCDeviceBase:
 
     def __init__(self, gsioc: GSIOC) -> None:
         self.gsioc = gsioc
         self.gsioc_command_queue: asyncio.Queue = asyncio.Queue()
-        self.idle = True
+
+    async def initialize(self) -> None:
+        """Starts async processes"""
+
+        await asyncio.gather(self.gsioc.listen(), self.monitor_gsioc(), self.gsioc_actions())
 
     async def monitor_gsioc(self) -> None:
         """Monitor GSIOC queue
@@ -245,8 +249,37 @@ class GSIOCTestDevice:
                 await self.gsioc.response_queue.put(response)
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
-        """Handles GSIOC messages. Base version only handles idle requests
+        """Handles GSIOC messages. Put actions into gsioc_command_queue for async processing.
 
+        Args:
+            data (GSIOCMessage): GSIOC Message to be parsed / handled
+
+        Returns:
+            str: response (only for GSIOC immediate commands)
+        """
+        
+        return None
+
+    async def gsioc_actions(self) -> None:
+        """Monitors GSIOC command queue and performs actions asynchronously
+        """
+
+        while True:
+            task: asyncio.Future = self.gsioc_command_queue.get()
+            await task
+
+class GSIOCTimer(GSIOCDeviceBase):
+    """Basic GSIOC Timer. When timer command is received, starts a timer for specified time,
+        during which idle queries will return a busy signal. Designed for use with Gilson LH,
+        which can pause until timer is no longer idle."""
+
+    def __init__(self, gsioc: GSIOC, name='GSIOCTimer') -> None:
+        super().__init__(gsioc)
+        self.idle = True
+        self.name = name
+
+    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
+        """Handles GSIOC messages.
         Args:
             data (GSIOCMessage): GSIOC Message to be parsed / handled
 
@@ -258,30 +291,29 @@ class GSIOCTestDevice:
             # busy query
             return 'idle' if self.idle else 'busy'
         
-        elif data.data.startswith('sleep: '):
-            sleeptime = float(data.data.split('sleep: ', 1)[1])
-            await self.gsioc_command_queue.put(asyncio.create_task(self.sleep(sleeptime)))
+        elif data.data.startswith('timer: '):
+            timer_time = float(data.data.split('timer: ', 1)[1])
+            await self.gsioc_command_queue.put(asyncio.create_task(self.timer(timer_time)))
         
         else:
             return 'error: unknown command'
         
         return None
 
-    async def sleep(self, sleeptime: float) -> None:
-        """Sleeps a time sleeptime and updates idle flag"""
+    async def timer(self, wait_time: float) -> None:
+        """Executes timer
 
-        self.idle = False
-        logging.info(f'Sleeping {sleeptime} s...')
-        await asyncio.sleep(sleeptime)
-        self.idle = True
-
-    async def gsioc_actions(self) -> None:
-        """Monitors GSIOC command queue and performs actions asynchronously
+        Args:
+            wait_time (float): Time to wait in seconds
         """
 
-        while True:
-            task: asyncio.Future = self.gsioc_command_queue.get()
-            await task
+        # don't start another timer if one is already running
+        if self.idle:
+            self.idle = False
+            await asyncio.sleep(wait_time)
+            self.idle = True
+        else:
+            logging.warning(f'{self.name}: Timer is already running...')
 
 async def main():
 
@@ -294,8 +326,9 @@ async def main():
 #    signal.signal(signal.SIGINT, signal_handler)
 
     gsioc = GSIOC(gsioc_address, port=virtual_port, baudrate=baud_rate, parity=aioserial.PARITY_EVEN)
-    gtd = GSIOCTestDevice(gsioc)
-    await asyncio.gather(gsioc.listen(), gtd.monitor_gsioc(), gtd.gsioc_actions())
+    gtd = GSIOCTimer(gsioc)
+    await gtd.initialize()
+    #await asyncio.gather(gsioc.listen(), gtd.monitor_gsioc(), gtd.gsioc_actions())
 
 
 if __name__ == '__main__':

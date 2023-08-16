@@ -19,6 +19,9 @@ class ValveBase(ComponentBase):
                  ports: List[Port] = [],
                  name: str = '') -> None:
         self.name = name
+
+        # valve code for hamilton MVP and PSD devices
+        self.hamilton_valve_code = None
         
         self.n_ports = n_ports
         self.n_positions = n_positions
@@ -67,8 +70,8 @@ class ValveBase(ComponentBase):
         self._portmap: dict[int, int] = {}
 
     def move(self, position) -> None:
-        if position not in range(1, self.n_positions + 1):
-            logging.error(f'Requested position {position} is not an integer between 1 and {self.n_positions}')
+        if position not in range(0, self.n_positions + 1):
+            logging.error(f'Requested position {position} is not an integer between 0 (off) and {self.n_positions}')
             return
         
         self.position = position
@@ -84,15 +87,20 @@ class DistributionValve(ValveBase):
         "position" corresponds to the port number of the valve outlet
     """
 
-    def __init__(self, n_ports: int, position: int = 1, ports: List[Port] = [], name=None) -> None:
+    def __init__(self, n_ports: int, position: int = 0, ports: List[Port] = [], name=None) -> None:
         super().__init__(n_ports + 1, n_ports, position, ports, name)
+
+        hamilton_valve_codes = {4: 4, 6: 6, 8: 3}
+        if n_ports in hamilton_valve_codes.keys():
+            self.hamilton_valve_code = hamilton_valve_codes[n_ports]
 
     def update_map(self):
         """Updates the port map.
         """
         self._portmap = {}
-        self._portmap[0] = self.position
-        self._portmap[self.position] = 0
+        if self.position != 0:
+            self._portmap[0] = self.position
+            self._portmap[self.position] = 0
 
 class LoopFlowValve(ValveBase):
     """Loop flow valve representation, with n_ports and 2 positions. Port 0 is the bottom port. 
@@ -109,36 +117,49 @@ class LoopFlowValve(ValveBase):
 
     def __init__(self, n_ports: int, position: int = 1, ports: List[Port] = [], name=None) -> None:
         super().__init__(n_ports, 2, position, ports, name)
+
+        hamilton_valve_codes = {4: 4, 6: 6, 8: 3}
+        if n_ports in hamilton_valve_codes.keys():
+            self.hamilton_valve_code = hamilton_valve_codes[n_ports]
     
     def update_map(self) -> None:
-        
-        kv = list()
-        offset = -(self.position * 2 - 3) # +1 if position 1; -1 if position 2
-        for i in range(0, self.n_ports, 2):
-            kv.append((i, (i + offset) % self.n_ports))
-            kv.append(((i + offset) % self.n_ports, i))
-        
-        self._portmap = dict(kv)
+
+        if self.position != 0:
+            kv = list()
+            offset = -(self.position * 2 - 3) # +1 if position 1; -1 if position 2
+            for i in range(0, self.n_ports, 2):
+                kv.append((i, (i + offset) % self.n_ports))
+                kv.append(((i + offset) % self.n_ports, i))
+            
+            self._portmap = dict(kv)
+        else:
+            self._portmap = {}
 
 class TValve(ValveBase):
     """T Valve (each position connects two adjacent inlets / outlets)
 
     """
 
-    def __init__(self, n_ports: int, position: int = 1, ports: List[Port] = [], name=None) -> None:
+    def __init__(self, n_ports: int, position: int = 0, ports: List[Port] = [], name=None) -> None:
         super().__init__(n_ports, n_ports, position, ports, name)
+
+        hamilton_valve_codes = {4: 1}
+        if n_ports in hamilton_valve_codes.keys():
+            self.hamilton_valve_code = hamilton_valve_codes[n_ports]
 
     def update_map(self):
         """Updates the port map.
         """
         self._portmap = {}
-        self._portmap[self.position - 1] = self.position % self.n_ports
-        self._portmap[self.position % self.n_ports] = self.position - 1
+        if self.position != 0:
+            self._portmap[self.position - 1] = self.position % self.n_ports
+            self._portmap[self.position % self.n_ports] = self.position - 1
 
 class SyringeYValve(TValve):
     """Y valve to sit atop syringe pump. Port 0 is down, and ports are number clockwise.
         Implementation is that of a 3-port T valve.
     """
 
-    def __init__(self, position: int = 1, ports: List[Port] = [], name=None) -> None:
+    def __init__(self, position: int = 0, ports: List[Port] = [], name=None) -> None:
         super().__init__(3, position, ports, name)
+        self.hamilton_valve_code = 0
