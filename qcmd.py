@@ -180,7 +180,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         sleep_time = float(sleep_time)
         record_time = float(record_time)
 
-        max_flow_rate = 5000 / 1000 * 60 # uL / s
+        max_flow_rate = self.syringe_pump.max_flow_rate # uL / s
 
         # switch to standby mode
         await self.change_mode('Standby')
