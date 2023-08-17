@@ -304,6 +304,13 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         # syringe position
         self.syringe_position: int = 0.0
 
+        # min and max V
+        self.minV, self.maxV = 2, 10000
+
+        # allow custom max flow rate
+        self.max_flow_rate = self._max_flow_rate()
+        self.min_flow_rate = self._min_flow_rate()
+
     async def initialize(self) -> None:
         await super().initialize()
         await self.run_until_idle(self.set_high_resolution(self._high_resolution))
@@ -331,6 +338,22 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         return 48000 if self._high_resolution else 6000
 
+    def _min_flow_rate(self) -> int:
+        """Calculates minimum flow rate of device
+        
+        Returns:
+            int: min flow rate in uL / s"""
+        
+        return self._flow_rate(self.minV)
+    
+    def _max_flow_rate(self) -> int:
+        """Calculates maximum flow rate of device
+        
+        Returns:
+            int: max flow rate in uL / s"""
+        
+        return self._flow_rate(self.maxV)
+
     def _speed_code(self, desired_flow_rate: float) -> int:
         """Calculates speed code (parameter V, see PSD/4 manual Appendix H) based on desired
             flow rate and syringe parameters
@@ -342,18 +365,16 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             int: V (half-steps per second)
         """
 
-        minV, maxV = 2, 10000
+        #calcV = float(desired_flow_rate * 6000) / self.syringe_volume
 
-        calcV = float(desired_flow_rate * 6000) / self.syringe_volume
-
-        if calcV < minV:
-            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to lowest possible value {self._flow_rate(minV)}')
-            return minV
-        elif calcV > maxV:
-            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to highest possible value {self._flow_rate(maxV)}')
-            return maxV
+        if desired_flow_rate < self._min_flow_rate():
+            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to lowest possible value {self._min_flow_rate()}')
+            return self.minV
+        elif desired_flow_rate > self._max_flow_rate():
+            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to highest possible value {self._max_flow_rate()}')
+            return self.maxV
         else:
-            return round(calcV)
+            return round(float(desired_flow_rate * 6000) / self.syringe_volume)
         
     def _flow_rate(self, V: int) -> float:
         """Calculates actual flow rate from speed code parameter (V)
