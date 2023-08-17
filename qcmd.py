@@ -8,39 +8,40 @@ from components import InjectionPort, FlowCell
 from gsioc import GSIOCDeviceBase, GSIOC, GSIOCMessage
 from assemblies import AssemblyBasewithGSIOC, Network, connect_nodes
 
-class GSIOCTimer(GSIOCDeviceBase):
-    """Basic GSIOC Timer. When timer method is received, starts a timer for specified time,
-        during which idle queries will return a busy signal. Designed for use with Gilson LH,
-        which can pause until timer is no longer idle."""
+class Timer:
+    """Basic timer. Essentially serves as a sleep but only allows one instance to run."""
 
-    def __init__(self, gsioc: GSIOC, name='GSIOCTimer') -> None:
-        super().__init__(gsioc)
-        self.timer_running: asyncio.Event = asyncio.Event()
+    def __init__(self, name='Timer') -> None:
         self.name = name
+        self.timer_running: asyncio.Event = asyncio.Event()
 
-    async def timer(self, wait_time: str | float = 0.0) -> None:
-        """Executes timer
+    async def start(self, wait_time: float = 0.0) -> bool:
+        """Executes timer.
+
+        Returns:
+            bool: True if successful, False if not.
         """
-
-        wait_time = float(wait_time)
 
         # don't start another timer if one is already running
         if not self.timer_running.is_set():
             self.timer_running.set()
             await asyncio.sleep(wait_time)
             self.timer_running.clear()
+            return True
         else:
-            logging.warning(f'{self.name}: Timer is already running...')
+            logging.warning(f'{self.name}: Timer is already running, ignoring start command')
+            return False
 
-class QCMDRecorder(GSIOCTimer):
-    """QCMD recording device."""
+class QCMDRecorder(Timer):
+    """QCMD-specific timer. At end of timing interval, sends HTTP request to QCMD to record tag."""
 
-    def __init__(self, gsioc: GSIOC, qcmd_address: str = 'localhost', qcmd_port: int = 5011, name='QCMDRecorder') -> None:
-        super().__init__(gsioc, name)
+    def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, name='QCMDRecorder') -> None:
+        super().__init__(name)
         self.session = aiohttp.ClientSession(f'http://{qcmd_address}:{qcmd_port}')
 
-    async def timer(self, tag_name: str = '', record_time: str | float = 0.0, sleep_time: str | float = 0.0) -> None:
-        """Executes timer and sends record command to QCMD
+    async def record(self, tag_name: str = '', record_time: float = 0.0, sleep_time: float = 0.0) -> None:
+        """Executes timer and sends record command to QCMD. Call by sending
+            {"method": "record", {**kwargs}} over GSIOC.
         """
 
         record_time = float(record_time)
@@ -50,18 +51,36 @@ class QCMDRecorder(GSIOCTimer):
         wait_time = record_time + sleep_time
 
         # wait the full time
-        await super().timer(wait_time)
+        if await self.start(wait_time):
 
-        post_data = {'command': 'set_tag',
-                     'value': {'tag': tag_name,
-                               'delta_t': record_time}}
+            post_data = {'command': 'set_tag',
+                        'value': {'tag': tag_name,
+                                'delta_t': record_time}}
 
-        logging.info(f'{self.session._base_url}/QCMD/ => {post_data}')
+            logging.info(f'{self.session._base_url}/QCMD/ => {post_data}')
 
-        # send an http request to QCMD server
-        async with self.session.post('/QCMD/', json=post_data) as resp:
-            response_json = await resp.json()
-            logging.info(f'{self.session._base_url}/QCMD/ <= {response_json}')
+            # send an http request to QCMD server
+            async with self.session.post('/QCMD/', json=post_data) as resp:
+                response_json = await resp.json()
+                logging.info(f'{self.session._base_url}/QCMD/ <= {response_json}')
+
+class QCMDRecorderDevice(GSIOCDeviceBase):
+    """QCMD recording device."""
+
+    def __init__(self, gsioc: GSIOC, qcmd_address: str = 'localhost', qcmd_port: int = 5011, name='QCMDRecorderDevice') -> None:
+        super().__init__(gsioc, name)
+        self.recorder = QCMDRecorder(qcmd_address, qcmd_port, f'{self.name}.QCMDRecorder')
+
+    async def record(self, tag_name: str = '', record_time: str | float = 0.0, sleep_time: str | float = 0.0) -> None:
+        """Executes timer and sends record command to QCMD. Call by sending
+            {"method": "record", {**kwargs}} over GSIOC.
+        """
+
+        record_time = float(record_time)
+        sleep_time = float(sleep_time)
+
+        # wait the full time
+        await self.recorder.record(tag_name, record_time, sleep_time)
 
 class QCMDLoop(AssemblyBasewithGSIOC):
 
@@ -73,23 +92,22 @@ class QCMDLoop(AssemblyBasewithGSIOC):
                        sample_loop: FlowCell,
                        qcmd_address: str = 'localhost',
                        qcmd_port: int = 5011,
-                       name='') -> None:
+                       name: str = '') -> None:
         
         self.loop_valve = loop_valve
         self.syringe_pump = syringe_pump
         self.injection_port = injection_port
         self.flow_cell = flow_cell
         self.sample_loop = sample_loop
-        self.session = aiohttp.ClientSession(f'http://{qcmd_address}:{qcmd_port}')
-        self.timer_running: asyncio.Event = asyncio.Event()
         self.dead_volume = None
 
         super().__init__([loop_valve, syringe_pump], gsioc, name=name)
+        self.recorder = QCMDRecorder(qcmd_address, qcmd_port, f'{self.name}.QCMDRecorder')
         self.network = Network([self.loop_valve, self.syringe_pump, self.injection_port, self.flow_cell, self.sample_loop])
         
         # define node connections
         # connect syringe pump valve port 2 to LH injection port
-        connect_nodes(self.network._port_to_node_map[injection_port.inlet_port], syringe_pump.valve.nodes[2])
+        connect_nodes(self.network._port_to_node_map[injection_port.inlet_port], syringe_pump.valve.nodes[2], 156)
 
         # connect syringe pump valve port 3 to sample loop
         connect_nodes(syringe_pump.valve.nodes[3], self.network._port_to_node_map[sample_loop.inlet_port], 0.0)
@@ -104,6 +122,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         connect_nodes(loop_valve.valve.nodes[5], self.network._port_to_node_map[flow_cell.outlet_port], 0.0)
 
         self.network.update()
+        logging.info(self.network._port_to_node_map)
 
         self.modes = {'Standby': 
                         {loop_valve: 0,
@@ -128,42 +147,29 @@ class QCMDLoop(AssemblyBasewithGSIOC):
                     }
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
-        response = await super().handle_gsioc(data)
 
         # overwrites base class handling of dead volume
         if data.data == 'V':
             response = f'{self.dead_volume:0.0f}'
+        else:
+            response = await super().handle_gsioc(data)
         
         return response
+    
+    async def QCMDRecord(self,
+                         tag_name: str = '',
+                         sleep_time: str | float = 0, # seconds
+                         record_time: str | float = 0 # seconds
+                        ) -> None:
+        """QCMDRecord method. Final action is marking task as done,
+            thereby releasing GSIOC communications."""
 
-    async def timer(self, tag_name: str = '', record_time: float | str = 0.0, sleep_time: float | str = 0.0) -> None:
-        """Executes timer and sends record command to QCMD
-        """
-
-        record_time = float(record_time)
         sleep_time = float(sleep_time)
+        record_time = float(record_time)
 
-        # calculate total wait time
-        wait_time = record_time + sleep_time
+        await self.recorder.record(tag_name, record_time, sleep_time)
 
-        # wait the full time
-        if not self.timer_running.is_set():
-            self.timer_running.set()
-            await asyncio.sleep(wait_time)
-            self.timer_running.clear()
-        else:
-            logging.warning(f'{self.name}: Timer is already running...')
-
-        post_data = {'command': 'set_tag',
-                     'value': {'tag': tag_name,
-                               'delta_t': record_time}}
-
-        logging.info(f'{self.session._base_url}/QCMD/ => {post_data}')
-
-        # send an http request to QCMD server
-        async with self.session.post('/QCMD/', json=post_data) as resp:
-            response_json = await resp.json()
-            logging.info(f'{self.session._base_url}/QCMD/ <= {response_json}')
+        self.gsioc_command_queue.task_done()
 
     async def LoopInject(self,
                          pump_volume: str | float = 0, # uL
@@ -176,7 +182,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         """LoopInject method, synchronized via GSIOC to liquid handler"""
 
         pump_volume = float(pump_volume)
-        pump_flow_rate = float(pump_flow_rate) * 60 / 1000 # convert to uL / s
+        pump_flow_rate = float(pump_flow_rate) * 1000 / 60 # convert to uL / s
         sleep_time = float(sleep_time)
         record_time = float(record_time)
 
@@ -186,7 +192,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         await self.change_mode('Standby')
 
         # Set dead volume
-        self.dead_volume = self.network.get_dead_volume(*self.modes['LoadLoop']['dead_volume_nodes'])
+        self.dead_volume = self.network.get_dead_volume(*(node.base_port for node in self.modes['LoadLoop']['dead_volume_nodes']))
         logging.debug(f'{self.name}.LoopInject: dead volume set to {self.dead_volume}')
 
         # Wait for trigger to switch to LoadLoop mode
@@ -194,68 +200,109 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         await self.trigger.wait()
         logging.debug(f'{self.name}.LoopInject: Switching to LoadLoop mode')
         await self.change_mode('LoadLoop')
-        await self.trigger.clear()
+        self.trigger.clear()
 
         # Wait for trigger to switch to PumpAspirate mode
         logging.debug(f'{self.name}.LoopInject: Waiting for second trigger')
         await self.trigger.wait()
         await self.change_mode('PumpAspirate')
         logging.debug(f'{self.name}.LoopInject: Switching to PumpAspirate mode')
-        await self.trigger.clear()
+        self.trigger.clear()
+
+        # At this point, this method is done with GSIOC; signal command queue
+        self.gsioc_command_queue.task_done()
 
         # aspirate a syringeful
-        await self.syringe_pump.aspirate(self.syringe_pump.syringe_volume, max_flow_rate)
+        total_aspiration_volume = self.sample_loop.get_volume() - air_gap_plus_extra_volume
+        logging.debug(f'{self.name}.LoopInject: Aspirating {total_aspiration_volume} uL')
+        await self.syringe_pump.run_until_idle(self.syringe_pump.aspirate(total_aspiration_volume, max_flow_rate))
 
         # move quickly through the loop
         logging.debug(f'{self.name}.LoopInject: Switching to PumpPrimeLoop mode')
         await self.change_mode('PumpPrimeLoop')
         logging.debug(f'{self.name}.LoopInject: Moving plug through loop, total injection volume {self.sample_loop.get_volume() - pump_volume + air_gap_plus_extra_volume} uL')
-        await self.syringe_pump.dispense(self.sample_loop.get_volume() - pump_volume + air_gap_plus_extra_volume, max_flow_rate)
+        await self.syringe_pump.run_until_idle(self.syringe_pump.dispense(self.sample_loop.get_volume() - (pump_volume + air_gap_plus_extra_volume), max_flow_rate))
         
         # change to inject mode
         await self.change_mode('PumpInject')
         logging.debug(f'{self.name}.LoopInject: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
-        await self.syringe_pump.dispense(pump_volume, pump_flow_rate)
+        await self.syringe_pump.run_until_idle(self.syringe_pump.dispense(pump_volume, pump_flow_rate))
 
         # start QCMD timer
         logging.debug(f'{self.name}.LoopInject: Starting QCMD timer')
-        asyncio.ensure_future(self.gsioc_command_queue.put(self.timer(tag_name, record_time, sleep_time), asyncio.get_event_loop()))
+        await self.gsioc_command_queue.put(self.QCMDRecord(tag_name, sleep_time, record_time))
 
         # Prime loop
         logging.debug(f'{self.name}.LoopInject: Priming loop with full volume')
         await self.change_mode('PumpAspirate')
-        await self.syringe_pump.aspirate(self.syringe_pump.syringe_volume, max_flow_rate)
+        await self.syringe_pump.run_until_idle(self.syringe_pump.aspirate(self.syringe_pump.syringe_volume, max_flow_rate))
         await self.change_mode('PumpPrimeLoop')
-        await self.syringe_pump.dispense(self.syringe_pump.syringe_volume, max_flow_rate)
+        await self.syringe_pump.run_until_idle(self.syringe_pump.dispense(self.syringe_pump.syringe_volume, max_flow_rate))
 
 async def qcmd_loop():
-    gsioc = GSIOC(62, 'COM13', 19200)
+    gsioc = GSIOC(62, 'COM4', 19200)
     ser = HamiltonSerial(port='COM5', baudrate=38400)
     mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
-    sp = HamiltonSyringePump(ser, '0', LValve(name='syringe_LValve'), 5000, False, name='syringe_pump')
+    sp = HamiltonSyringePump(ser, '0', LValve(4, name='syringe_LValve'), 5000, False, name='syringe_pump')
+    sp.max_flow_rate = 5000 * 60 / 1000
     ip = InjectionPort('LH_injection_port')
     fc = FlowCell(0.444, 'flow_cell')
     sampleloop = FlowCell(5000., 'sample_loop')
     qcmd_channel = QCMDLoop(gsioc, mvp, sp, ip, fc, sampleloop, name='QCMD Channel')
+
+    async def sim_gsioc_commands(dev: AssemblyBasewithGSIOC, method_name: str, kwargs):
+        await asyncio.sleep(1)
+        logging.debug(f'{dev.name}: Method {method_name} requested')
+        if hasattr(dev, method_name):
+            logging.debug(f'{dev.name}: Starting method {method_name} with kwargs {kwargs}')
+            method = getattr(dev, method_name)
+
+        await dev.gsioc_command_queue.put(method(**kwargs))
+        await dev.gsioc_command_queue.join()
+        logging.info(f'sim_commands: Queue is finally empty!')
+
+    async def set_trigger(trigger: asyncio.Event, sleep_time: float = 0.0):
+        await asyncio.sleep(sleep_time)
+        trigger.set()
+        trigger.clear()
+
     try:
-        await qcmd_channel.initialize()
+        await qcmd_channel.initialize_devices()
+        gsioc_task = asyncio.create_task(qcmd_channel.initialize_gsioc())
+        await asyncio.gather(sim_gsioc_commands(qcmd_channel,
+                                                'LoopInject',
+                                                {'tag_name': 'hello',
+                                                 'record_time': 10,
+                                                 'sleep_time': 10,
+                                                 'pump_volume': 1000,
+                                                 'pump_flow_rate': 3,
+                                                 'air_gap_plus_extra_volume': 100}),
+                            set_trigger(qcmd_channel.trigger, 20),
+                            set_trigger(qcmd_channel.trigger, 30))
+        await asyncio.gather(sim_gsioc_commands(qcmd_channel,
+                                                'QCMDRecord',
+                                                {'tag_name': 'hello',
+                                                 'record_time': 10,
+                                                 'sleep_time': 10,}))
+        await gsioc_task
     finally:
         logging.info('Cleaning up...')
-        qcmd_channel.session.close()
+        await qcmd_channel.recorder.session.close()
 
 async def main():
-    gsioc = GSIOC(62, 'COM13', 19200)
-    qcmd_recorder = QCMDRecorder(gsioc, 'localhost', 5011)
+    gsioc = GSIOC(62, 'COM4', 19200)
+    qcmd_recorder = QCMDRecorderDevice(gsioc, 'localhost', 5011)
     try:
         await qcmd_recorder.initialize()
+    except Exception as e:
+        raise e
     finally:
-        logging.info('Cleaning up...')
-        qcmd_recorder.session.close()
+        await qcmd_recorder.recorder.session.close()
 
 if __name__=='__main__':
 
     logging.basicConfig(format='%(asctime)s.%(msecs)03d %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S',
-                        level=logging.INFO)
+                        level=logging.DEBUG)
 
-    asyncio.run(main(), debug=True)
+    asyncio.run(qcmd_loop(), debug=True)
