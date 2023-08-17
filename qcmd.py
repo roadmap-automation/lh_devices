@@ -71,7 +71,7 @@ class QCMDRecorderDevice(GSIOCDeviceBase):
         super().__init__(gsioc, name)
         self.recorder = QCMDRecorder(qcmd_address, qcmd_port, f'{self.name}.QCMDRecorder')
 
-    async def record(self, tag_name: str = '', record_time: str | float = 0.0, sleep_time: str | float = 0.0) -> None:
+    async def QCMDRecord(self, tag_name: str = '', record_time: str | float = 0.0, sleep_time: str | float = 0.0) -> None:
         """Executes timer and sends record command to QCMD. Call by sending
             {"method": "record", {**kwargs}} over GSIOC.
         """
@@ -290,12 +290,10 @@ async def qcmd_loop():
         await qcmd_channel.recorder.session.close()
 
 async def main():
-    gsioc = GSIOC(62, 'COM4', 19200)
+    gsioc = GSIOC(62, 'COM13', 19200)
     qcmd_recorder = QCMDRecorderDevice(gsioc, 'localhost', 5011)
     try:
         await qcmd_recorder.initialize()
-    except Exception as e:
-        raise e
     finally:
         await qcmd_recorder.recorder.session.close()
 
@@ -311,4 +309,4 @@ if __name__=='__main__':
                         datefmt='%Y-%m-%d %H:%M:%S',
                         level=logging.INFO)
 
-    asyncio.run(qcmd_loop(), debug=True)
+    asyncio.run(main(), debug=True)
