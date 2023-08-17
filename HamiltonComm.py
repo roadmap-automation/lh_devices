@@ -143,7 +143,7 @@ class HamiltonSerial(aioserial.AioSerial):
 
             # throw away first byte (always ASCII 255)
             data = data[1:].decode()
-            logging.info(f'{datetime.datetime.now().isoformat()}: {self.port} <= {data}')
+            logging.info(f'{self.port} <= {data}')
 
             # calculate checksum
             data_chksum = ord(checksum(data))
