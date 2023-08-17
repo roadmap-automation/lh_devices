@@ -145,7 +145,7 @@ class AssemblyBase:
     def idle(self) -> bool:
         return all(dev.idle for dev in self.devices)
     
-class AssemblyBasewithGSIOC(AssemblyBase, GSIOCDeviceBase):
+class AssemblyBasewithGSIOC(GSIOCDeviceBase, AssemblyBase):
     """Assembly with GSIOC support
     """
 
@@ -154,10 +154,21 @@ class AssemblyBasewithGSIOC(AssemblyBase, GSIOCDeviceBase):
         GSIOCDeviceBase.__init__(self, gsioc)
         self.trigger: asyncio.Event = asyncio.Event()
 
-    async def initialize(self) -> None:
-        """Initialize but start GSIOC handlers
+    async def initialize_devices(self) -> None:
+        """Initialize only devices
         """
-        await asyncio.gather(AssemblyBase.initialize(self), GSIOCDeviceBase.initialize(self))
+        await AssemblyBase.initialize(self)
+
+    async def initialize_gsioc(self) -> None:
+        """Initialize only GSIOC devices"""
+        
+        await GSIOCDeviceBase.initialize(self)
+
+    async def initialize(self) -> None:
+        """Initialize and start GSIOC handlers
+        """
+        await self.initialize_devices()
+        await self.initialize_gsioc()
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
         """Handles additional GSIOC messages.
