@@ -236,7 +236,7 @@ class GSIOCDeviceBase:
         self.name = name
 
     @property
-    def idle(self):
+    def gsioc_idle(self):
         return self.running_tasks == 0
 
     async def initialize(self) -> None:
@@ -270,7 +270,7 @@ class GSIOCDeviceBase:
 
         if data.data == 'Q':
             # busy query
-            response = 'idle' if self.idle else 'busy'
+            response = 'idle' if self.gsioc_idle else 'busy'
         
         # received JSON data for initializing a method
         elif data.data.startswith('{'):
@@ -282,7 +282,7 @@ class GSIOCDeviceBase:
                     logging.debug(f'{self.name}: Starting method {method_name} with kwargs {method_kwargs}')
                     method = getattr(self, method_name)
 
-                await self.gsioc_command_queue.put(asyncio.create_task(method(**method_kwargs)))
+                await self.gsioc_command_queue.put(method(**method_kwargs))
             
             else:
                 response = 'error: unknown JSON data'
@@ -292,17 +292,25 @@ class GSIOCDeviceBase:
 
         return response
 
+    def decrement_tasks(self, result) -> None:
+        """Decrements running task counter"""
+
+        self.running_tasks -= 1
+
     async def gsioc_actions(self) -> None:
         """Monitors GSIOC command queue and performs actions asynchronously
         """
 
+        all_tasks = set()
+
         while True:
-            task: asyncio.Future = self.gsioc_command_queue.get()
-            try:
-                self.running_tasks += 1
-                await task
-            finally:
-                self.running_tasks -= 1
+            task = asyncio.create_task(await self.gsioc_command_queue.get())
+            logging.debug(f'GSIOC Command Queue: received task {task}')
+            self.running_tasks += 1
+            all_tasks.add(task)
+            task.add_done_callback(all_tasks.discard)
+            task.add_done_callback(self.decrement_tasks)
+            
 
 async def main():
 
