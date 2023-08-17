@@ -279,10 +279,12 @@ class GSIOCDeviceBase:
                 method_name, method_kwargs = dd['method'], dd['kwargs']
                 logging.debug(f'{self.name}: Method {method_name} requested')
                 if hasattr(self, method_name):
-                    logging.debug(f'{self.name}: Starting method {method_name} with kwargs {method_kwargs}')
+                    logging.info(f'{self.name}: Starting method {method_name} with kwargs {method_kwargs}')
                     method = getattr(self, method_name)
+                    await self.gsioc_command_queue.put(method(**method_kwargs))
 
-                await self.gsioc_command_queue.put(method(**method_kwargs))
+                else:
+                    logging.warning(f'{self.name}: unknown method name {method_name}')
             
             else:
                 response = 'error: unknown JSON data'
