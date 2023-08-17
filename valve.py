@@ -143,7 +143,7 @@ class LValve(ValveBase):
     def __init__(self, n_ports: int, position: int = 0, ports: List[Port] = [], name=None) -> None:
         super().__init__(n_ports, n_ports, position, ports, name)
 
-        hamilton_valve_codes = {3: 0, 4: 1}
+        hamilton_valve_codes = {3: 0, 4: 4}
         if n_ports in hamilton_valve_codes.keys():
             self.hamilton_valve_code = hamilton_valve_codes[n_ports]
 
