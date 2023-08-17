@@ -301,8 +301,14 @@ async def main():
 
 if __name__=='__main__':
 
-    logging.basicConfig(format='%(asctime)s.%(msecs)03d %(message)s',
+    import datetime
+
+    logging.basicConfig(handlers=[
+                            logging.FileHandler(datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_qcmd_recorder_log.txt'),
+                            logging.StreamHandler()
+                        ],
+                        format='%(asctime)s.%(msecs)03d %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S',
-                        level=logging.DEBUG)
+                        level=logging.INFO)
 
     asyncio.run(qcmd_loop(), debug=True)
