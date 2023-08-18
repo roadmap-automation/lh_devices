@@ -460,10 +460,12 @@ class HamiltonSyringePump(HamiltonValvePositioner):
                 logging.error(f'{self}: Syringe move error {error}')
 
     async def home(self) -> None:
-        """Home syringe.
+        """Homes syringe using maximum flow rate
         """
 
-        response, error = await self.query(f'A0R')
+        V = self._speed_code(self.max_flow_rate)
+        #response, error = await self.query(f'A0R')
+        response, error = await self.query(f'V{V}A0R')
         if error:
             logging.error(f'{self}: Syringe homing error {error}')
 
