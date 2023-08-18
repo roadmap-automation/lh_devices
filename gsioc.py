@@ -206,7 +206,18 @@ class GSIOC(aioserial.AioSerial):
         """
         ret = await self.read1()
         if ret != 6:
-            logging.warning(f'Warning: wrong acknowledgement character received: {ret}')
+            logging.warning(f'Warning: wrong acknowledgement character received: {ret}; attempting to repair comms')
+            await self.repair_comms()
+
+    async def repair_comms(self):
+        """
+        Attempts to repair comms
+        """
+
+        # TODO: try sending break signal, close and re-open serial port, etc.
+
+        self.reset_input_buffer()
+        await asyncio.sleep(0)
 
     async def write1(self, char: str):
         """
