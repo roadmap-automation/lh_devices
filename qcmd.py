@@ -94,18 +94,22 @@ class QCMDLoop(AssemblyBasewithGSIOC):
                        qcmd_port: int = 5011,
                        name: str = '') -> None:
         
+        # Devices
         self.loop_valve = loop_valve
         self.syringe_pump = syringe_pump
         self.injection_port = injection_port
         self.flow_cell = flow_cell
         self.sample_loop = sample_loop
-        self.dead_volume = None
-
         super().__init__([loop_valve, syringe_pump], gsioc, name=name)
+        self.max_flow_rate = self.syringe_pump.max_flow_rate
+
+        # Measurement device
         self.recorder = QCMDRecorder(qcmd_address, qcmd_port, f'{self.name}.QCMDRecorder')
+
+        # Define node connections for dead volume estimations
+        self.dead_volume = None
         self.network = Network([self.loop_valve, self.syringe_pump, self.injection_port, self.flow_cell, self.sample_loop])
         
-        # define node connections
         # connect syringe pump valve port 2 to LH injection port
         connect_nodes(self.network._port_to_node_map[injection_port.inlet_port], syringe_pump.valve.nodes[2], 156)
 
@@ -122,8 +126,8 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         connect_nodes(loop_valve.valve.nodes[5], self.network._port_to_node_map[flow_cell.outlet_port], 0.0)
 
         self.network.update()
-        logging.info(self.network._port_to_node_map)
 
+        # Measurement modes
         self.modes = {'Standby': 
                         {loop_valve: 0,
                         syringe_pump: 0,
@@ -145,6 +149,14 @@ class QCMDLoop(AssemblyBasewithGSIOC):
                         syringe_pump: 4,
                         'dead_volume_nodes': [injection_port.nodes[0], syringe_pump.valve.nodes[2]]},
                     }
+        
+        # Control locks
+        # Measurement lock indicates that a measurement is occurring and the cell should not be
+        # exchanged or disturbed
+        self.measurement_lock: asyncio.Lock = asyncio.Lock()
+
+        # Channel lock indicates that the hardware in the channel is being used.
+        self.channel_lock: asyncio.Lock = asyncio.Lock()
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
 
@@ -167,9 +179,49 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         sleep_time = float(sleep_time)
         record_time = float(record_time)
 
+        # Locks the measurement system if not already locked. This (rather than "with lock")
+        # allows the lock to be passed smoothly from a calling function without interruption,
+        # or the lock to be acquired if function is used in a standalone fashion.
+        if not self.measurement_lock.locked():
+            self.measurement_lock.acquire()
+
         await self.recorder.record(tag_name, record_time, sleep_time)
 
+        self.measurement_lock.release()
+
         self.gsioc_command_queue.task_done()
+
+    async def primeloop(self,
+                        n_prime: int = 1 # number of repeats
+                         ) -> None:
+        """subroutine for priming the loop method. Primes the loop, but does not do anything with locks"""
+
+        for _ in range(n_prime):
+            logging.debug(f'{self.name}.LoopInject: Priming loop with full volume')
+            
+            # if syringe is not already at 0, move to prime mode and home the syringe
+            await self.syringe_pump.get_syringe_position()
+            if self.syringe_pump.syringe_position != 0:
+                await self.change_mode('PumpPrimeLoop')
+                await self.syringe_pump.run_until_idle(self.syringe_pump.home())
+            
+            # aspirate a full pump volume
+            await self.change_mode('PumpAspirate')
+            await self.syringe_pump.run_until_idle(self.syringe_pump.aspirate(self.syringe_pump.syringe_volume, self.syringe_pump.max_flow_rate))
+
+            # dispense a full pump volume
+            await self.change_mode('PumpPrimeLoop')
+            await self.syringe_pump.run_until_idle(self.syringe_pump.dispense(self.syringe_pump.syringe_volume, self.syringe_pump.max_flow_rate))
+
+    async def PrimeLoop(self,
+                        n_prime: int | str = 1 # number of repeats
+                         ) -> None:
+        """PrimeLoop standalone method"""
+
+        n_prime = int(n_prime)
+
+        with self.channel_lock:
+            await self.primeloop(n_prime)
 
     async def LoopInject(self,
                          pump_volume: str | float = 0, # uL
@@ -186,58 +238,60 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         sleep_time = float(sleep_time)
         record_time = float(record_time)
 
-        max_flow_rate = self.syringe_pump.max_flow_rate # uL / s
+        # locks the channel so any additional calling processes have to wait
+        with self.channel_lock:
 
-        # switch to standby mode
-        await self.change_mode('Standby')
+            # switch to standby mode
+            await self.change_mode('Standby')
 
-        # Set dead volume
-        self.dead_volume = self.network.get_dead_volume(*(node.base_port for node in self.modes['LoadLoop']['dead_volume_nodes']))
-        logging.debug(f'{self.name}.LoopInject: dead volume set to {self.dead_volume}')
+            # Set dead volume
+            self.dead_volume = self.network.get_dead_volume(*(node.base_port for node in self.modes['LoadLoop']['dead_volume_nodes']))
+            logging.debug(f'{self.name}.LoopInject: dead volume set to {self.dead_volume}')
 
-        # Wait for trigger to switch to LoadLoop mode
-        logging.debug(f'{self.name}.LoopInject: Waiting for first trigger')
-        await self.trigger.wait()
-        logging.debug(f'{self.name}.LoopInject: Switching to LoadLoop mode')
-        await self.change_mode('LoadLoop')
-        self.trigger.clear()
+            # Wait for trigger to switch to LoadLoop mode
+            logging.debug(f'{self.name}.LoopInject: Waiting for first trigger')
+            await self.trigger.wait()
+            logging.debug(f'{self.name}.LoopInject: Switching to LoadLoop mode')
+            await self.change_mode('LoadLoop')
+            self.trigger.clear()
 
-        # Wait for trigger to switch to PumpAspirate mode
-        logging.debug(f'{self.name}.LoopInject: Waiting for second trigger')
-        await self.trigger.wait()
-        await self.change_mode('PumpAspirate')
-        logging.debug(f'{self.name}.LoopInject: Switching to PumpAspirate mode')
-        self.trigger.clear()
+            # Wait for trigger to switch to PumpAspirate mode
+            logging.debug(f'{self.name}.LoopInject: Waiting for second trigger')
+            await self.trigger.wait()
+            await self.change_mode('PumpAspirate')
+            logging.debug(f'{self.name}.LoopInject: Switching to PumpAspirate mode')
+            self.trigger.clear()
 
-        # At this point, this method is done with GSIOC; signal command queue
-        self.gsioc_command_queue.task_done()
+            # At this point, this method is done with GSIOC; signal command queue
+            self.gsioc_command_queue.task_done()
 
-        # aspirate a syringeful
-        total_aspiration_volume = self.sample_loop.get_volume() - air_gap_plus_extra_volume
-        logging.debug(f'{self.name}.LoopInject: Aspirating {total_aspiration_volume} uL')
-        await self.syringe_pump.run_until_idle(self.syringe_pump.aspirate(total_aspiration_volume, max_flow_rate))
+            # aspirate a syringeful
+            total_aspiration_volume = self.sample_loop.get_volume() - air_gap_plus_extra_volume
+            logging.debug(f'{self.name}.LoopInject: Aspirating {total_aspiration_volume} uL')
+            await self.syringe_pump.run_until_idle(self.syringe_pump.aspirate(total_aspiration_volume, self.syringe_pump.max_flow_rate))
 
-        # move quickly through the loop
-        logging.debug(f'{self.name}.LoopInject: Switching to PumpPrimeLoop mode')
-        await self.change_mode('PumpPrimeLoop')
-        logging.debug(f'{self.name}.LoopInject: Moving plug through loop, total injection volume {self.sample_loop.get_volume() - pump_volume + air_gap_plus_extra_volume} uL')
-        await self.syringe_pump.run_until_idle(self.syringe_pump.dispense(self.sample_loop.get_volume() - (pump_volume + air_gap_plus_extra_volume), max_flow_rate))
-        
-        # change to inject mode
-        await self.change_mode('PumpInject')
-        logging.debug(f'{self.name}.LoopInject: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
-        await self.syringe_pump.run_until_idle(self.syringe_pump.dispense(pump_volume, pump_flow_rate))
+            # move quickly through the loop
+            logging.debug(f'{self.name}.LoopInject: Switching to PumpPrimeLoop mode')
+            await self.change_mode('PumpPrimeLoop')
+            logging.debug(f'{self.name}.LoopInject: Moving plug through loop, total injection volume {self.sample_loop.get_volume() - pump_volume + air_gap_plus_extra_volume} uL')
+            await self.syringe_pump.run_until_idle(self.syringe_pump.dispense(self.sample_loop.get_volume() - (pump_volume + air_gap_plus_extra_volume), self.syringe_pump.max_flow_rate))
+            
+            # waits until any current measurements are complete. Note that this could be done with
+            # with measurement_lock but then QCMDRecord would have to grab the lock as soon as it
+            # was released. This allows QCMDRecord to release the lock when it is done.
+            self.measurement_lock.acquire()
 
-        # start QCMD timer
-        logging.debug(f'{self.name}.LoopInject: Starting QCMD timer')
-        await self.gsioc_command_queue.put(self.QCMDRecord(tag_name, sleep_time, record_time))
+            # change to inject mode
+            await self.change_mode('PumpInject')
+            logging.debug(f'{self.name}.LoopInject: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
+            await self.syringe_pump.run_until_idle(self.syringe_pump.dispense(pump_volume, pump_flow_rate))
 
-        # Prime loop
-        logging.debug(f'{self.name}.LoopInject: Priming loop with full volume')
-        await self.change_mode('PumpAspirate')
-        await self.syringe_pump.run_until_idle(self.syringe_pump.aspirate(self.syringe_pump.syringe_volume, max_flow_rate))
-        await self.change_mode('PumpPrimeLoop')
-        await self.syringe_pump.run_until_idle(self.syringe_pump.dispense(self.syringe_pump.syringe_volume, max_flow_rate))
+            # start QCMD timer
+            logging.debug(f'{self.name}.LoopInject: Starting QCMD timer')
+            await self.gsioc_command_queue.put(self.QCMDRecord(tag_name, sleep_time, record_time))
+
+            # Prime loop
+            await self.primeloop()
 
 async def qcmd_loop():
     gsioc = GSIOC(62, 'COM4', 19200)
