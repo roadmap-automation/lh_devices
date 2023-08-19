@@ -164,6 +164,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
         # overwrites base class handling of dead volume
         if data.data == 'V':
+            await self.trigger.set()
             response = f'{self.dead_volume:0.0f}'
         # set trigger
         elif data.data == 'T':
@@ -241,8 +242,15 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             # switch to standby mode
             await self.change_mode('Standby')
 
-            # Set dead volume
-            self.dead_volume = self.network.get_dead_volume(*(node.base_port for node in self.modes['LoadLoop']['dead_volume_nodes']))
+            # reset trigger
+            self.trigger.clear()
+
+            # Set dead volume and wait for method to ask for it
+            self.dead_volume = self.get_dead_volume(['LoadLoop'])
+            self.waiting.set()
+            await self.trigger.wait()
+            self.waiting.clear()
+            self.trigger.clear()
             logging.debug(f'{self.name}.LoopInject: dead volume set to {self.dead_volume}')
 
             # Wait for trigger to switch to LoadLoop mode
@@ -310,6 +318,15 @@ async def qcmd_loop():
     fc = FlowCell(0.444, 'flow_cell')
     sampleloop = FlowCell(5000., 'sample_loop')
     qcmd_channel = QCMDLoop(mvp, sp, ip, fc, sampleloop, name='QCMD Channel')
+    
+    if False:
+        for mode in qcmd_channel.modes.keys():
+            print([dev.valve.position for dev in qcmd_channel.modes[mode].keys() if dev in qcmd_channel.devices])
+            print(f'{mode} dead volume: {qcmd_channel.get_dead_volume(mode)}')
+            print([dev.valve.position for dev in qcmd_channel.modes[mode].keys() if dev in qcmd_channel.devices])
+
+        await qcmd_channel.recorder.session.close()
+        return
 
     def sim_gsioc_commands(dev: AssemblyBasewithGSIOC, method_name: str, kwargs):
         logging.debug(f'{dev.name}: Method {method_name} requested')
@@ -371,7 +388,7 @@ if __name__=='__main__':
 
     import datetime
 
-    if True:
+    if False:
         logging.basicConfig(handlers=[
                                 logging.FileHandler(datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_qcmd_recorder_log.txt'),
                                 logging.StreamHandler()
