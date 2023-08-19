@@ -1,9 +1,9 @@
 import json
 import asyncio
 import logging
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Coroutine
 
-from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType, GSIOCDeviceBase
+from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from connections import Port, Node, connect_nodes
 from components import ComponentBase
@@ -98,10 +98,13 @@ class AssemblyBase:
         self.name = name
         self.devices = devices
         self.network = Network(self.devices)
-        self.batch_queue = asyncio.Queue()
         self.modes = {}
         self.current_mode = None
-    
+        self.running_tasks = set()
+
+        # Event that is triggered when all methods are completed
+        self.event_finished: asyncio.Event = asyncio.Event()
+
     async def initialize(self) -> None:
         """Initialize network of devices
         """
@@ -141,37 +144,64 @@ class AssemblyBase:
         nodes: List[Node] = self.modes[self.current_mode]['dead_volume_nodes']
         return self.network.get_dead_volume(nodes[0].base_port, nodes[1].base_port)
 
+    def method_complete_callback(self, result: asyncio.Future) -> None:
+        """Callback when method is complete
+
+        Args:
+            result (Any): calling method
+        """
+
+        self.running_tasks.discard(result)
+
+        # if this was the last method to finish, set event_finished
+        if len(self.running_tasks) == 0:
+            self.event_finished.set()
+
+    def run_method(self, method: Coroutine) -> None:
+        """Runs a coroutine method. Designed for complex operations with assembly hardware"""
+
+        # clear finished event because something is now running
+        self.event_finished.clear()
+
+        # create a task and add to set to avoid garbage collection
+        task = asyncio.create_task(method)
+        logging.debug(f'Running task {task} from method {method}')
+        self.running_tasks.add(task)
+
+        # register callback upon task completion
+        task.add_done_callback(self.method_complete_callback)
+
     @property
     def idle(self) -> bool:
-        return all(dev.idle for dev in self.devices)
+        return all(dev.idle for dev in self.devices) & (not len(self.running_tasks))
     
-class AssemblyBasewithGSIOC(GSIOCDeviceBase, AssemblyBase):
-    """Assembly with GSIOC support
+class AssemblyBasewithGSIOC(AssemblyBase):
+    """Assembly with support for GSIOC commands
     """
 
-    def __init__(self, devices: List[HamiltonBase], gsioc: GSIOC, name='') -> None:
-        AssemblyBase.__init__(self, devices, name=name)
-        GSIOCDeviceBase.__init__(self, gsioc)
-        self.trigger: asyncio.Event = asyncio.Event()
+    def __init__(self, devices: List[HamiltonBase], name='') -> None:
+        super().__init__(devices, name=name)
+        self.waiting: asyncio.Event = asyncio.Event()
 
-    async def initialize_devices(self) -> None:
-        """Initialize only devices
+    async def initialize_gsioc(self, gsioc: GSIOC) -> None:
+        """Initialize GSIOC communications. Only use for top-level assemblies."""
+
+        await asyncio.gather(gsioc.listen(), self.monitor_gsioc(gsioc))
+
+    async def monitor_gsioc(self, gsioc: GSIOC) -> None:
+        """Monitor GSIOC communications. Note that only one device should be
+            listening to a GSIOC device at a time.
         """
-        await AssemblyBase.initialize(self)
 
-    async def initialize_gsioc(self) -> None:
-        """Initialize only GSIOC devices"""
-        
-        await GSIOCDeviceBase.initialize(self)
+        while True:
+            data: GSIOCMessage = await gsioc.message_queue.get()
 
-    async def initialize(self) -> None:
-        """Initialize and start GSIOC handlers
-        """
-        await self.initialize_devices()
-        await self.initialize_gsioc()
+            response = await self.handle_gsioc(data)
+            if data.messagetype == GSIOCCommandType.IMMEDIATE:
+                await gsioc.response_queue.put(response)
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
-        """Handles additional GSIOC messages.
+        """Handles GSIOC messages. Put actions into gsioc_command_queue for async processing.
 
         Args:
             data (GSIOCMessage): GSIOC Message to be parsed / handled
@@ -179,26 +209,51 @@ class AssemblyBasewithGSIOC(GSIOCDeviceBase, AssemblyBase):
         Returns:
             str: response (only for GSIOC immediate commands, else None)
         """
-
+        
         response = None
+
+        if data.data == 'Q':
+            # busy query
+            if self.waiting.is_set():
+                response = 'waiting'
+            elif self.idle:
+                response = 'idle'
+            else:
+                response = 'busy'
 
         # get dead volume of current mode in uL
         if data.data == 'V':
             response = f'{self.get_dead_volume():0.0f}'
         
-        # set trigger
-        elif data.data == 'T':
-            await self.trigger.set()
-            response = 'ok'
-
         # requested mode change (deprecated)
         elif data.data.startswith('mode: '):
             mode = data.data.split('mode: ', 1)[1]
-            await self.gsioc_command_queue.put(asyncio.create_task(self.change_mode(mode)))
+            self.run_method(self.change_mode(mode))
+                
+        # received JSON data for running a method
+        elif data.data.startswith('{'):
+
+            # parse JSON
+            dd: dict = json.loads(data.data)
+            if 'method' in dd.keys():
+                method_name, method_kwargs = dd['method'], dd['kwargs']
+                logging.debug(f'{self.name}: Method {method_name} requested')
+
+                # check that method exists
+                if hasattr(self, method_name):
+                    logging.info(f'{self.name}: Starting method {method_name} with kwargs {method_kwargs}')
+                    method = getattr(self, method_name)
+                    self.run_method(method(**method_kwargs))
+
+                else:
+                    logging.warning(f'{self.name}: unknown method name {method_name}')
+            
+            else:
+                response = 'error: unknown JSON data'
         
         else:
-            response = super().handle_gsioc(data)
-        
+            response = 'error: unknown command'
+
         return response
 
 class AssemblyTest(AssemblyBase):
