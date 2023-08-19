@@ -63,13 +63,8 @@ class GSIOC(aioserial.AioSerial):
         self.message_queue: asyncio.Queue = asyncio.Queue(1)
         self.response_queue: asyncio.Queue = asyncio.Queue(1)
 
-        #signal.signal(signal.SIGINT, self.signal_handler)
-
-    def signal_handler(self, signal, frame):
-        """
-        Handles stop signals for a clean exit
-        """
-        self.interrupt = True
+    # TODO: register listeners so can only have one listener (or at
+    #   least only one responder) per GSIOC device.
 
     async def listen(self) -> None:
         """
@@ -237,93 +232,6 @@ class GSIOC(aioserial.AioSerial):
         await self.write1(chr(ord(msg[-1]) + 128))
 
         logging.info(f'{self.port} (GSIOC) => {msg}')
-
-class GSIOCDeviceBase:
-
-    def __init__(self, gsioc: GSIOC, name='') -> None:
-        self.gsioc = gsioc
-        self.gsioc_command_queue: asyncio.Queue = asyncio.Queue()
-        self.running_tasks: int = 0
-        self.name = name
-
-    @property
-    def gsioc_idle(self):
-        return self.running_tasks == 0
-
-    async def initialize(self) -> None:
-        """Starts async processes"""
-
-        await asyncio.gather(self.gsioc.listen(), self.monitor_gsioc(), self.gsioc_actions())
-
-    async def monitor_gsioc(self) -> None:
-        """Monitor GSIOC queue
-        """
-
-        while True:
-            data: GSIOCMessage = await self.gsioc.message_queue.get()
-
-            response = await self.handle_gsioc(data)
-            if data.messagetype == GSIOCCommandType.IMMEDIATE:
-                await self.gsioc.response_queue.put(response)
-
-    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
-        """Handles GSIOC messages. Put actions into gsioc_command_queue for async processing.
-
-        Args:
-            data (GSIOCMessage): GSIOC Message to be parsed / handled
-
-        Returns:
-            str: response (only for GSIOC immediate commands)
-            str: error
-        """
-        
-        response = None
-
-        if data.data == 'Q':
-            # busy query
-            response = 'idle' if self.gsioc_idle else 'busy'
-        
-        # received JSON data for initializing a method
-        elif data.data.startswith('{'):
-            dd: dict = json.loads(data.data)
-            if 'method' in dd.keys():
-                method_name, method_kwargs = dd['method'], dd['kwargs']
-                logging.debug(f'{self.name}: Method {method_name} requested')
-                if hasattr(self, method_name):
-                    logging.info(f'{self.name}: Starting method {method_name} with kwargs {method_kwargs}')
-                    method = getattr(self, method_name)
-                    await self.gsioc_command_queue.put(method(**method_kwargs))
-
-                else:
-                    logging.warning(f'{self.name}: unknown method name {method_name}')
-            
-            else:
-                response = 'error: unknown JSON data'
-        
-        else:
-            response = 'error: unknown command'
-
-        return response
-
-    def decrement_tasks(self, result) -> None:
-        """Decrements running task counter"""
-
-        self.running_tasks -= 1
-
-    async def gsioc_actions(self) -> None:
-        """Monitors GSIOC command queue and performs actions asynchronously
-        """
-
-        all_tasks = set()
-
-        while True:
-            task = asyncio.create_task(await self.gsioc_command_queue.get())
-            logging.debug(f'GSIOC Command Queue: received task {task}')
-            self.running_tasks += 1
-            all_tasks.add(task)
-            task.add_done_callback(all_tasks.discard)
-            task.add_done_callback(self.decrement_tasks)
-            
 
 async def main():
 
