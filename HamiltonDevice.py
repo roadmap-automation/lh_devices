@@ -260,25 +260,25 @@ class HamiltonValvePositioner(HamiltonBase):
         """
 
         # this checks for errors
-        self.valve.move(position)
+        if self.valve.validate_move(position):
 
-        # convert to angle
-        delta_angle = 360 / self.valve.n_ports
+            # convert to angle
+            delta_angle = 360 / self.valve.n_ports
 
-        # in special case of zero, move valve to "off" position between angles
-        angle = delta_angle // 6 * 3 if position == 0 else (position - 1) * delta_angle
+            # in special case of zero, move valve to "off" position between angles
+            angle = delta_angle // 6 * 3 if position == 0 else (position - 1) * delta_angle
 
-        _, error = await self.query(f'h29{angle:03.0f}R')
-        await self.poll_until_idle()
-        if error:
-            logging.error(f'{self}: Move error {error}')
+            _, error = await self.query(f'h29{angle:03.0f}R')
+            await self.poll_until_idle()
+            if error:
+                logging.error(f'{self}: Move error {error}')
 
-        # check that valve actually moved
-        await self.get_valve_position()
-        if self.valve.position != position:
-            logging.error(f'{self}: Valve did not move to new position {position}, actually at {self.valve.position}')
-        else:
-            logging.debug(f'{self}: Move successful to position {position}')
+            # check that valve actually moved
+            await self.get_valve_position()
+            if self.valve.position != position:
+                logging.error(f'{self}: Valve did not move to new position {position}, actually at {self.valve.position}')
+            else:
+                logging.debug(f'{self}: Move successful to position {position}')
 
 
 class HamiltonSyringePump(HamiltonValvePositioner):
