@@ -1,6 +1,7 @@
 import json
 import asyncio
 import logging
+from copy import deepcopy
 from typing import List, Tuple, Dict, Coroutine
 
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
@@ -134,15 +135,47 @@ class AssemblyBase:
 
         await asyncio.gather(*(dev.run_until_idle(dev.move_valve(pos)) for dev, pos in valve_config.items() if dev in self.devices))
 
-    def get_dead_volume(self) -> float:
-        """Gets dead volume of current configuration mode
+    def get_dead_volume(self, mode: str | None = None) -> float:
+        """Gets dead volume of configuration mode
+
+        Args:
+            mode (str | None, optional): mode to interrogate. Defaults to None.
 
         Returns:
             float: dead volume in uL
         """
+        
+        # use current mode if mode is not given        
+        mode = self.current_mode if mode is None else mode
 
-        nodes: List[Node] = self.modes[self.current_mode]['dead_volume_nodes']
-        return self.network.get_dead_volume(nodes[0].base_port, nodes[1].base_port)
+        if mode in self.modes:
+
+            valve_config: Dict[HamiltonValvePositioner, int] = self.modes[mode]
+
+            # find nodes
+            nodes: List[Node] = valve_config['dead_volume_nodes']
+
+            # this isn't optimal because it temporarily changes state
+            current_positions = []
+            for dev, pos in valve_config.items():
+                if dev in self.devices:
+                    current_positions.append(dev.valve.position)
+                    dev.valve.move(pos)
+
+            self.network.update()
+
+            dead_volume = self.network.get_dead_volume(nodes[0].base_port, nodes[1].base_port)
+
+            for dev, pos in zip(valve_config.keys(), current_positions):
+                if dev in self.devices:
+                    dev.valve.move(pos)
+
+            self.network.update()
+
+            return dead_volume
+        
+        else:
+            logging.error(f'{self.name}: mode {mode} does not exist')
 
     def method_complete_callback(self, result: asyncio.Future) -> None:
         """Callback when method is complete
