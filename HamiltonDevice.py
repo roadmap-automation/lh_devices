@@ -82,9 +82,35 @@ class HamiltonBase:
 
         return []
 
-    async def initialize(self) -> None:
+    async def is_initialized(self) -> bool:
+        """Query device to get initialization state
 
-        await self.run_until_idle(self.initialize_device())
+        Returns:
+            bool: True if device is initialized, else False
+        """
+
+        status = await self.get_full_status()
+
+        return True if status[-1]=='1' else False
+
+    async def get_full_status(self) -> str:
+        """Gets full status string of device
+
+        Returns:
+            str: six-bit binary string with status
+        """
+        
+        response, error = await self.query('?20000')
+
+        return format(int(response), '06b')
+
+    async def initialize(self) -> None:
+        """Initialize device only if not already initialized
+        """
+
+        initialized = await self.is_initialized()
+        if initialized:
+            await self.run_until_idle(self.initialize_device())
 
     async def initialize_device(self) -> None:
         pass
