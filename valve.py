@@ -96,6 +96,14 @@ class ValveBase(ComponentBase):
             return False
         
         return True
+    
+class SyringeValveBase(ValveBase):
+
+    def __init__(self, n_ports: int, n_positions: int, position: int = 1, ports: List[Port] = [], name: str = '') -> None:
+        super().__init__(n_ports, n_positions, position, ports, name)
+
+        self.aspirate_position: int | None = None
+        self.dispense_position: int | None = None
 
 class DistributionValve(ValveBase):
     """Distribution valve representation. "Position" corresponds to the port number of the outlet port.
@@ -153,8 +161,11 @@ class LoopFlowValve(ValveBase):
         else:
             self._portmap = {}
 
-class LValve(ValveBase):
-    """L Valve (each position connects two adjacent inlets / outlets)
+class SyringeLValve(SyringeValveBase):
+    """L Valve (each position connects two adjacent inlets / outlets) that sits atop syringe
+        pump. Port 0 is down (syringe), and ports are numbered clockwise from the syringe port.
+        Default aspiration and dispense positions are the first and last ports (reservoir inlet
+        on the left, outlet on the right)
 
     """
 
@@ -165,6 +176,9 @@ class LValve(ValveBase):
         if n_ports in hamilton_valve_codes.keys():
             self.hamilton_valve_code = hamilton_valve_codes[n_ports]
 
+        self.aspirate_position = 1
+        self.dispense_position = n_ports
+
     def update_map(self):
         """Updates the port map.
         """
@@ -173,9 +187,8 @@ class LValve(ValveBase):
             self._portmap[self.position - 1] = self.position % self.n_ports
             self._portmap[self.position % self.n_ports] = self.position - 1
 
-class SyringeYValve(LValve):
-    """L valve to sit atop syringe pump. Port 0 is down, and ports are number clockwise.
-        Implementation is that of a 3-port T valve.
+class SyringeYValve(SyringeLValve):
+    """Syringe Pump Y valve, which is an implementation of a 3-port L valve.
     """
 
     def __init__(self, position: int = 0, ports: List[Port] = [], name=None) -> None:
