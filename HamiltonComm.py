@@ -73,7 +73,7 @@ class HamiltonSerial(aioserial.AioSerial):
         """
 
         return_value = {'value': None}
-        logging.info(f'{self.port} => {repr(data)}')
+        logging.debug(f'{self.port} => {repr(data)}')
         await self.write_async(data.standard_encode())
 
         # wait for results to come in, with timeout
@@ -93,7 +93,7 @@ class HamiltonSerial(aioserial.AioSerial):
             trial += 1
             data.repeat = '1'
             #print(f'Trial {trial}... {data}')
-            logging.info(f'{self.port} => {repr(data)}')
+            logging.debug(f'{self.port} => {repr(data)}')
             await self.write_async(data.standard_encode())
         
         # increment sequence number, cycling between 1 and 7
@@ -143,7 +143,7 @@ class HamiltonSerial(aioserial.AioSerial):
 
             # throw away first byte (always ASCII 255)
             data = data[1:].decode()
-            logging.info(f'{self.port} <= {data}')
+            logging.debug(f'{self.port} <= {data}')
 
             # calculate checksum
             data_chksum = ord(checksum(data))
