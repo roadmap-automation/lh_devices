@@ -56,13 +56,17 @@ class MultiChannelAssembly(AssemblyBasewithGSIOC):
         super().__init__([dev for ch in channels for dev in ch.devices], name)
 
     """TODO:
-        0. duplicate QCMD channel loop for a ROADMAP channel
-        1. connect self.network to individual channels networks (networks should propagate)
-        2. extend to allow a network of distribution valves
-        3. handle_gsioc should pass channel-specific commands to those channels and route responses back
-        4. implement distribution valve lock so only one channel can use it at a time.
-        5. ROADMAP channels should also have a change_direction method that switches the injection
+        1. Make ROADMAP channels akin to QCMD channels
+            a. Should know about distribution valve all the way up to injection port (define all
+                of these and their connections before connecting them into channels)
+            b. Mode definitions should include distribution valve positions, probably
+            c. ROADMAP channels should also have a change_direction method that switches the injection
             direction. This can be done once at the beginning of inject methods.
+        2. Collect ROADMAP channels into MultiChannel Assembly
+            a. handle_gsioc should pass channel-specific commands to those channels and route responses back
+            b. implement distribution valve lock so only one channel can use it at a time (or is this
+                a channel-level function?)
+
         """
 
 
