@@ -1,8 +1,9 @@
+import copy
 from typing import Tuple, List
 import asyncio
 import logging
 from HamiltonComm import HamiltonSerial
-from valve import ValveBase
+from valve import ValveBase, SyringeValveBase
 from connections import Node
 
 class PollTimer:
@@ -198,7 +199,6 @@ class HamiltonValvePositioner(HamiltonBase):
         super().__init__(serial_instance, address, name)
 
         self.valve = valve
-        self.initialized = False
 
     def get_nodes(self) -> List[Node]:
         
@@ -212,15 +212,14 @@ class HamiltonValvePositioner(HamiltonBase):
     async def initialize_device(self) -> None:
         """Initialize the device"""
 
-        # TODO: might be Y!!! Depends on whether left or right is facing front or back.
         _, error = await self.query('ZR')
-        if not error:
-            self.initialized = True
-        else:
+        if error:
             logging.error(f'{self}: Initialization error {error}')
 
     async def set_valve_code(self, code: int | None = None) -> None:
-        """Set valve code on MVP/4 device. Supposed to override DIP switches but does not appear to.
+        """Set valve code on MVP/4 device.
+            Syringe codes are not used (absolute angles are used) but syringe will check for various
+            positions that it believes to be incorrect and throw errors, so correct valve code is important.
 
         Args:
             code (int | None, optional): Optionally specify valve code on MVP/4 device. Defaults to None.
@@ -314,7 +313,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
     def __init__(self,
                  serial_instance: HamiltonSerial,
                  address: str,
-                 valve: ValveBase,
+                 valve: SyringeValveBase,
                  syringe_volume: float = 5000,
                  high_resolution = False,
                  name = None,
@@ -485,13 +484,100 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             if error:
                 logging.error(f'{self}: Syringe move error {error}')
 
+    async def smart_dispense(self, volume: float, dispense_flow_rate: float) -> None:
+        """Smart dispense, including both aspiration at max flow rate, dispensing at specified
+            flow rate, and the ability to handle a volume that is larger than the syringe volume
+            
+        Args:
+            volume (float): volume in uL
+            flow_rate (float): flow rate in uL / s"""
+
+        # check that aspiration and dispense positions are defined
+        if (not hasattr(self.valve, 'aspirate_position')) | (not hasattr(self.valve, 'dispense_position')):
+            logging.error(f'{self.name}: valve must have aspirate_position and dispense_position defined to use smart_dispense')
+            return
+        if (self.valve.aspirate_position is None) | (self.valve.dispense_position is None):
+            logging.error(f'{self.name}: aspirate_position and dispense_position must be set to use smart_dispense')
+            return
+        
+        # convert speeds to V factors
+        V_aspirate = self._speed_code(self.max_flow_rate)
+        V_dispense = self._speed_code(dispense_flow_rate)
+
+        # calculate total volume in steps
+        total_steps = self._stroke_length(volume)
+        logging.debug(f'{self.name}: smart dispense requested {total_steps} steps')
+        if total_steps <= 0:
+            logging.warning(f'{self.name}: volume is not positive, smart_dispense terminating')
+            return
+
+        # calculate max number of steps
+        full_stroke = self._full_stroke() // 2
+
+        # update current syringe position (usually zero)
+        await self.get_syringe_position()
+        current_position = copy.copy(self.syringe_position)
+        logging.debug(f'{self.name}: smart dispense, syringe at {current_position}')
+
+        # calculate number of aspirate/dispense operations and volume per operation
+        # if there is already enough volume in the syringe, just do a single dispense
+        if current_position >= total_steps:
+            # switch valve and dispense
+            logging.debug(f'{self.name}: smart dispense dispensing {total_steps} at V {V_dispense}')
+            await self.run_until_idle(self.move_valve(self.valve.dispense_position))
+            await self.run_until_idle(self.move_absolute(current_position - total_steps, V_dispense))
+        else:
+            # number of full_volume loops plus remainder
+            stroke_steps = [full_stroke] * (total_steps // full_stroke) + [total_steps % full_stroke]
+            for stroke in stroke_steps:
+                if stroke > 0:
+                    logging.debug(f'{self.name}: smart dispense aspirating {stroke - current_position} at V {V_aspirate}')
+                    # switch valve and aspirate
+                    await self.run_until_idle(self.move_valve(self.valve.aspirate_position))
+                    await self.run_until_idle(self.move_absolute(stroke - current_position, V_aspirate))
+                    # switch valve and dispense
+                    logging.debug(f'{self.name}: smart dispense dispensing all at V {V_dispense}')
+                    await self.run_until_idle(self.move_valve(self.valve.dispense_position))
+                    await self.run_until_idle(self.move_absolute(0, V_dispense))
+                    # set current position to zero
+                    current_position = 0
+
+    async def move_absolute(self, position: int, V_rate: int) -> None:
+        """Low-level method for moving the syringe to an absolute position using
+            the V speed code
+
+        Args:
+            position (int): syringe position in steps
+            V_rate (int): movement rate
+        """
+
+        response, error = await self.query(f'V{V_rate}A{position}R')
+        if error:
+            logging.error(f'{self}: Syringe move error {error} for move to position {position} with V {V_rate}')
+
     async def home(self) -> None:
         """Homes syringe using maximum flow rate
         """
 
         V = self._speed_code(self.max_flow_rate)
-        #response, error = await self.query(f'A0R')
-        response, error = await self.query(f'V{V}A0R')
-        if error:
-            logging.error(f'{self}: Syringe homing error {error}')
+        await self.move_absolute(0, V)
+
+if __name__ == '__main__':
+
+    logging.basicConfig(
+                        format='%(asctime)s.%(msecs)03d %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S',
+                        level=logging.DEBUG)
+
+    from valve import SyringeLValve
+
+    ser = HamiltonSerial(port='COM5', baudrate=38400)
+    sp = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000, False, name='syringe_pump')
+    sp.max_flow_rate = 5000 * 60 / 1000
+
+    async def main():
+        sp.syringe_position = 2400
+        await sp.smart_dispense(5000, 1 * 1000 / 60)
+
+    asyncio.run(main(), debug=True)
 
