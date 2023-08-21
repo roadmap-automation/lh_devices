@@ -214,7 +214,10 @@ class AssemblyBasewithGSIOC(AssemblyBase):
 
     def __init__(self, devices: List[HamiltonBase], name='') -> None:
         super().__init__(devices, name=name)
+
+        # enables triggering
         self.waiting: asyncio.Event = asyncio.Event()
+        self.trigger: asyncio.Event = asyncio.Event()
 
     async def initialize_gsioc(self, gsioc: GSIOC) -> None:
         """Initialize GSIOC communications. Only use for top-level assemblies."""
@@ -232,6 +235,15 @@ class AssemblyBasewithGSIOC(AssemblyBase):
             response = await self.handle_gsioc(data)
             if data.messagetype == GSIOCCommandType.IMMEDIATE:
                 await gsioc.response_queue.put(response)
+
+    async def wait_for_trigger(self) -> None:
+        """Uses waiting and trigger events to signal that assembly is waiting for a trigger signal
+            and then release upon receiving the trigger signal"""
+        
+        self.waiting.set()
+        await self.trigger.wait()
+        self.waiting.clear()
+        self.trigger.clear()
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
         """Handles GSIOC messages. Put actions into gsioc_command_queue for async processing.
@@ -257,7 +269,12 @@ class AssemblyBasewithGSIOC(AssemblyBase):
         # get dead volume of current mode in uL
         if data.data == 'V':
             response = f'{self.get_dead_volume():0.0f}'
-        
+
+        # set trigger
+        elif data.data == 'T':
+            await self.trigger.set()
+            response = 'ok'
+
         # requested mode change (deprecated)
         elif data.data.startswith('mode: '):
             mode = data.data.split('mode: ', 1)[1]
