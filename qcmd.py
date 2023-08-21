@@ -108,7 +108,6 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         self.flow_cell = flow_cell
         self.sample_loop = sample_loop
         super().__init__([loop_valve, syringe_pump], name=name)
-        self.max_flow_rate = self.syringe_pump.max_flow_rate
 
         # Measurement device
         self.recorder = QCMDRecorder(qcmd_address, qcmd_port, f'{self.name}.QCMDRecorder')
@@ -119,23 +118,6 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
         # Trigger for use in async methods
         self.trigger: asyncio.Event = asyncio.Event()
-        
-        # connect syringe pump valve port 2 to LH injection port
-        connect_nodes(injection_port.nodes[0], syringe_pump.valve.nodes[2], 156)
-
-        # connect syringe pump valve port 3 to sample loop
-        connect_nodes(syringe_pump.valve.nodes[3], sample_loop.inlet_node, 0.0)
-
-        # connect sample loop to loop valve port 1
-        connect_nodes(loop_valve.valve.nodes[1], sample_loop.outlet_node, 0.0)
-
-        # connect cell inlet to loop valve port 2
-        connect_nodes(loop_valve.valve.nodes[2], flow_cell.inlet_node, 0.0)
-
-        # connect cell outlet to loop valve port 5
-        connect_nodes(loop_valve.valve.nodes[5], flow_cell.outlet_node, 0.0)
-
-        self.network.update()
 
         # Measurement modes
         self.modes = {'Standby': 
@@ -295,6 +277,22 @@ async def qcmd_loop():
     ip = InjectionPort('LH_injection_port')
     fc = FlowCell(0.444, 'flow_cell')
     sampleloop = FlowCell(5000., 'sample_loop')
+
+    # connect syringe pump valve port 2 to LH injection port
+    connect_nodes(ip.nodes[0], sp.valve.nodes[2], 156)
+
+    # connect syringe pump valve port 3 to sample loop
+    connect_nodes(sp.valve.nodes[3], sampleloop.inlet_node, 0.0)
+
+    # connect sample loop to loop valve port 1
+    connect_nodes(mvp.valve.nodes[1], sampleloop.outlet_node, 0.0)
+
+    # connect cell inlet to loop valve port 2
+    connect_nodes(mvp.valve.nodes[2], fc.inlet_node, 0.0)
+
+    # connect cell outlet to loop valve port 5
+    connect_nodes(mvp.valve.nodes[5], fc.outlet_node, 0.0)
+
     qcmd_channel = QCMDLoop(mvp, sp, ip, fc, sampleloop, name='QCMD Channel')
 
     lh = SimLiquidHandler(qcmd_channel)
