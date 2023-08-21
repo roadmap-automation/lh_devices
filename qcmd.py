@@ -3,10 +3,11 @@ import aiohttp
 import asyncio
 import logging
 from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial
-from valve import LoopFlowValve, LValve
+from valve import LoopFlowValve, SyringeLValve
 from components import InjectionPort, FlowCell
 from gsioc import GSIOC, GSIOCMessage
 from assemblies import AssemblyBasewithGSIOC, Network, connect_nodes
+from liquid_handler import SimLiquidHandler
 
 class Timer:
     """Basic timer. Essentially serves as a sleep but only allows one instance to run."""
@@ -60,9 +61,12 @@ class QCMDRecorder(Timer):
             logging.info(f'{self.session._base_url}/QCMD/ => {post_data}')
 
             # send an http request to QCMD server
-            async with self.session.post('/QCMD/', json=post_data) as resp:
-                response_json = await resp.json()
-                logging.info(f'{self.session._base_url}/QCMD/ <= {response_json}')
+            try:
+                async with self.session.post('/QCMD/', json=post_data) as resp:
+                    response_json = await resp.json()
+                    logging.info(f'{self.session._base_url}/QCMD/ <= {response_json}')
+            except (ConnectionRefusedError, aiohttp.ClientConnectorError):
+                logging.error(f'request to {self.session._base_url}/QCMD/ failed: connection refused')
 
 class QCMDRecorderDevice(AssemblyBasewithGSIOC):
     """QCMD recording device."""
@@ -83,6 +87,10 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
         await self.recorder.record(tag_name, record_time, sleep_time)
 
 class QCMDLoop(AssemblyBasewithGSIOC):
+
+    """TODO: Add distribution valve to init and to modes. Can also reduce # of modes because
+        distribution valve is set once at the beginning of the method and syringe pump smart
+        dispense takes care of aspirate/dispense"""
 
     def __init__(self, loop_valve: HamiltonValvePositioner,
                        syringe_pump: HamiltonSyringePump,
@@ -164,12 +172,10 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
         # overwrites base class handling of dead volume
         if data.data == 'V':
-            await self.trigger.set()
+            logging.debug('Got V!')
+            self.waiting.clear()
+            self.trigger.set()
             response = f'{self.dead_volume:0.0f}'
-        # set trigger
-        elif data.data == 'T':
-            await self.trigger.set()
-            response = 'ok'
         else:
             response = await super().handle_gsioc(data)
         
@@ -192,24 +198,10 @@ class QCMDLoop(AssemblyBasewithGSIOC):
     async def primeloop(self,
                         n_prime: int = 1 # number of repeats
                          ) -> None:
-        """subroutine for priming the loop method. Primes the loop, but does not do anything with locks"""
+        """subroutine for priming the loop method. Primes the loop, but does not activate locks"""
 
-        for _ in range(n_prime):
-            logging.debug(f'{self.name}.LoopInject: Priming loop with full volume')
-            
-            # if syringe is not already at 0, move to prime mode and home the syringe
-            await self.syringe_pump.get_syringe_position()
-            if self.syringe_pump.syringe_position != 0:
-                await self.change_mode('PumpPrimeLoop')
-                await self.syringe_pump.run_until_idle(self.syringe_pump.home())
-            
-            # aspirate a full pump volume
-            await self.change_mode('PumpAspirate')
-            await self.syringe_pump.run_until_idle(self.syringe_pump.aspirate(self.syringe_pump.syringe_volume, self.syringe_pump.max_flow_rate))
-
-            # dispense a full pump volume
-            await self.change_mode('PumpPrimeLoop')
-            await self.syringe_pump.run_until_idle(self.syringe_pump.dispense(self.syringe_pump.syringe_volume, self.syringe_pump.max_flow_rate))
+        await self.change_mode('PumpPrimeLoop')
+        await self.syringe_pump.smart_dispense(self.sample_loop.get_volume() * n_prime, self.syringe_pump.max_flow_rate)
 
     async def PrimeLoop(self,
                         n_prime: int | str = 1 # number of repeats
@@ -239,62 +231,48 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         # locks the channel so any additional calling processes have to wait
         async with self.channel_lock:
 
+            # Set dead volume and wait for method to ask for it (might need brief wait in the calling
+            # method to make sure this updates in time)
+            self.dead_volume = self.get_dead_volume('LoadLoop')
+            logging.info(f'{self.name}.LoopInject: dead volume set to {self.dead_volume}')
+            logging.info(f'{self.name}.LoopInject: Waiting for dead volume request')
+            await self.wait_for_trigger()
+
             # switch to standby mode
+            logging.info(f'{self.name}.LoopInject: Switching to Standby mode')            
             await self.change_mode('Standby')
 
-            # reset trigger
-            self.trigger.clear()
-
-            # Set dead volume and wait for method to ask for it
-            self.dead_volume = self.get_dead_volume(['LoadLoop'])
-            self.waiting.set()
-            await self.trigger.wait()
-            self.waiting.clear()
-            self.trigger.clear()
-            logging.debug(f'{self.name}.LoopInject: dead volume set to {self.dead_volume}')
-
             # Wait for trigger to switch to LoadLoop mode
-            logging.debug(f'{self.name}.LoopInject: Waiting for first trigger')
-            self.waiting.set()
-            await self.trigger.wait()
-            self.waiting.clear()
-            logging.debug(f'{self.name}.LoopInject: Switching to LoadLoop mode')
+            logging.info(f'{self.name}.LoopInject: Waiting for first trigger')
+            await self.wait_for_trigger()
+            logging.info(f'{self.name}.LoopInject: Switching to LoadLoop mode')
             await self.change_mode('LoadLoop')
-            self.trigger.clear()
 
             # Wait for trigger to switch to PumpAspirate mode
-            logging.debug(f'{self.name}.LoopInject: Waiting for second trigger')
-            self.waiting.set()
-            await self.trigger.wait()
-            self.waiting.clear()
-            await self.change_mode('PumpAspirate')
-            logging.debug(f'{self.name}.LoopInject: Switching to PumpAspirate mode')
-            self.trigger.clear()
+            logging.info(f'{self.name}.LoopInject: Waiting for second trigger')
+            await self.wait_for_trigger()
 
-            # aspirate a syringeful
-            total_aspiration_volume = self.sample_loop.get_volume() - air_gap_plus_extra_volume
-            logging.debug(f'{self.name}.LoopInject: Aspirating {total_aspiration_volume} uL')
-            await self.syringe_pump.run_until_idle(self.syringe_pump.aspirate(total_aspiration_volume, self.syringe_pump.max_flow_rate))
-
-            # move quickly through the loop
-            logging.debug(f'{self.name}.LoopInject: Switching to PumpPrimeLoop mode')
+            logging.info(f'{self.name}.LoopInject: Switching to PumpPrimeLoop mode')
             await self.change_mode('PumpPrimeLoop')
-            logging.debug(f'{self.name}.LoopInject: Moving plug through loop, total injection volume {self.sample_loop.get_volume() - pump_volume + air_gap_plus_extra_volume} uL')
-            await self.syringe_pump.run_until_idle(self.syringe_pump.dispense(self.sample_loop.get_volume() - (pump_volume + air_gap_plus_extra_volume), self.syringe_pump.max_flow_rate))
-            
+
+            # smart dispense the volume required to move plug quickly through loop
+            logging.info(f'{self.name}.LoopInject: Moving plug through loop, total injection volume {self.sample_loop.get_volume() - pump_volume + air_gap_plus_extra_volume} uL')
+            await self.syringe_pump.smart_dispense(self.sample_loop.get_volume() - (pump_volume + air_gap_plus_extra_volume), self.syringe_pump.max_flow_rate)
+
             # waits until any current measurements are complete. Note that this could be done with
             # "async with measurement_lock" but then QCMDRecord would have to grab the lock as soon as it
             # was released, and there may be a race condition with other subroutines.
             # This function allows QCMDRecord to release the lock when it is done.
-            self.measurement_lock.acquire()
+            logging.info(f'{self.name}.LoopInject: Waiting to acquire measurement lock')
+            await self.measurement_lock.acquire()
 
             # change to inject mode
             await self.change_mode('PumpInject')
-            logging.debug(f'{self.name}.LoopInject: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
-            await self.syringe_pump.run_until_idle(self.syringe_pump.dispense(pump_volume, pump_flow_rate))
+            logging.info(f'{self.name}.LoopInject: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
+            await self.syringe_pump.smart_dispense(pump_volume, pump_flow_rate)
 
             # start QCMD timer
-            logging.debug(f'{self.name}.LoopInject: Starting QCMD timer')
+            logging.info(f'{self.name}.LoopInject: Starting QCMD timer for {sleep_time + record_time} seconds')
 
             async def measure():
                 # helper function that performs the measurement and then releases the lock
@@ -312,65 +290,23 @@ async def qcmd_loop():
     gsioc = GSIOC(62, 'COM4', 19200)
     ser = HamiltonSerial(port='COM5', baudrate=38400)
     mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
-    sp = HamiltonSyringePump(ser, '0', LValve(4, name='syringe_LValve'), 5000, False, name='syringe_pump')
-    sp.max_flow_rate = 5000 * 60 / 1000
+    sp = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000, False, name='syringe_pump')
+    sp.max_flow_rate = 20 * 1000 / 60
     ip = InjectionPort('LH_injection_port')
     fc = FlowCell(0.444, 'flow_cell')
     sampleloop = FlowCell(5000., 'sample_loop')
     qcmd_channel = QCMDLoop(mvp, sp, ip, fc, sampleloop, name='QCMD Channel')
-    
-    if False:
-        for mode in qcmd_channel.modes.keys():
-            print([dev.valve.position for dev in qcmd_channel.modes[mode].keys() if dev in qcmd_channel.devices])
-            print(f'{mode} dead volume: {qcmd_channel.get_dead_volume(mode)}')
-            print([dev.valve.position for dev in qcmd_channel.modes[mode].keys() if dev in qcmd_channel.devices])
 
-        await qcmd_channel.recorder.session.close()
-        return
-
-    def sim_gsioc_commands(dev: AssemblyBasewithGSIOC, method_name: str, kwargs):
-        logging.debug(f'{dev.name}: Method {method_name} requested')
-        if hasattr(dev, method_name):
-            logging.debug(f'{dev.name}: Starting method {method_name} with kwargs {kwargs}')
-            method = getattr(dev, method_name)
-
-        dev.run_method(method(**kwargs))
-        logging.info(f'sim_commands: Queue is finally empty!')
-
-    async def set_trigger(trigger: asyncio.Event, sleep_time: float = 0.0):
-        await asyncio.sleep(sleep_time)
-        trigger.set()
-        trigger.clear()
+    lh = SimLiquidHandler(qcmd_channel)
 
     try:
         await qcmd_channel.initialize()
         gsioc_task = asyncio.create_task(qcmd_channel.initialize_gsioc(gsioc))
-        await asyncio.sleep(1)
-        sim_gsioc_commands(qcmd_channel,
-                            'LoopInject',
-                            {'tag_name': 'hello',
-                                'record_time': 10,
-                                'sleep_time': 10,
-                                'pump_volume': 1000,
-                                'pump_flow_rate': 3,
-                                'air_gap_plus_extra_volume': 100})
-        await asyncio.gather(set_trigger(qcmd_channel.trigger, 20), set_trigger(qcmd_channel.trigger, 30))
-        sim_gsioc_commands(qcmd_channel,
-                            'LoopInject',
-                            {'tag_name': 'hello2',
-                                'record_time': 10,
-                                'sleep_time': 10,
-                                'pump_volume': 1000,
-                                'pump_flow_rate': 3,
-                                'air_gap_plus_extra_volume': 100})
-        # this doesn't finish because second LoopInject has already started
-        await qcmd_channel.event_finished.wait()
-        await asyncio.gather(set_trigger(qcmd_channel.trigger, 10), set_trigger(qcmd_channel.trigger, 20))
-        sim_gsioc_commands(qcmd_channel,
-                            'QCMDRecord',
-                            {'tag_name': 'hello',
-                                'record_time': 10,
-                                'sleep_time': 10,})
+
+        # run some loop inject methods sequentially
+        for i in range(4):
+            await lh.LoopInject(200, 3, 100, f'hello{i}', 60, 60),
+
         await gsioc_task
     finally:
         logging.info('Cleaning up...')
@@ -393,14 +329,14 @@ if __name__=='__main__':
                                 logging.FileHandler(datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_qcmd_recorder_log.txt'),
                                 logging.StreamHandler()
                             ],
-                            format='%(asctime)s.%(msecs)03d %(message)s',
+                            format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
                             level=logging.INFO)
 
         asyncio.run(main(), debug=True)
     else:
         logging.basicConfig(
-                            format='%(asctime)s.%(msecs)03d %(message)s',
+                            format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
-                            level=logging.DEBUG)
+                            level=logging.INFO)
         asyncio.run(qcmd_loop(), debug=True)
