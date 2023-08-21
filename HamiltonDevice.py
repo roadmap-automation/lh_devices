@@ -90,27 +90,14 @@ class HamiltonBase:
             bool: True if device is initialized, else False
         """
 
-        status = await self.get_full_status()
-
-        return True if status[-1]=='1' else False
-
-    async def get_full_status(self) -> str:
-        """Gets full status string of device
-
-        Returns:
-            str: six-bit binary string with status
-        """
-        
-        response, error = await self.query('?20000')
-
-        return format(int(response), '06b')
+        return False
 
     async def initialize(self) -> None:
         """Initialize device only if not already initialized
         """
 
         initialized = await self.is_initialized()
-        if initialized:
+        if not initialized:
             await self.run_until_idle(self.initialize_device())
 
     async def initialize_device(self) -> None:
@@ -215,6 +202,28 @@ class HamiltonValvePositioner(HamiltonBase):
         _, error = await self.query('ZR')
         if error:
             logging.error(f'{self}: Initialization error {error}')
+
+    async def is_initialized(self) -> bool:
+        """Query device to get initialization state
+
+        Returns:
+            bool: True if device is initialized, else False
+        """
+
+        status = await self.get_valve_status()
+
+        return True if status[-1]=='0' else False
+
+    async def get_valve_status(self) -> str:
+        """Gets full status string of device
+
+        Returns:
+            str: six-bit binary string with status
+        """
+        
+        response, error = await self.query('?20000')
+
+        return format(int(response), '06b')
 
     async def set_valve_code(self, code: int | None = None) -> None:
         """Set valve code on MVP/4 device.
@@ -340,6 +349,30 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         await super().initialize()
         await self.run_until_idle(self.set_high_resolution(self._high_resolution))
         await self.run_until_idle(self.get_syringe_position())
+
+    async def is_initialized(self) -> bool:
+        """Query device to get initialization state
+
+        Returns:
+            bool: True if device is initialized, else False
+        """
+
+        status = await self.get_syringe_status()
+        syringe_initialized = True if status[-1]=='0' else False
+        valve_initialized = await super().is_initialized()
+
+        return (valve_initialized & syringe_initialized)
+
+    async def get_syringe_status(self) -> str:
+        """Gets full status string of device
+
+        Returns:
+            str: six-bit binary string with status
+        """
+        
+        response, error = await self.query('?10000')
+
+        return format(int(response), '06b')
 
     async def set_high_resolution(self, high_resolution: bool) -> None:
         """Turns high resolution mode on or off
@@ -524,7 +557,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         if current_position >= total_steps:
             # switch valve and dispense
             logging.debug(f'{self.name}: smart dispense dispensing {total_steps} at V {V_dispense}')
-            await self.run_until_idle(self.move_valve(self.valve.dispense_position))
+            await self.move_valve(self.valve.dispense_position)
             await self.run_until_idle(self.move_absolute(current_position - total_steps, V_dispense))
         else:
             # number of full_volume loops plus remainder
@@ -533,11 +566,11 @@ class HamiltonSyringePump(HamiltonValvePositioner):
                 if stroke > 0:
                     logging.debug(f'{self.name}: smart dispense aspirating {stroke - current_position} at V {V_aspirate}')
                     # switch valve and aspirate
-                    await self.run_until_idle(self.move_valve(self.valve.aspirate_position))
+                    await self.move_valve(self.valve.aspirate_position)
                     await self.run_until_idle(self.move_absolute(stroke - current_position, V_aspirate))
                     # switch valve and dispense
                     logging.debug(f'{self.name}: smart dispense dispensing all at V {V_dispense}')
-                    await self.run_until_idle(self.move_valve(self.valve.dispense_position))
+                    await self.move_valve(self.valve.dispense_position)
                     await self.run_until_idle(self.move_absolute(0, V_dispense))
                     # set current position to zero
                     current_position = 0
@@ -573,11 +606,15 @@ if __name__ == '__main__':
 
     ser = HamiltonSerial(port='COM5', baudrate=38400)
     sp = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000, False, name='syringe_pump')
-    sp.max_flow_rate = 5000 * 60 / 1000
+    sp.max_flow_rate = 5 * 1000 / 60
 
     async def main():
-        sp.syringe_position = 2400
-        await sp.smart_dispense(5000, 1 * 1000 / 60)
+        await sp.initialize()
+        #await sp.query('ZR')
+        #await asyncio.sleep(3)
+#        await sp.move_valve(sp.valve.aspirate_position)
+        #await sp.run_until_idle(sp.move_absolute(120, sp._speed_code(10 * 1000 / 60)))
+        await sp.smart_dispense(200, 10 * 1000 / 60)
 
     asyncio.run(main(), debug=True)
 
