@@ -119,11 +119,11 @@ class AssemblyBase:
         """
 
         if mode in self.modes:
-            logging.info(f'{self}: Changing mode to {mode}')
+            logging.info(f'{self.name}: Changing mode to {mode}')
             await self.move_valves(self.modes[mode])
             self.current_mode = mode
         else:
-            logging.error(f'Mode {mode} not in modes dictionary of {self}')
+            logging.error(f'Mode {mode} not in modes dictionary {self.modes}')
 
     async def move_valves(self, valve_config: Dict[HamiltonValvePositioner, int]) -> None:
         """Batch change valve conditions. Enables predefined valve modes.
@@ -272,7 +272,8 @@ class AssemblyBasewithGSIOC(AssemblyBase):
 
         # set trigger
         elif data.data == 'T':
-            await self.trigger.set()
+            self.waiting.clear()
+            self.trigger.set()
             response = 'ok'
 
         # requested mode change (deprecated)
