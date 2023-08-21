@@ -121,19 +121,19 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         self.trigger: asyncio.Event = asyncio.Event()
         
         # connect syringe pump valve port 2 to LH injection port
-        connect_nodes(self.network._port_to_node_map[injection_port.inlet_port], syringe_pump.valve.nodes[2], 156)
+        connect_nodes(injection_port.nodes[0], syringe_pump.valve.nodes[2], 156)
 
         # connect syringe pump valve port 3 to sample loop
-        connect_nodes(syringe_pump.valve.nodes[3], self.network._port_to_node_map[sample_loop.inlet_port], 0.0)
+        connect_nodes(syringe_pump.valve.nodes[3], sample_loop.inlet_node, 0.0)
 
         # connect sample loop to loop valve port 1
-        connect_nodes(loop_valve.valve.nodes[1], self.network._port_to_node_map[sample_loop.outlet_port], 0.0)
+        connect_nodes(loop_valve.valve.nodes[1], sample_loop.outlet_node, 0.0)
 
         # connect cell inlet to loop valve port 2
-        connect_nodes(loop_valve.valve.nodes[2], self.network._port_to_node_map[flow_cell.inlet_port], 0.0)
+        connect_nodes(loop_valve.valve.nodes[2], flow_cell.inlet_node, 0.0)
 
         # connect cell outlet to loop valve port 5
-        connect_nodes(loop_valve.valve.nodes[5], self.network._port_to_node_map[flow_cell.outlet_port], 0.0)
+        connect_nodes(loop_valve.valve.nodes[5], flow_cell.outlet_node, 0.0)
 
         self.network.update()
 
