@@ -28,6 +28,28 @@ class SimLiquidHandler:
         return 5
 
     @log_method
+    async def QMCDRecord(self,
+                         tag_name: str = '',
+                         sleep_time: float = 0,
+                         record_time: float = 0) -> None:
+        """Simulated QCMDRecord method. Only works with QCMDRecordDevice"""
+
+        init_dict = {'method': 'QCMDRecord',
+                     'kwargs': {'tag_name': tag_name,
+                                'sleep_time': sleep_time,
+                                'record_time': record_time}}
+
+        # wait for current run to stop running
+        await self.assembly.recorder.timer_running.wait()
+
+        init_message = GSIOCMessage(GSIOCCommandType.BUFFERED, json.dumps(init_dict))
+
+        logging.info(f'{self.name}: sending initialization message {init_message}')
+
+        # initialize the remote method
+        await self.assembly.handle_gsioc(init_message)
+
+    @log_method
     async def LoopInject(self,
                          pump_volume: float = 0,
                          pump_flow_rate: float = 1,
