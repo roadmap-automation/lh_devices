@@ -206,7 +206,7 @@ class AssemblyBase:
 
     @property
     def idle(self) -> bool:
-        return all(dev.idle for dev in self.devices) & (not len(self.running_tasks))
+        return all(dev.idle for dev in self.devices) # & (not len(self.running_tasks))
     
 class AssemblyBasewithGSIOC(AssemblyBase):
     """Assembly with support for GSIOC commands
@@ -267,7 +267,7 @@ class AssemblyBasewithGSIOC(AssemblyBase):
                 response = 'busy'
 
         # get dead volume of current mode in uL
-        if data.data == 'V':
+        elif data.data == 'V':
             response = f'{self.get_dead_volume():0.0f}'
 
         # set trigger
