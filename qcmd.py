@@ -75,6 +75,16 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
         super().__init__([], name)
         self.recorder = QCMDRecorder(qcmd_address, qcmd_port, f'{self.name}.QCMDRecorder')
 
+    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
+        """Handles GSIOC message but deals with Q more robustly than the base method"""
+
+        if data.data == 'Q':
+            response = 'busy' if self.recorder.timer_running.is_set() else 'idle'
+        else:
+            response = await super().handle_gsioc(data)
+
+        return response
+
     async def QCMDRecord(self, tag_name: str = '', record_time: str | float = 0.0, sleep_time: str | float = 0.0) -> None:
         """Executes timer and sends record command to QCMD. Call by sending
             {"method": "record", {**kwargs}} over GSIOC.
@@ -322,7 +332,7 @@ if __name__=='__main__':
 
     import datetime
 
-    if False:
+    if True:
         logging.basicConfig(handlers=[
                                 logging.FileHandler(datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_qcmd_recorder_log.txt'),
                                 logging.StreamHandler()
