@@ -91,13 +91,109 @@ class SimLiquidHandler:
 
         # simulate injection
         time_dispense = 60 * ((pump_volume + air_gap_plus_extra_volume * 2 + dead_volume) / 1000) / (inject_flow_rate)
-        logging.info(f'{self.name}: dispensing for {time_aspirate} seconds')
+        logging.info(f'{self.name}: dispensing for {time_dispense} seconds')
         await asyncio.sleep(time_dispense)
-
 
         # wait for a waiting status (simulates WaitUntilWaiting method in LH)
         await self.assembly.waiting.wait()
 
+        # send trigger that injection is complete
+        response = await self.assembly.handle_gsioc(GSIOCMessage(GSIOCCommandType.IMMEDIATE, 'T'))
+
+    @log_method
+    async def LHInject(self,
+                         volume: float = 0,
+                         inject_flow_rate: float = 1,
+                         air_gap_plus_extra_volume: float = 200,
+                         tag_name: str = '',
+                         sleep_time: float = 0,
+                         record_time: float = 0
+                         ) -> None:
+        """Simulated DirectInject method on liquid handler
+
+        Args:
+            volume (float, optional): Volume of sample to inject (uL). Defaults to 0.
+            inject_flow_rate (float, optional): Injection flow rate (mL / min). Defaults to 1.
+            air_gap_plus_extra_volume (float, optional): Volume of air gap and extra volume (uL). Defaults to 200
+            tag_name (str, optional): Name of recording tag. Defaults to ''.
+            sleep_time (float, optional): Equilibration time before recording (seconds). Defaults to 0.
+            record_time (float, optional): Recording time (seconds). Defaults to 0.
+        """
+
+        aspirate_flow_rate = 2.0
+        load_flow_rate = 2.0
+
+        init_dict = {'method': 'LoopInject',
+                     'kwargs': {'tag_name': tag_name,
+                                'sleep_time': sleep_time,
+                                'record_time': record_time}}
+        init_message = GSIOCMessage(GSIOCCommandType.BUFFERED, json.dumps(init_dict))
+
+        logging.info(f'{self.name}: sending initialization message {init_message}')
+
+        # initialize the remote method
+        await self.assembly.handle_gsioc(init_message)
+
+        logging.info(f'{self.name}: waiting for wait status')
+
+        # wait for a waiting status (simulates WaitUntilWaiting method in LH)
+        await self.assembly.waiting.wait()
+
+        logging.info(f'{self.name}: sending dead volume request')
+        response = await self.assembly.handle_gsioc(GSIOCMessage(GSIOCCommandType.IMMEDIATE, 'V'))
+
+        # get the dead volume
+        dead_volume = float(response)
+        logging.info(f'{self.name}: got dead volume {dead_volume}, waiting for wait status')
+
+        # start aspiration
+        time_aspirate = 60 * ((volume + air_gap_plus_extra_volume * 2 + dead_volume) / 1000) / (aspirate_flow_rate)
+        logging.info(f'{self.name}: aspirating for {time_aspirate} seconds')
+        await asyncio.sleep(time_aspirate)
+        
+        logging.info(f'{self.name}: waiting for wait status')
+        # wait for a waiting status (simulates WaitUntilWaiting method in LH)
+        await self.assembly.waiting.wait()
+        
+        logging.info(f'{self.name}: sending first trigger')
+        # send trigger for injection
+        response = await self.assembly.handle_gsioc(GSIOCMessage(GSIOCCommandType.IMMEDIATE, 'T'))
+
+        # simulate injection
+        time_dispense = 60 * ((air_gap_plus_extra_volume + dead_volume) / 1000) / (load_flow_rate)
+        logging.info(f'{self.name}: dispensing for {time_dispense} seconds')
+        await asyncio.sleep(time_dispense)
+
+        logging.info(f'{self.name}: waiting for wait status')
+        # wait for a waiting status (simulates WaitUntilWaiting method in LH)
+        await self.assembly.waiting.wait()
+        
+        logging.info(f'{self.name}: sending second trigger')
+        # send trigger for injection
+        response = await self.assembly.handle_gsioc(GSIOCMessage(GSIOCCommandType.IMMEDIATE, 'T'))
+
+        # simulate injection
+        time_dispense = 60 * ((volume) / 1000) / (inject_flow_rate)
+        logging.info(f'{self.name}: dispensing for {time_dispense} seconds')
+        await asyncio.sleep(time_dispense)
+
+        logging.info(f'{self.name}: waiting for wait status')
+        # wait for a waiting status (simulates WaitUntilWaiting method in LH)
+        await self.assembly.waiting.wait()
+        
+        logging.info(f'{self.name}: sending third trigger')
+        # send trigger for injection
+        response = await self.assembly.handle_gsioc(GSIOCMessage(GSIOCCommandType.IMMEDIATE, 'T'))
+
+        # simulate injection
+        time_dispense = 60 * ((air_gap_plus_extra_volume) / 1000) / (load_flow_rate)
+        logging.info(f'{self.name}: dispensing for {time_dispense} seconds')
+        await asyncio.sleep(time_dispense)
+
+        # wait for a waiting status (simulates WaitUntilWaiting method in LH)
+        await self.assembly.waiting.wait()
+
+        logging.info(f'{self.name}: sending fourth trigger')
         # send trigger that injection is complete
         response = await self.assembly.handle_gsioc(GSIOCMessage(GSIOCCommandType.IMMEDIATE, 'T'))
 
