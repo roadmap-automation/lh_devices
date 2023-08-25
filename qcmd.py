@@ -150,6 +150,14 @@ class QCMDLoop(AssemblyBasewithGSIOC):
                         {loop_valve: 2,
                         syringe_pump: 4,
                         'dead_volume_nodes': [injection_port.nodes[0], syringe_pump.valve.nodes[2]]},
+                    'LHPrime':
+                        {loop_valve: 2,
+                        syringe_pump: 0,
+                        'dead_volume_nodes': [injection_port.nodes[0], loop_valve.valve.nodes[3]]},
+                    'LHInject':
+                        {loop_valve: 1,
+                        syringe_pump: 0,
+                        'dead_volume_nodes': [injection_port.nodes[0], loop_valve.valve.nodes[3]]},
                     }
         
         # Control locks
@@ -184,8 +192,14 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         record_time = float(record_time)
 
         # Locks the measurement system and records data
-        async with self.measurement_lock:
-            await self.recorder.record(tag_name, record_time, sleep_time)
+        await self.measurement_lock.acquire()
+        await self.record(tag_name, record_time, sleep_time)
+
+    async def record(self, tag_name: str, sleep_time: float, record_time: float):
+        # helper function that performs the measurement and then releases the lock
+        # this allows the lock to be passed to the record function
+        await self.recorder.record(tag_name, sleep_time, record_time)
+        self.measurement_lock.release()
 
     async def primeloop(self,
                         n_prime: int = 1 # number of repeats
@@ -266,17 +280,77 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             # start QCMD timer
             logging.info(f'{self.name}.LoopInject: Starting QCMD timer for {sleep_time + record_time} seconds')
 
-            async def measure():
-                # helper function that performs the measurement and then releases the lock
-                # this allows the lock to be passed to the record function
-                await self.recorder.record(tag_name, sleep_time, record_time)
-                self.measurement_lock.release()
-
             # spawn new measurement task that will release measurement lock when complete
-            self.run_method(measure())
+            self.run_method(self.record(tag_name, sleep_time, record_time))
 
             # Prime loop
             await self.primeloop()
+
+    async def LHInject(self,
+                         tag_name: str = '',
+                         sleep_time: str | float = 0, # seconds
+                         record_time: str | float = 0 # seconds
+                         ) -> None:
+        """LH Direct Inject method, synchronized via GSIOC to liquid handler"""
+
+        sleep_time = float(sleep_time)
+        record_time = float(record_time)
+
+        # locks the channel so any additional calling processes have to wait
+        async with self.channel_lock:
+
+            # Set dead volume and wait for method to ask for it (might need brief wait in the calling
+            # method to make sure this updates in time)
+            self.dead_volume = self.get_dead_volume('LHPrime')
+            logging.info(f'{self.name}.LHInject: dead volume set to {self.dead_volume}')
+            logging.info(f'{self.name}.LHInject: Waiting for dead volume request')
+            await self.wait_for_trigger()
+
+            # switch to standby mode
+            logging.info(f'{self.name}.LHInject: Switching to Standby mode')            
+            await self.change_mode('Standby')
+
+            # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
+            logging.info(f'{self.name}.LHInject: Waiting for first trigger')
+            await self.wait_for_trigger()
+            logging.info(f'{self.name}.LHInject: Switching to LHPrime mode')
+            await self.change_mode('LHPrime')
+
+            # waits until any current measurements are complete. Note that this could be done with
+            # "async with measurement_lock" but then QCMDRecord would have to grab the lock as soon as it
+            # was released, and there may be a race condition with other subroutines.
+            # This function allows QCMDRecord to release the lock when it is done.
+            logging.info(f'{self.name}.LoopInject: Waiting to acquire measurement lock')
+            await self.measurement_lock.acquire()
+
+            # Wait for trigger to switch to LHInject mode (LH performs injection)
+            logging.info(f'{self.name}.LHInject: Waiting for second trigger')
+            await self.wait_for_trigger()
+
+            logging.info(f'{self.name}.LHInject: Switching to LHInject mode')
+            await self.change_mode('LHInject')
+
+            # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
+            logging.info(f'{self.name}.LHInject: Waiting for third trigger')
+            await self.wait_for_trigger()
+
+            logging.info(f'{self.name}.LHInject: Switching to LHPrime mode')
+            await self.change_mode('LHPrime')
+
+            # start QCMD timer
+            logging.info(f'{self.name}.LoopInject: Starting QCMD timer for {sleep_time + record_time} seconds')
+
+            # spawn new measurement task that will release measurement lock when complete
+            self.run_method(self.record(tag_name, sleep_time, record_time))
+
+            # Wait for trigger to switch to PumpPrimeLoop mode (this may not be necessary)
+            logging.info(f'{self.name}.LHInject: Waiting for fourth trigger')
+            await self.wait_for_trigger()
+
+            #logging.info(f'{self.name}.LHInject: Priming loop')
+
+            # Prime loop
+            #await self.primeloop()
 
 async def qcmd_loop():
     gsioc = GSIOC(62, 'COM4', 19200)
