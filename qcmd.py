@@ -320,7 +320,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             # "async with measurement_lock" but then QCMDRecord would have to grab the lock as soon as it
             # was released, and there may be a race condition with other subroutines.
             # This function allows QCMDRecord to release the lock when it is done.
-            logging.info(f'{self.name}.LoopInject: Waiting to acquire measurement lock')
+            logging.info(f'{self.name}.LHInject: Waiting to acquire measurement lock')
             await self.measurement_lock.acquire()
 
             # Wait for trigger to switch to LHInject mode (LH performs injection)
@@ -338,7 +338,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             await self.change_mode('LHPrime')
 
             # start QCMD timer
-            logging.info(f'{self.name}.LoopInject: Starting QCMD timer for {sleep_time + record_time} seconds')
+            logging.info(f'{self.name}.LHInject: Starting QCMD timer for {sleep_time + record_time} seconds')
 
             # spawn new measurement task that will release measurement lock when complete
             self.run_method(self.record(tag_name, sleep_time, record_time))
@@ -388,6 +388,7 @@ async def qcmd_loop():
         # run some loop inject methods sequentially
         for i in range(4):
             await lh.LoopInject(200, 3, 100, f'hello{i}', 60, 60),
+            #await lh.LHInject(200, 1, 100, f'hello{i}', 60, 60),
 
         await gsioc_task
     finally:

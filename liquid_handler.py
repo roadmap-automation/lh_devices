@@ -145,7 +145,7 @@ class SimLiquidHandler:
         aspirate_flow_rate = 2.0
         load_flow_rate = 2.0
 
-        init_dict = {'method': 'LoopInject',
+        init_dict = {'method': 'LHInject',
                      'kwargs': {'tag_name': tag_name,
                                 'sleep_time': sleep_time,
                                 'record_time': record_time}}
