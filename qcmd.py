@@ -168,6 +168,25 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         # Channel lock indicates that the hardware in the channel is being used.
         self.channel_lock: asyncio.Lock = asyncio.Lock()
 
+    async def initialize(self) -> None:
+        """Overwrites base initialization to ensure valves and pumps are in appropriate mode for homing syringe"""
+
+        # initialize loop valve
+        await self.loop_valve.initialize()
+
+        # move to a position where loop goes to waste
+        await self.loop_valve.move_valve(self.modes['PumpPrimeLoop'][self.loop_valve])
+
+        # initialize syringe pump. If plunger not homed, this will push solution into the loop
+        await self.syringe_pump.initialize()
+
+        # If syringe pump was already initialized, plunger may not be homed. Force it to home.
+        await self.change_mode('PumpPrimeLoop')
+        await self.syringe_pump.home()
+
+        # change to standby mode
+        await self.change_mode('Standby')
+
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
 
         # overwrites base class handling of dead volume
@@ -207,7 +226,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         """subroutine for priming the loop method. Primes the loop, but does not activate locks"""
 
         await self.change_mode('PumpPrimeLoop')
-        await self.syringe_pump.smart_dispense(self.sample_loop.get_volume() * n_prime, self.syringe_pump.max_flow_rate)
+        await self.syringe_pump.smart_dispense(self.sample_loop.get_volume() * n_prime, self.syringe_pump.max_dispense_flow_rate)
 
     async def PrimeLoop(self,
                         n_prime: int | str = 1 # number of repeats
@@ -263,7 +282,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
             # smart dispense the volume required to move plug quickly through loop
             logging.info(f'{self.name}.LoopInject: Moving plug through loop, total injection volume {self.sample_loop.get_volume() - pump_volume + air_gap_plus_extra_volume} uL')
-            await self.syringe_pump.smart_dispense(self.sample_loop.get_volume() - (pump_volume + air_gap_plus_extra_volume), self.syringe_pump.max_flow_rate)
+            await self.syringe_pump.smart_dispense(self.sample_loop.get_volume() - (pump_volume + air_gap_plus_extra_volume), self.syringe_pump.max_dispense_flow_rate)
 
             # waits until any current measurements are complete. Note that this could be done with
             # "async with measurement_lock" but then QCMDRecord would have to grab the lock as soon as it
@@ -353,17 +372,17 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             #await self.primeloop()
 
 async def qcmd_loop():
-    gsioc = GSIOC(62, 'COM4', 19200)
+    gsioc = GSIOC(62, 'COM13', 19200)
     ser = HamiltonSerial(port='COM5', baudrate=38400)
     mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
-    sp = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000, False, name='syringe_pump')
-    sp.max_flow_rate = 20 * 1000 / 60
+    sp = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000., False, name='syringe_pump')
+    sp.max_dispense_flow_rate = 5 * 1000 / 60
     ip = InjectionPort('LH_injection_port')
-    fc = FlowCell(0.444, 'flow_cell')
-    sampleloop = FlowCell(5000., 'sample_loop')
+    fc = FlowCell(0.139, 'flow_cell')
+    sampleloop = FlowCell(4935., 'sample_loop')
 
     # connect syringe pump valve port 2 to LH injection port
-    connect_nodes(ip.nodes[0], sp.valve.nodes[2], 156)
+    connect_nodes(ip.nodes[0], sp.valve.nodes[2], 124)
 
     # connect syringe pump valve port 3 to sample loop
     connect_nodes(sp.valve.nodes[3], sampleloop.inlet_node, 0.0)
@@ -379,15 +398,25 @@ async def qcmd_loop():
 
     qcmd_channel = QCMDLoop(mvp, sp, ip, fc, sampleloop, name='QCMD Channel')
 
-    lh = SimLiquidHandler(qcmd_channel)
+    #lh = SimLiquidHandler(qcmd_channel)
 
     try:
         await qcmd_channel.initialize()
+        #await qcmd_channel.change_mode('PumpPrimeLoop')
+        #await mvp.initialize()
+        #await mvp.run_until_idle(mvp.move_valve(1))
+        #await sp.initialize()
+        #await sp.run_until_idle(sp.move_absolute(0, sp._speed_code(sp.max_dispense_flow_rate)))
+
         gsioc_task = asyncio.create_task(qcmd_channel.initialize_gsioc(gsioc))
+        #await sp.run_until_idle(sp.move_absolute(0, sp._speed_code(sp.max_dispense_flow_rate)))
+        #sp.max_dispense_flow_rate = 20 * 1000 / 60
+        #await qcmd_channel.primeloop(1)
+        #sp.max_dispense_flow_rate = 5 * 1000 / 60
 
         # run some loop inject methods sequentially
-        for i in range(4):
-            await lh.LoopInject(200, 3, 100, f'hello{i}', 60, 60),
+        #for i in range(4):
+        #    await lh.LoopInject(200, 3, 100, f'hello{i}', 60, 60),
             #await lh.LHInject(200, 1, 100, f'hello{i}', 60, 60),
 
         await gsioc_task
@@ -403,11 +432,28 @@ async def main():
     finally:
         await qcmd_recorder.recorder.session.close()
 
+async def sptest():
+    ser = HamiltonSerial(port='COM5', baudrate=38400)
+    sp = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000, False, name='syringe_pump')
+    #await sp.initialize()
+    #await sp.get_syringe_position()
+    #await sp.move_absolute(sp.syringe_position, sp._speed_code(10 * 1000 / 60))
+    #await sp.move_valve(4)
+    #await sp.aspirate(2500, 10*1000/60)    
+    #sp.max_dispense_flow_rate = 20 * 1000 / 60
+    #await sp.run_until_idle(sp.move_valve(sp.valve.dispense_position))
+    #print(sp.valve.dispense_position)
+    #await sp.run_until_idle(sp.home())
+    #await sp.smart_dispense(sp.syringe_volume, sp.max_dispense_flow_rate)
+
+    mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
+    await mvp.run_until_idle(mvp.initialize())
+
 if __name__=='__main__':
 
     import datetime
 
-    if True:
+    if False:
         logging.basicConfig(handlers=[
                                 logging.FileHandler(datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_qcmd_recorder_log.txt'),
                                 logging.StreamHandler()
@@ -423,3 +469,4 @@ if __name__=='__main__':
                             datefmt='%Y-%m-%d %H:%M:%S',
                             level=logging.INFO)
         asyncio.run(qcmd_loop(), debug=True)
+        #asyncio.run(sptest())
