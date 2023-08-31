@@ -342,7 +342,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         self.minV, self.maxV = 2, 10000
 
         # allow custom max flow rate
-        self.max_flow_rate = self._max_flow_rate()
+        self.max_aspirate_flow_rate = self._max_flow_rate()
+        self.max_dispense_flow_rate = self._max_flow_rate()
         self.min_flow_rate = self._min_flow_rate()
 
     async def initialize(self) -> None:
@@ -534,7 +535,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             return
         
         # convert speeds to V factors
-        V_aspirate = self._speed_code(self.max_flow_rate)
+        V_aspirate = self._speed_code(self.max_aspirate_flow_rate)
         V_dispense = self._speed_code(dispense_flow_rate)
 
         # calculate total volume in steps
@@ -592,7 +593,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         """Homes syringe using maximum flow rate
         """
 
-        V = self._speed_code(self.max_flow_rate)
+        V = self._speed_code(self.max_dispense_flow_rate)
         await self.move_absolute(0, V)
 
 if __name__ == '__main__':
