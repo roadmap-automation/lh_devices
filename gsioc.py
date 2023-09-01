@@ -88,7 +88,7 @@ class GSIOC(aioserial.AioSerial):
 
                 if cmd:
 
-                    logging.info(f'{self.port} (GSIOC) <= {cmd}')
+                    logging.debug(f'{self.port} (GSIOC) <= {cmd}')
 
                     # process ID request immediately
                     if cmd == '%':
@@ -231,7 +231,7 @@ class GSIOC(aioserial.AioSerial):
         # last character gets sent with high bit (add ASCII 128)
         await self.write1(chr(ord(msg[-1]) + 128))
 
-        logging.info(f'{self.port} (GSIOC) => {msg}')
+        logging.debug(f'{self.port} (GSIOC) => {msg}')
 
 async def main():
 
