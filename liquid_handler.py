@@ -53,7 +53,7 @@ class SimLiquidHandler:
     async def LoopInject(self,
                          pump_volume: float = 0,
                          pump_flow_rate: float = 1,
-                         air_gap_plus_extra_volume: float = 0,
+                         excess_volume: float = 0,
                          tag_name: str = '',
                          sleep_time: float = 0,
                          record_time: float = 0
@@ -75,7 +75,7 @@ class SimLiquidHandler:
         init_dict = {'method': 'LoopInject',
                      'kwargs': {'pump_volume': pump_volume,
                                 'pump_flow_rate': pump_flow_rate,
-                                'air_gap_plus_extra_volume': air_gap_plus_extra_volume,
+                                'excess_volume': excess_volume,
                                 'tag_name': tag_name,
                                 'sleep_time': sleep_time,
                                 'record_time': record_time}}
@@ -86,10 +86,10 @@ class SimLiquidHandler:
         # initialize the remote method
         await self.assembly.handle_gsioc(init_message)
 
-        logging.info(f'{self.name}: waiting for wait status')
+        logging.info(f'{self.name}: pausing')
 
         # wait for a waiting status (simulates WaitUntilWaiting method in LH)
-        await self.assembly.waiting.wait()
+        await asyncio.sleep(0.03 * 60)
 
         logging.info(f'{self.name}: sending dead volume request')
         response = await self.assembly.handle_gsioc(GSIOCMessage(GSIOCCommandType.IMMEDIATE, 'V'))
@@ -99,7 +99,7 @@ class SimLiquidHandler:
         logging.info(f'{self.name}: got dead volume {dead_volume}, waiting for wait status')
 
         # start aspiration
-        time_aspirate = 60 * ((pump_volume + air_gap_plus_extra_volume * 2 + dead_volume) / 1000) / (aspirate_flow_rate)
+        time_aspirate = 60 * ((pump_volume + excess_volume * 2 + dead_volume) / 1000) / (aspirate_flow_rate)
         logging.info(f'{self.name}: aspirating for {time_aspirate} seconds')
         await asyncio.sleep(time_aspirate)
         
@@ -112,7 +112,7 @@ class SimLiquidHandler:
         response = await self.assembly.handle_gsioc(GSIOCMessage(GSIOCCommandType.IMMEDIATE, 'T'))
 
         # simulate injection
-        time_dispense = 60 * ((pump_volume + air_gap_plus_extra_volume * 2 + dead_volume) / 1000) / (inject_flow_rate)
+        time_dispense = 60 * ((pump_volume + excess_volume * 2 + dead_volume) / 1000) / (inject_flow_rate)
         logging.info(f'{self.name}: dispensing for {time_dispense} seconds')
         await asyncio.sleep(time_dispense)
 
@@ -159,7 +159,7 @@ class SimLiquidHandler:
         logging.info(f'{self.name}: waiting for wait status')
 
         # wait for a waiting status (simulates WaitUntilWaiting method in LH)
-        await self.assembly.waiting.wait()
+        await asyncio.sleep(0.03 * 60)
 
         logging.info(f'{self.name}: sending dead volume request')
         response = await self.assembly.handle_gsioc(GSIOCMessage(GSIOCCommandType.IMMEDIATE, 'V'))

@@ -62,7 +62,7 @@ class QCMDRecorder(Timer):
 
             # send an http request to QCMD server
             try:
-                async with self.session.post('/QCMD/', json=post_data) as resp:
+                async with self.session.post('/QCMD/', json=post_data, timeout=10) as resp:
                     response_json = await resp.json()
                     logging.info(f'{self.session._base_url}/QCMD/ <= {response_json}')
             except (ConnectionRefusedError, aiohttp.ClientConnectorError):
@@ -323,17 +323,18 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         sleep_time = float(sleep_time)
         record_time = float(record_time)
 
+        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
+        # method to make sure this updates in time)
+        dead_volume = self.get_dead_volume('LHInject')
+
+        # blocks if there's already something in the dead volume queue
+        await self.dead_volume.put(dead_volume)
+        logging.info(f'{self.name}.LHInject: dead volume set to {dead_volume}')
+
         # locks the channel so any additional calling processes have to wait
         async with self.channel_lock:
 
-            # Set dead volume and wait for method to ask for it (might need brief wait in the calling
-            # method to make sure this updates in time)
-            self.dead_volume = self.get_dead_volume('LHPrime')
-            logging.info(f'{self.name}.LHInject: dead volume set to {self.dead_volume}')
-            logging.info(f'{self.name}.LHInject: Waiting for dead volume request')
-            await self.wait_for_trigger()
-
-            # switch to standby mode
+             # switch to standby mode
             logging.info(f'{self.name}.LHInject: Switching to Standby mode')            
             await self.change_mode('Standby')
 
@@ -370,9 +371,12 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             # spawn new measurement task that will release measurement lock when complete
             self.run_method(self.record(tag_name, sleep_time, record_time))
 
-            # Wait for trigger to switch to PumpPrimeLoop mode (this may not be necessary)
+            # Wait for trigger to switch to Standby mode (this may not be necessary)
             logging.info(f'{self.name}.LHInject: Waiting for fourth trigger')
             await self.wait_for_trigger()
+
+            logging.info(f'{self.name}.LHInject: Switching to Standby mode')            
+            await self.change_mode('Standby')
 
             #logging.info(f'{self.name}.LHInject: Priming loop')
 
@@ -384,7 +388,7 @@ async def qcmd_loop():
     ser = HamiltonSerial(port='COM5', baudrate=38400)
     mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
     sp = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000., False, name='syringe_pump')
-    sp.max_dispense_flow_rate = 2.5 * 1000 / 60
+    sp.max_dispense_flow_rate = 5 * 1000 / 60
     sp.max_aspirate_flow_rate = 15 * 1000 / 60
     ip = InjectionPort('LH_injection_port')
     fc = FlowCell(0.139, 'flow_cell')
@@ -412,6 +416,8 @@ async def qcmd_loop():
     try:
         await qcmd_channel.initialize()
         #await qcmd_channel.change_mode('PumpPrimeLoop')
+        #await asyncio.sleep(1)
+        #await qcmd_channel.primeloop(2)
         #await mvp.initialize()
         #await mvp.run_until_idle(mvp.move_valve(1))
         #await sp.initialize()
