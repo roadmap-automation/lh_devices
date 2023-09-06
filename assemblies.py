@@ -285,7 +285,12 @@ class AssemblyBasewithGSIOC(AssemblyBase):
         elif data.data.startswith('{'):
 
             # parse JSON
-            dd: dict = json.loads(data.data)
+            try:
+                dd: dict = json.loads(data.data)
+            except json.decoder.JSONDecodeError as e:
+                logging.error(f'{self.name}: JSON decoding error on string {data.data}: {e.msg}')
+                dd: dict = {}
+
             if 'method' in dd.keys():
                 method_name, method_kwargs = dd['method'], dd['kwargs']
                 logging.debug(f'{self.name}: Method {method_name} requested')
