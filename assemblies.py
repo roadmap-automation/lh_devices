@@ -169,7 +169,7 @@ class AssemblyBase:
 
             if (source_node is not None) & (final_node is not None):
 
-                valve_config: Dict[HamiltonValvePositioner, int] = self.modes[mode]
+                valve_config: Dict[HamiltonValvePositioner, int] = self.modes[mode].valves
 
                 # this isn't optimal because it temporarily changes state
                 current_positions = []
