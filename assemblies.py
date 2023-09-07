@@ -26,6 +26,11 @@ class Network:
         self._port_to_node_map = {n.base_port: n for n in nodes}
         self.nodes = nodes
 
+    def add_device(self, device: HamiltonBase | ComponentBase) -> None:
+        """Adds a device to node network and updates it"""
+        self.devices.append(device)
+        self.update()
+
     def get_dead_volume(self, source_port: Port, destination_port: Port) -> float:
         """Gets dead volume in the fluid path from a source to destination port. Both
             ports must be in the network. Source port can have only one connection.
@@ -90,6 +95,15 @@ def merge_networks(network1: Network, node1: Node, network2: Network, node2: Nod
     unique_devices = set(network1.devices) | set(network2.devices)
     return Network(list(unique_devices))
 
+class Mode:
+    """Define assembly configuration. Contains a dictionary of valves of the current
+        assembly to move. Also defines final node for dead volume tracing"""
+    
+    def __init__(self, valves: Dict[HamiltonValvePositioner, int], final_node: Node | None = None) -> None:
+
+        self.valves = valves
+        self.final_node = final_node
+
 class AssemblyBase:
     """Assembly of Hamilton LH devices
     """
@@ -99,7 +113,7 @@ class AssemblyBase:
         self.name = name
         self.devices = devices
         self.network = Network(self.devices)
-        self.modes = {}
+        self.modes: Dict[str, Mode] = {}
         self.current_mode = None
         self.running_tasks = set()
 
@@ -120,7 +134,7 @@ class AssemblyBase:
 
         if mode in self.modes:
             logging.info(f'{self.name}: Changing mode to {mode}')
-            await self.move_valves(self.modes[mode])
+            await self.move_valves(self.modes[mode].valves)
             self.current_mode = mode
         else:
             logging.error(f'Mode {mode} not in modes dictionary {self.modes}')
@@ -135,10 +149,11 @@ class AssemblyBase:
 
         await asyncio.gather(*(dev.run_until_idle(dev.move_valve(pos)) for dev, pos in valve_config.items() if dev in self.devices))
 
-    def get_dead_volume(self, mode: str | None = None) -> float:
-        """Gets dead volume of configuration mode
+    def get_dead_volume(self, source_node: Node, mode: str | None = None) -> float:
+        """Gets dead volume of configuration mode given a source connection
 
         Args:
+            source_node (Node): Node of source connection.
             mode (str | None, optional): mode to interrogate. Defaults to None.
 
         Returns:
@@ -150,30 +165,35 @@ class AssemblyBase:
 
         if mode in self.modes:
 
-            valve_config: Dict[HamiltonValvePositioner, int] = self.modes[mode]
+            final_node = self.modes[mode].final_node
 
-            # find nodes
-            nodes: List[Node] = valve_config['dead_volume_nodes']
+            if (source_node is not None) & (final_node is not None):
 
-            # this isn't optimal because it temporarily changes state
-            current_positions = []
-            for dev, pos in valve_config.items():
-                if dev in self.devices:
-                    current_positions.append(dev.valve.position)
-                    dev.valve.move(pos)
+                valve_config: Dict[HamiltonValvePositioner, int] = self.modes[mode]
 
-            self.network.update()
+                # this isn't optimal because it temporarily changes state
+                current_positions = []
+                for dev, pos in valve_config.items():
+                    if dev in self.devices:
+                        current_positions.append(dev.valve.position)
+                        dev.valve.move(pos)
 
-            dead_volume = self.network.get_dead_volume(nodes[0].base_port, nodes[1].base_port)
+                self.network.update()
 
-            for dev, pos in zip(valve_config.keys(), current_positions):
-                if dev in self.devices:
-                    dev.valve.move(pos)
+                dead_volume = self.network.get_dead_volume(source_node.base_port, final_node.base_port)
 
-            self.network.update()
+                for dev, pos in zip(valve_config.keys(), current_positions):
+                    if dev in self.devices:
+                        dev.valve.move(pos)
 
-            return dead_volume
-        
+                self.network.update()
+
+                return dead_volume
+
+            else:
+                logging.warning(f'{self.name}: source_node or final_node not defined. Returning 0')
+                return 0.0
+       
         else:
             logging.error(f'{self.name}: mode {mode} does not exist')
 
@@ -311,6 +331,7 @@ class AssemblyBasewithGSIOC(AssemblyBase):
             response = 'error: unknown command'
 
         return response
+
 
 class AssemblyTest(AssemblyBase):
 
