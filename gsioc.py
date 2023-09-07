@@ -109,6 +109,8 @@ class GSIOC(aioserial.AioSerial):
             logging.debug('Connection reset...')
 
         # close serial port before exiting when interrupt is received
+        logging.info('Sending break and closing GSIOC connection...')
+        await self.write1(chr(10))
         self.close()
 
     async def wait_for_connection(self):
