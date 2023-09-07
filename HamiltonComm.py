@@ -87,7 +87,7 @@ class HamiltonSerial(aioserial.AioSerial):
                     #print(f'Return value: {return_value["value"]}')
                     break
             except asyncio.TimeoutError:
-                logging.warning('Warning: serial connection timed out!')
+                logging.warning(f'{self.port} => {repr(data)}: serial connection timed out!')
 
             # if not successful try again up to max_retries, changing repeat bit
             trial += 1
