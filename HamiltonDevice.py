@@ -267,7 +267,7 @@ class HamiltonValvePositioner(HamiltonBase):
             angle = int(response)
 
             # convert to position
-            delta_angle = 360 / self.valve.n_ports
+            delta_angle = 360 / self.valve.n_positions
             position = angle / delta_angle + 1
 
             # if non-integer position, check for off position or error
@@ -297,7 +297,9 @@ class HamiltonValvePositioner(HamiltonBase):
         if self.valve.validate_move(position):
 
             # convert to angle
-            delta_angle = 360 / self.valve.n_ports
+            delta_angle = 360 / self.valve.n_positions
+
+            #print(self.valve.n_positions, delta_angle, delta_angle // 6 * 3, (position - 1) * delta_angle)
 
             # in special case of zero, move valve to "off" position between angles
             angle = delta_angle // 6 * 3 if position == 0 else (position - 1) * delta_angle
