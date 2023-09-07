@@ -3,7 +3,7 @@ import aiohttp
 import asyncio
 import logging
 from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial
-from valve import LoopFlowValve, SyringeLValve
+from valve import LoopFlowValve, SyringeLValve, DistributionValve
 from components import InjectionPort, FlowCell
 from gsioc import GSIOC, GSIOCMessage
 from assemblies import AssemblyBasewithGSIOC, Network, connect_nodes
@@ -383,6 +383,87 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             # Prime loop
             #await self.primeloop()
 
+class QCMDSystem(AssemblyBasewithGSIOC):
+    """QCMD System comprising one QCMD loop and one distribution valve
+        (unnecessarily complex but testbed for ROADMAP multichannel assembly)"""
+    
+    def __init__(self, distribution_valve: HamiltonValvePositioner, qcmd_loop: QCMDLoop, injection_port: InjectionPort) -> None:
+        super().__init__(devices=qcmd_loop.devices + [distribution_valve], name='QCMDSystem')
+
+        self.injection_port = injection_port
+        self.distribution_valve = distribution_valve
+        self.qcmd_loop = qcmd_loop
+
+        # Distribution lock indicates that the distribution valve is being used
+        self.distribution_lock: asyncio.Lock = asyncio.Lock()
+
+        # Build network
+        self.network = Network(qcmd_loop.network.devices + [distribution_valve, injection_port])
+        qcmd_loop.network = self.network
+
+        # Override dead volume queue
+        self.dead_volume: asyncio.Queue = asyncio.Queue()
+
+    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
+
+        # overwrites base class handling of dead volume
+        if data.data == 'V':
+            dead_volume = await self.dead_volume.get()
+            #logging.info(f'Sending dead volume {dead_volume}')
+            response = f'{dead_volume:0.0f}'
+        else:
+            response = await super().handle_gsioc(data)
+        
+        return response
+    
+    async def LoopInject(self,
+                         **kwargs
+                         ) -> None:
+        """LoopInject method, synchronized via GSIOC to liquid handler"""
+
+        # calculate additional dead volume
+        add_dead_volume = self.network.get_dead_volume(self.injection_port.nodes[0], self.distribution_valve.valve.nodes[1])
+
+        # start new method if distribution lock is free
+        async with self.distribution_lock:
+
+            # spawn Loop Injection task
+            subtask = asyncio.create_task(self.qcmd_loop.LoopInject(**kwargs))
+
+            # catch dead volume
+            dead_volume = await self.qcmd_loop.dead_volume.get()
+
+            # add additional dead volume
+            await self.dead_volume.put(dead_volume + add_dead_volume)
+
+            # await the task to free up the distribution lock
+            # TODO: task might not need distribution lock the whole time. Can it be freed earlier?
+            await subtask
+
+    async def LHInject(self,
+                         **kwargs
+                         ) -> None:
+        """LoopInject method, synchronized via GSIOC to liquid handler"""
+
+        # calculate additional dead volume
+        add_dead_volume = self.network.get_dead_volume(self.injection_port.nodes[0], self.distribution_valve.valve.nodes[2])
+
+        # start new method if distribution lock is free
+        async with self.distribution_lock:
+
+            # spawn Loop Injection task
+            subtask = asyncio.create_task(self.qcmd_loop.LHInject(**kwargs))
+
+            # catch dead volume
+            dead_volume = await self.qcmd_loop.dead_volume.get()
+
+            # add additional dead volume
+            await self.dead_volume.put(dead_volume + add_dead_volume)
+
+            # await the task to free up the distribution lock
+            # TODO: task might not need distribution lock the whole time. Can it be freed earlier?
+            await subtask
+
 async def qcmd_loop():
     gsioc = GSIOC(62, 'COM13', 19200)
     ser = HamiltonSerial(port='COM5', baudrate=38400)
@@ -424,18 +505,68 @@ async def qcmd_loop():
         #await sp.run_until_idle(sp.move_absolute(0, sp._speed_code(sp.max_dispense_flow_rate)))
 
         gsioc_task = asyncio.create_task(qcmd_channel.initialize_gsioc(gsioc))
-        #await sp.run_until_idle(sp.move_absolute(0, sp._speed_code(sp.max_dispense_flow_rate)))
-        #sp.max_dispense_flow_rate = 20 * 1000 / 60
-        #await qcmd_channel.primeloop(1)
-        #sp.max_dispense_flow_rate = 1 * 1000 / 60
-        #await sp.run_until_idle(sp.smart_dispense(5000, sp.max_dispense_flow_rate))
-
-        # run some loop inject methods sequentially
-        #for i in range(4):
-        #    await lh.LoopInject(200, 3, 100, f'hello{i}', 60, 60),
-            #await lh.LHInject(200, 1, 100, f'hello{i}', 60, 60),
 
         await gsioc_task
+    finally:
+        logging.info('Cleaning up...')
+        await qcmd_channel.recorder.session.close()
+
+async def qcmd_distribution():
+    #gsioc = GSIOC(62, 'COM13', 19200)
+    #ser = HamiltonSerial(port='COM5', baudrate=38400)
+    ser = HamiltonSerial(port='COM3', baudrate=38400)
+    dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='distribution_valve_positioner')
+    mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
+    sp = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000., False, name='syringe_pump')
+    sp.max_dispense_flow_rate = 5 * 1000 / 60
+    sp.max_aspirate_flow_rate = 15 * 1000 / 60
+    ip = InjectionPort('LH_injection_port')
+    fc = FlowCell(0.139, 'flow_cell')
+    sampleloop = FlowCell(5060., 'sample_loop')
+
+    qcmd_channel = QCMDLoop(dvp, mvp, sp, ip, fc, sampleloop, name='QCMD Channel')
+
+    # connect LH injection port to distribution port valve 0
+    connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 144)
+
+    # connect distribution valve port 1 to syringe pump valve node 2 (top)
+    connect_nodes(dvp.valve.nodes[1], sp.valve.nodes[2], 25)
+
+    # connect distribution valve port 2 to loop valve node 3 (top right)
+    connect_nodes(dvp.valve.nodes[2], mvp.valve.nodes[3], 26)
+
+    # connect syringe pump valve port 3 to sample loop
+    connect_nodes(sp.valve.nodes[3], sampleloop.inlet_node, 0.0)
+
+    # connect sample loop to loop valve port 1
+    connect_nodes(mvp.valve.nodes[1], sampleloop.outlet_node, 0.0)
+
+    # connect cell inlet to loop valve port 2
+    connect_nodes(mvp.valve.nodes[2], fc.inlet_node, 0.0)
+
+    # connect cell outlet to loop valve port 5
+    connect_nodes(mvp.valve.nodes[5], fc.outlet_node, 0.0)
+
+    qcmd_channel.network.update()
+
+    #lh = SimLiquidHandler(qcmd_channel)
+
+    try:
+        print(qcmd_channel.get_dead_volume('LHInject'))
+        print(qcmd_channel.get_dead_volume('LHPrime'))
+        print(qcmd_channel.get_dead_volume('LoadLoop'))
+        print(qcmd_channel.get_dead_volume('PumpPrimeLoop'))
+
+        #await qcmd_channel.initialize()
+        #await qcmd_channel.change_mode('PumpPrimeLoop')
+        #await mvp.initialize()
+        #await mvp.run_until_idle(mvp.move_valve(1))
+        #await sp.initialize()
+        #await sp.run_until_idle(sp.move_absolute(0, sp._speed_code(sp.max_dispense_flow_rate)))
+
+        #gsioc_task = asyncio.create_task(qcmd_channel.initialize_gsioc(gsioc))
+
+        #await gsioc_task
     finally:
         logging.info('Cleaning up...')
         await qcmd_channel.recorder.session.close()
@@ -484,5 +615,5 @@ if __name__=='__main__':
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
                             level=logging.INFO)
-        asyncio.run(qcmd_loop(), debug=True)
+        asyncio.run(qcmd_distribution(), debug=True)
         #asyncio.run(sptest())
