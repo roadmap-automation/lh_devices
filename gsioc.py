@@ -123,8 +123,8 @@ class GSIOC(aioserial.AioSerial):
 
         # if address matches, echo the address
         if comm == self.address + 128:
-            logging.debug(f'address matches, writing {chr(self.address + 128).encode()}')
             await self.write1(chr(self.address + 128))
+            logging.debug(f'address matches, writing {chr(self.address + 128).encode()}')
             self.connected = True
         
         # if result is byte 255, send a break character
@@ -161,6 +161,10 @@ class GSIOC(aioserial.AioSerial):
 
                 return msg
             
+            # address repeated (lagging communications); resend my own address and wait again
+            elif comm == self.address + 128:
+                await self.write1(chr(self.address + 128))
+
             # immediate command...read a single character
             else:
                 return chr(comm)
@@ -204,7 +208,7 @@ class GSIOC(aioserial.AioSerial):
         ret = await self.read1()
         if ret != 6:
             logging.warning(f'Warning: wrong acknowledgement character received: {ret}; attempting to repair comms')
-            await self.repair_comms()
+            #await self.repair_comms()
 
     async def repair_comms(self):
         """
