@@ -620,9 +620,9 @@ if __name__=='__main__':
 
     import datetime
 
-    if False:
+    if True:
         logging.basicConfig(handlers=[
-                                logging.FileHandler(datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_qcmd_recorder_log.txt'),
+                                #logging.FileHandler(datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_qcmd_recorder_log.txt'),
                                 logging.StreamHandler()
                             ],
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
