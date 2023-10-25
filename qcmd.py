@@ -530,7 +530,7 @@ async def qcmd_loop():
 
 async def qcmd_distribution():
     gsioc = GSIOC(62, 'COM13', 19200)
-    ser = HamiltonSerial(port='COM5', baudrate=38400)
+    ser = HamiltonSerial(port='COM6', baudrate=38400)
     #ser = HamiltonSerial(port='COM3', baudrate=38400)
     dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='distribution_valve_positioner')
     mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
@@ -571,8 +571,11 @@ async def qcmd_distribution():
     try:
         #qcmd_system.distribution_valve.valve.move(2)
         await qcmd_system.initialize()
-        #await asyncio.sleep(2)
-        #await qcmd_system.change_mode('LHInject')
+        await asyncio.sleep(2)
+        await qcmd_channel.change_mode('PumpPrimeLoop')
+        await qcmd_channel.primeloop(2)
+        #await qcmd_system.change_mode('LoopInject')
+        #await qcmd_channel.change_mode('LoadLoop')
         #await asyncio.sleep(2)
         #await qcmd_system.change_mode('LoopInject')
         #await asyncio.sleep(2)
@@ -620,7 +623,7 @@ if __name__=='__main__':
 
     import datetime
 
-    if True:
+    if False:
         logging.basicConfig(handlers=[
                                 logging.FileHandler(datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_qcmd_recorder_log.txt'),
                                 logging.StreamHandler()
