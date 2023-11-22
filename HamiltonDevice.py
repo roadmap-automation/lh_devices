@@ -1,5 +1,5 @@
 import copy
-from typing import Tuple, List
+from typing import Any, Coroutine, Tuple, List
 import asyncio
 import logging
 from HamiltonComm import HamiltonSerial
@@ -597,6 +597,33 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         V = self._speed_code(self.max_dispense_flow_rate)
         await self.move_absolute(0, V)
+
+class HamiltonSyringePumpInterrupt(HamiltonSyringePump):
+    """Hamilton syringe pump with interrupt event
+    """
+
+    def __init__(self, serial_instance: HamiltonSerial, address: str, valve: SyringeValveBase, syringe_volume: float = 5000, high_resolution=False, name=None) -> None:
+        super().__init__(serial_instance, address, valve, syringe_volume, high_resolution, name)
+        self.interrupt: asyncio.Event = asyncio.Event()
+        self.allow_interrupt: bool = False
+
+    async def monitor_interrupt(self) -> None:
+        """Waits for stop event to be triggered
+        """
+
+        self.interrupt.clear()
+        try:
+            while True:
+                await self.interrupt.wait()
+                if self.allow_interrupt:
+                    _, error = await self.query('T')
+
+                    # TODO: Handle error
+                    if error:
+                        logging.error('%s: Error in stop: %s', self.name, error)
+                self.interrupt.clear()
+        except asyncio.CancelledError:
+            pass
 
 if __name__ == '__main__':
 
