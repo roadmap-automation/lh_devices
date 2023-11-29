@@ -205,10 +205,10 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         await self.measurement_lock.acquire()
         await self.record(tag_name, record_time, sleep_time)
 
-    async def record(self, tag_name: str, sleep_time: float, record_time: float):
+    async def record(self, tag_name: str, record_time: float, sleep_time: float):
         # helper function that performs the measurement and then releases the lock
         # this allows the lock to be passed to the record function
-        await self.recorder.record(tag_name, sleep_time, record_time)
+        await self.recorder.record(tag_name, record_time, sleep_time)
         self.measurement_lock.release()
 
     async def primeloop(self,
@@ -304,7 +304,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             logging.info(f'{self.name}.LoopInject: Starting QCMD timer for {sleep_time + record_time} seconds')
 
             # spawn new measurement task that will release measurement lock when complete
-            self.run_method(self.record(tag_name, sleep_time, record_time))
+            self.run_method(self.record(tag_name, record_time, sleep_time))
 
             # Prime loop
             await self.primeloop(volume=1000)
@@ -368,7 +368,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             logging.info(f'{self.name}.LHInject: Starting QCMD timer for {sleep_time + record_time} seconds')
 
             # spawn new measurement task that will release measurement lock when complete
-            self.run_method(self.record(tag_name, sleep_time, record_time))
+            self.run_method(self.record(tag_name, record_time, sleep_time))
 
             # Wait for trigger to switch to Standby mode (this may not be necessary)
             logging.info(f'{self.name}.LHInject: Waiting for fourth trigger')
