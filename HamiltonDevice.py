@@ -435,7 +435,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to highest possible value {self._max_flow_rate()}')
             return self.maxV
         else:
-            return round(float(desired_flow_rate * 6000) / self.syringe_volume)
+            half_steps = 6000 if not self._high_resolution else 48000
+            return round(float(desired_flow_rate * half_steps) / self.syringe_volume)
         
     def _flow_rate(self, V: int) -> float:
         """Calculates actual flow rate from speed code parameter (V)
