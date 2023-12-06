@@ -398,7 +398,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         """
 
         return 48000 if self._high_resolution else 6000
-
+        
     def _min_flow_rate(self) -> int:
         """Calculates minimum flow rate of device
         
@@ -435,8 +435,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to highest possible value {self._max_flow_rate()}')
             return self.maxV
         else:
-            half_steps = 6000 if not self._high_resolution else 48000
-            return round(float(desired_flow_rate * half_steps) / self.syringe_volume)
+            return round(float(desired_flow_rate * 6000) / self.syringe_volume)
         
     def _flow_rate(self, V: int) -> float:
         """Calculates actual flow rate from speed code parameter (V)
@@ -448,7 +447,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             float: flow rate in uL / s
         """
 
-        return float(V * self.syringe_volume) / self._full_stroke()
+        return float(V * self.syringe_volume) / 6000.
     
     def _stroke_length(self, desired_volume: float) -> int:
         """Calculates stroke length in steps
@@ -460,7 +459,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             int: stroke length in number of motor steps
         """
 
-        return round(desired_volume * (self._full_stroke() / 2) / self.syringe_volume)
+        return round(desired_volume * self._full_stroke() / self.syringe_volume / 2)
 
     async def get_syringe_position(self) -> int:
         """Reads absolute position of syringe
@@ -484,7 +483,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         await self.get_syringe_position()
         stroke_length = self._stroke_length(volume)
         max_position = self._full_stroke() / 2
-        logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
+        logging.debug(f'Stroke length: {stroke_length} out of full stroke {max_position}')
 
         if max_position < (stroke_length + self.syringe_position):
             logging.error(f'{self}: Invalid syringe move from current position {self.syringe_position} with stroke length {stroke_length} and maximum position {max_position}')
