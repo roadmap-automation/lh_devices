@@ -84,18 +84,22 @@ class KeithleyDriver:
         self.rm = None
         self.instr = None
         self.timeout = timeout
-        self._stop_event = Event()
-        self.stopped = False
+        self.stop_event = Event()
+        self.active_futures: List[asyncio.Future] = []
 
         self.lock: asyncio.Lock = asyncio.Lock()
         self.inqueue: asyncio.Queue = asyncio.Queue()
         self.outqueue: asyncio.Queue = asyncio.Queue(1)
 
     def stop(self):
-        self.stopped = True
+        self.stop_event.set()
+        for future in self.active_futures:
+            future.cancel()
+
+        self.active_futures = []
     
     def clear(self):
-        self.stopped = False
+        self.stop_event.clear()
 
     def open(self, model='2450'):
         
@@ -119,13 +123,15 @@ class KeithleyDriver:
         # open instrument resource
         self.open()
         self.clear()
-        while not self.stopped:
+        while not self.stop_event.is_set():
 
             cmd = None
 
             # TODO: figure out how to do this with a timeout (to be responsive to stop signal)
             future = asyncio.run_coroutine_threadsafe(self.inqueue.get(), loop)
+            self.active_futures.append(future)
             cmd = future.result()
+            self.active_futures.pop(self.active_futures.index(future))
             
             if cmd is not None:
 
@@ -142,20 +148,35 @@ class KeithleyDriver:
 
                     # write response to outqueue (blocks until value is read)
                     future = asyncio.run_coroutine_threadsafe(self.outqueue.put(response), loop)
+                    self.active_futures.append(future)
                     future.result()
+                    self.active_futures.pop(self.active_futures.index(future))
             
         self.close()
 
     async def write(self, cmd: str) -> None:
         """Writes command to queue"""
         #cmd.replace(' ', '\\s')
-        await self.inqueue.put(cmd)
+        task = asyncio.create_task(self.inqueue.put(cmd))
+        self.active_futures.append(task)
+        try:
+            await task
+        except asyncio.CancelledError:
+            print(f'Stopping {self.name} inqueue.put...')
+        self.active_futures.pop(self.active_futures.index(task))
 
     async def query(self, cmd: str) -> str:
         """Helper function for performing queries"""
         await self.write(cmd)
         res = None
-        res = await self.outqueue.get()
+        task = asyncio.create_task(self.outqueue.get())
+        self.active_futures.append(task)
+        try:
+            await task
+            res = task.result()
+        except asyncio.CancelledError:
+            print(f'Stopping {self.name} outqueue.get...')
+        self.active_futures.pop(self.active_futures.index(task))
 
 
         # wait in a responsive way
@@ -394,7 +415,7 @@ def analyze_streampot(t, V, baseline):
     fitfunc = lambda x, mag, sig: response_function(model0, mag, sig, 0.0)
     res, pcov = curve_fit(fitfunc, t, mfVo, p0=(np.min(mfVo[inner]), 100/fs), bounds=([-np.inf, 1./fs], [np.inf, np.inf]))
     perr = np.sqrt(np.diag(pcov))
-    print(res, perr)
+    #print(res, perr)
 
     print(f'Response time (s): {res[1]/fs} +/- {perr[1]/fs}\nSignal (uV): {res[0]} +/- {perr[0]}')
 
@@ -420,7 +441,7 @@ async def main():
     print(f'Actual speed: {sp._flow_rate(sp._speed_code(flow_rate / 60 * 1000)) / 1000 * 60:0.3f} mL/min')
     V, t, poll_data, speed_data = await streampot.measure_streaming_potential(min_flow_rate=flow_rate,
                                                 max_flow_rate=flow_rate,
-                                                volume=flow_rate / 2,
+                                                volume=flow_rate / 5,
                                                 baseline_duration=baseline)
 
     Rs = []
@@ -438,7 +459,10 @@ async def main():
     print(f'V0: Average: {np.average(V0s)}, SD: {np.std(V0s)}')
 
     k.stop()
-    await thread_task
+    try:
+        await thread_task
+    except asyncio.CancelledError:
+        pass
 
     #print(f'R (ohm): {R}, dV (mV): {dV}')
     #plt.plot(t, V*1e6, '-', alpha=0.3)
@@ -484,6 +508,10 @@ async def sp_test():
     #    await sp.smart_dispense(5000, sp.max_aspirate_flow_rate)
     load = True
     if load:
+        #await sp.move_valve(sp.valve.dispense_position)
+        #await sp.get_syringe_position()
+        #print(sp.syringe_position)
+        #await sp.run_until_idle(sp.move_absolute(0, sp.max_dispense_flow_rate))
         await sp.move_valve(3)
     else:
         vol = 200
