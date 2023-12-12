@@ -1,6 +1,6 @@
 from typing import Tuple, List
 import pyvisa
-from threading import Event
+from threading import Event, Lock
 from queue import Queue, Empty, Full
 from copy import copy
 import time
@@ -17,6 +17,8 @@ import matplotlib.pyplot as plt
 from HamiltonComm import HamiltonSerial
 from HamiltonDevice import HamiltonSyringePump, PollTimer
 from valve import SyringeLValve, SyringeValveBase
+
+from labjack import ljm
 
 
 class SyringePumpRamp(HamiltonSyringePump):
@@ -76,20 +78,27 @@ class SyringePumpRamp(HamiltonSyringePump):
 
         return data
 
-class KeithleyDriver:
+class USBDriverBase:
 
-    def __init__(self, timeout = 0.05, name='KeithleyDriver') -> None:
+    def __init__(self, timeout = 0.05, name='USBDriver') -> None:
 
         self.name = name
-        self.rm = None
-        self.instr = None
         self.timeout = timeout
         self.stop_event = Event()
         self.active_futures: List[asyncio.Future] = []
 
-        self.lock: asyncio.Lock = asyncio.Lock()
+        self.lock: Lock = Lock()
         self.inqueue: asyncio.Queue = asyncio.Queue()
         self.outqueue: asyncio.Queue = asyncio.Queue(1)
+
+    async def start(self, loop: asyncio.AbstractEventLoop | None = None):
+
+        logging.info(f'Starting {self.name} thread...')
+
+        if loop is None:
+            loop = asyncio.get_event_loop()
+
+        return await asyncio.to_thread(self.run, loop=asyncio.get_event_loop())
 
     def stop(self):
         self.stop_event.set()
@@ -100,6 +109,79 @@ class KeithleyDriver:
     
     def clear(self):
         self.stop_event.clear()
+
+    def open(self):
+        pass
+
+    def close(self):
+        pass
+
+    def run(self, loop: asyncio.AbstractEventLoop):
+        """Synchronous code to interact with the instrument"""
+
+        # open instrument resource
+        self.open()
+        self.clear()
+        while not self.stop_event.is_set():
+
+            cmd = None
+
+            # TODO: figure out how to do this with a timeout (to be responsive to stop signal)
+            future = asyncio.run_coroutine_threadsafe(self.inqueue.get(), loop)
+            self.active_futures.append(future)
+            cmd = future.result()
+            self.active_futures.pop(self.active_futures.index(future))
+            
+            if cmd is not None:
+
+                logging.info('%s => %s', self.name, cmd)
+
+                # write value to instrument
+
+                # read value from instrument
+                response = None
+
+                # write response to outqueue (blocks until value is read)
+                future = asyncio.run_coroutine_threadsafe(self.outqueue.put(response), loop)
+                self.active_futures.append(future)
+                future.result()
+                self.active_futures.pop(self.active_futures.index(future))
+            
+        self.close()
+
+    async def write(self, cmd: str) -> None:
+        """Writes command to queue"""
+        #cmd.replace(' ', '\\s')
+        task = asyncio.create_task(self.inqueue.put(cmd))
+        self.active_futures.append(task)
+        try:
+            await task
+        except asyncio.CancelledError:
+            print(f'Stopping {self.name} inqueue.put...')
+        self.active_futures.pop(self.active_futures.index(task))
+
+    async def query(self, cmd: str) -> str:
+        """Helper function for performing queries"""
+        await self.write(cmd)
+        res = None
+        task = asyncio.create_task(self.outqueue.get())
+        self.active_futures.append(task)
+        try:
+            await task
+            res = task.result()
+        except asyncio.CancelledError:
+            print(f'Stopping {self.name} outqueue.get...')
+        self.active_futures.pop(self.active_futures.index(task))
+
+        return res
+
+class KeithleyDriver(USBDriverBase):
+
+    def __init__(self, timeout=0.05, name='KeithleyDriver') -> None:
+        super().__init__(timeout, name)
+
+        self.rm = None
+        self.instr = None
 
     def open(self, model='2450'):
         
@@ -138,10 +220,12 @@ class KeithleyDriver:
                 logging.info('%s => %s', self.name, cmd)
 
                 # write value to instrument
+                #with self.lock:
                 self.instr.write(cmd)
                 
                 # if command is a query command
                 if '?' in cmd:
+                    #with self.lock:
                     response: str = self.instr.read()
 
                     logging.info('%s <= %s', self.name, response[:-1])
@@ -154,47 +238,81 @@ class KeithleyDriver:
             
         self.close()
 
-    async def write(self, cmd: str) -> None:
-        """Writes command to queue"""
-        #cmd.replace(' ', '\\s')
-        task = asyncio.create_task(self.inqueue.put(cmd))
-        self.active_futures.append(task)
-        try:
-            await task
-        except asyncio.CancelledError:
-            print(f'Stopping {self.name} inqueue.put...')
-        self.active_futures.pop(self.active_futures.index(task))
+class CommandType(Enum):
+    READ = 'read'
+    WRITE = 'write'
 
-    async def query(self, cmd: str) -> str:
-        """Helper function for performing queries"""
-        await self.write(cmd)
-        res = None
-        task = asyncio.create_task(self.outqueue.get())
-        self.active_futures.append(task)
-        try:
-            await task
-            res = task.result()
-        except asyncio.CancelledError:
-            print(f'Stopping {self.name} outqueue.get...')
-        self.active_futures.pop(self.active_futures.index(task))
+class LabJackDriver(USBDriverBase):
 
+    def __init__(self, timeout=0.05, name='LabJackDriver') -> None:
+        super().__init__(timeout, name)
 
-        # wait in a responsive way
-        #while not self.stopped:
-        #    try:
-        #        task = asyncio.create_task(self.outqueue.get())
-        #        await asyncio.wait_for(task, self.timeout)
-        #        res = task.result()
-        #    except asyncio.TimeoutError:
-        #        pass
+        self.instr = None
 
-        return res
+    def open(self, model='T7'):
+        
+        handle = ljm.openS("ANY","ANY","ANY")
+        result = ljm.eReadName(handle, "PRODUCT_ID")
+        logging.info('Connecting to %s', result)
+
+        self.instr = handle
+
+    def close(self):
+
+        ljm.close(self.instr)
+
+    def run(self, loop: asyncio.AbstractEventLoop):
+        """Synchronous code to interact with the Keithley"""
+
+        # open instrument resource
+        self.open()
+        self.clear()
+        while not self.stop_event.is_set():
+
+            cmd = None
+
+            # TODO: figure out how to do this with a timeout (to be responsive to stop signal)
+            future = asyncio.run_coroutine_threadsafe(self.inqueue.get(), loop)
+            self.active_futures.append(future)
+            cmd: Tuple[CommandType, str, str | None] | None = future.result()
+            self.active_futures.pop(self.active_futures.index(future))
+            
+            if cmd is not None:
+
+                name, value, command_type = cmd
+
+                logging.debug('%s => %s', self.name, cmd)
+
+                if command_type == CommandType.WRITE:
+                    # write value to instrument
+                    #with self.lock:
+                    ljm.eWriteName(self.instr, name, value)
+                
+                # if command is a query command
+                else:
+                    #with self.lock:
+                    response = ljm.eReadName(self.instr, name)
+
+                    logging.debug('%s <= %s', self.name, response)
+
+                    # write response to outqueue (blocks until value is read)
+                    future = asyncio.run_coroutine_threadsafe(self.outqueue.put(response), loop)
+                    self.active_futures.append(future)
+                    future.result()
+                    self.active_futures.pop(self.active_futures.index(future))
+            
+        self.close()
+
+    async def query(self, cmd: str, value: str | None = None, command_type: CommandType = CommandType.WRITE) -> str:
+        #await self.write()
+        return await super().query((cmd, value, command_type))
 
 class StreamPot:
 
-    def __init__(self, smu: KeithleyDriver, syringepump: SyringePumpRamp):
+    def __init__(self, smu: KeithleyDriver, syringepump: SyringePumpRamp, psensor: LabJackDriver):
         self.smu = smu
         self.syringepump = syringepump
+        self.psensor = psensor
         self.trigger: asyncio.Event = asyncio.Event()
 
         # TODO: Pressure sensor (create Labjack driver)
@@ -292,16 +410,30 @@ class StreamPot:
         # 2. set up the Keithley
 
         # run setup commands
-        setup_commands = [
-                          #'*RST',
-                          ':SOUR:FUNC CURR',
-                          f':SOUR:CURR {current}',
-                          ':SENS:FUNC "VOLT"',
-                          ':VOLT:RSEN 0',
-                          ':VOLT:NPLC 2',
-                          ':VOLT:RANG:AUTO ON',
-                          f':TRIG:LOAD "DurationLoop", {expected_time + 2 * baseline_duration:0.3f}'
-                        ]
+        if True:
+            setup_commands = [
+                            #'*RST',
+                            ':SOUR:FUNC CURR',
+                            f':SOUR:CURR {current}',
+                            ':SENS:FUNC "VOLT"',
+                            ':VOLT:RSEN 0',
+                            ':VOLT:NPLC 2',
+                            ':VOLT:RANG:AUTO ON',
+                            f':TRIG:LOAD "DurationLoop", {expected_time + 2 * baseline_duration:0.3f}'
+                            ]
+
+        else:
+            setup_commands = [
+                            #'*RST',
+                            ':SOUR:FUNC VOLT',
+                            f':SOUR:VOLT {current}',
+                            ':SENS:FUNC "CURR"',
+                            ':CURR:RSEN 0',
+                            ':CURR:NPLC 2',
+                            ':CURR:RANG:AUTO ON',
+                            f':TRIG:LOAD "DurationLoop", {expected_time + 2 * baseline_duration:0.3f}'
+                            ]
+
 
         for cmd in setup_commands:
             #logging.info('Writing %s', cmd)
@@ -319,14 +451,16 @@ class StreamPot:
 
             while curtime < itime + duration:
                 # set new speed and start the poll_delay timer
-                speed_code_response, _ = await asyncio.gather(sp.query('?2'),
-                                     timer.cycle())
+                pressure_response, _ = await asyncio.gather(
+                                     self.psensor.query('AIN2', command_type=CommandType.READ),
+                                     timer.cycle()
+                                     )
                 
                 #logging.info(speed_code_response)
                 
                 # get result
                 curtime = time.time()
-                data.append((time.time() - itime, sp._flow_rate(int(speed_code_response[0]))))
+                data.append((time.time() - itime, pressure_response))
 
                 # wait until poll_delay timer has ended before setting new flow rate
                 await timer.wait_until_set()
@@ -335,7 +469,7 @@ class StreamPot:
                 
 
         speed_data, poll_data, _ = await asyncio.gather(sp.ramp_speed(vol, flow_rates.tolist(), delay=baseline_duration, reverse=True),
-                                               start_polling_devices(expected_time + 2.0 * baseline_duration, 1.0),
+                                               start_polling_devices(expected_time + 2.0 * baseline_duration, 0.01),
                                                self.smu.write(':INIT'))
         #print(poll_data, speed_data)
 
@@ -424,24 +558,28 @@ def analyze_streampot(t, V, baseline):
 async def main():
 
     ser = HamiltonSerial(port='COM6', baudrate=38400)
-    sp = SyringePumpRamp(ser, '3', SyringeLValve(4, name='syringe_LValve'), 5000, False, name='syringe_pump')
+    sp = SyringePumpRamp(ser, '3', SyringeLValve(4, name='syringe_LValve'), 5000, True, name='syringe_pump')
     sp.max_dispense_flow_rate = 10. / 60 * 1000.
     sp.max_aspirate_flow_rate = 10. / 60 * 1000.
 
     await sp.run_until_idle(sp.initialize())
 
     k = KeithleyDriver(timeout=0.05)
-    thread_task = asyncio.create_task(asyncio.to_thread(k.run, loop=asyncio.get_event_loop()))
-    logging.info('Starting thread...')
-    await asyncio.sleep(0.1)
-    streampot = StreamPot(k, sp)
+    thread_task = asyncio.create_task(k.start())
+    #await asyncio.sleep(0.1)
+
+    lj = LabJackDriver(timeout=0.05)
+    thread_task2 = asyncio.create_task(lj.start())
+    #await asyncio.sleep(0.1)
+
+    streampot = StreamPot(k, sp, lj)
     #R, dV, V, I = await sp.measure_iv()
-    baseline = 10
+    baseline = 5
     flow_rate = 0.1
     print(f'Actual speed: {sp._flow_rate(sp._speed_code(flow_rate / 60 * 1000)) / 1000 * 60:0.3f} mL/min')
     V, t, poll_data, speed_data = await streampot.measure_streaming_potential(min_flow_rate=flow_rate,
                                                 max_flow_rate=flow_rate,
-                                                volume=flow_rate / 5,
+                                                volume=flow_rate / 10,
                                                 baseline_duration=baseline)
 
     Rs = []
@@ -461,6 +599,12 @@ async def main():
     k.stop()
     try:
         await thread_task
+    except asyncio.CancelledError:
+        pass
+
+    lj.stop()
+    try:
+        await thread_task2
     except asyncio.CancelledError:
         pass
 
@@ -490,8 +634,19 @@ async def main():
 #    plt.plot(speed_data[0] + baseline, speed_data[1])
 
     poll_data = np.array(poll_data).T
+    gain = 201
+    mv = poll_data[1] / gain
+    mv2pa = 0.2589 * 2.5 / 6894.75
+    pa = mv / mv2pa
+    y_cond, y_model, _, _ = analyze_streampot(poll_data[0], pa, baseline=baseline)
+    fig, ax = plt.subplots(1, 2, figsize=(14, 8))
+    axleft, axright = ax
+    axleft.plot(poll_data[0], pa, alpha=0.5)
+    axright.plot(poll_data[0], y_cond, alpha=0.5)
+    axright.plot(poll_data[0], y_model, alpha=0.5)
+
     #plt.figure()
-    #plt.plot(poll_data[0], poll_data[1])
+    #plt.plot(t, V / np.interp(t, poll_data[0], y_cond))
     plt.show()
 
 async def sp_test():
@@ -535,6 +690,20 @@ async def sp_test():
         #await sp.ramp_speed(vol, flow_rates.tolist())
         #await sp.run_until_idle(sp.ramp_speed(vol, 0.5 / 60 * 1000))
 
+async def labjack():
+
+    lj = LabJackDriver()
+    lj.open()
+    res = []
+    init_time = time.time()
+    for _ in range(100):
+        res.append((time.time() - init_time, ljm.eReadName(lj.instr, "AIN2")))
+    
+    res = np.array(res).T
+    print(np.average(res[1]), np.std(res[1]))
+    plt.plot(res[0], res[1])
+    plt.show()
+    lj.close()
 
 if __name__=='__main__':
     logging.basicConfig(
