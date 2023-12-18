@@ -1,4 +1,4 @@
-from typing import Tuple, List
+from typing import Tuple, List, Coroutine
 import pyvisa
 from threading import Event, Lock
 from queue import Queue, Empty, Full
@@ -307,6 +307,17 @@ class LabJackDriver(USBDriverBase):
         #await self.write()
         return await super().query((cmd, value, command_type))
 
+class PollTask:
+
+    def __init__(self, async_function: Coroutine, *args, **kwargs) -> None:
+        self.fxn = async_function
+        self.args = args
+        self.kwargs = kwargs
+
+    def func(self):
+
+        return self.fxn(*self.args, **self.kwargs)
+
 class StreamPot:
 
     def __init__(self, smu: KeithleyDriver, syringepump: SyringePumpRamp, psensor: LabJackDriver):
@@ -314,9 +325,35 @@ class StreamPot:
         self.syringepump = syringepump
         self.psensor = psensor
         self.trigger: asyncio.Event = asyncio.Event()
+        self._stop_polling: asyncio.Event = asyncio.Event()
 
         # TODO: Pressure sensor (create Labjack driver)
         # TODO: Syringe pump loop system
+
+    async def start_polling(self, duration: float, sample_rate: float, tasks: List[PollTask] = []):
+            # set up timer
+            timer = PollTimer(sample_rate, 'P/V PollTimer')
+            ntasks = len(tasks)
+            data = []
+            itime = time.time()
+            curtime = copy(itime)
+
+            while (curtime < itime + duration) & (not self._stop_polling.is_set()):
+
+                poll_tasks = [t.func() for t in tasks] + [timer.cycle()]
+                # set new speed and start the poll_delay timer
+                responses = await asyncio.gather(*poll_tasks)
+                
+                #logging.info(speed_code_response)
+                
+                # get results and time stamp them
+                curtime = time.time()
+                data.append((time.time() - itime, *responses[:-1]))
+
+                # wait until poll_delay timer has ended before setting new flow rate
+                await timer.wait_until_set()
+        
+            return data
 
     async def measure_iv(self,
                          maxV: float = 0.001,
@@ -341,12 +378,16 @@ class StreamPot:
         for cmd in setup_commands:
             await self.smu.write(cmd)
 
+        # start polling pressure sensor
+        poll_task = asyncio.create_task(self.start_polling(1e9, 0.01, [PollTask(self.psensor.query, 'AIN2', None, CommandType.READ)]))
+
         # monitor output until correct number of points have been collected
         pointcount = 0
         status = 'RUNNING'
         while 'RUNNING' in status:
             await asyncio.sleep(time_per_point)
             status = await self.smu.query(':TRIG:STAT?')
+
         #while pointcount < npts:
         #    await asyncio.sleep(time_per_point)
         
@@ -355,16 +396,29 @@ class StreamPot:
         pointcount = int(await self.smu.query(':TRAC:ACT? "defbuffer1"'))
         # read all data        
         data = await self.smu.query(f':TRAC:DATA? 1, {pointcount}, "defbuffer1", SOUR, READ')
+
+        # stop polling pressure sensor and get result
+        self._stop_polling.set()
+        await poll_task
+        self._stop_polling.clear()
+        poll_data = poll_task.result()
+        poll_data = np.array(poll_data).T
+
+        #plt.figure()
+        #plt.plot(poll_data[0], poll_data[1])
     
         # format data into numpy arrays
         data = np.fromstring(data, sep=',')
         V, I = data.reshape((2, len(data) // 2), order='F')
 
         # Calculate resistance and voltage offset (in mV)
-        R, b = np.polyfit(I, V, 1)
+        p, cov = np.polyfit(I, V, 1, full=False, cov=True)
+        R, b = p
+        dR, db = np.sqrt(np.diag(cov))
         dV = b * 1e3
+        ddV = db * 1e3
 
-        return R, dV, V, I
+        return R, dR, dV, ddV, V, I, poll_data
 
     async def measure_streaming_potential(self,
                         current: float = 0,
@@ -415,6 +469,7 @@ class StreamPot:
                             #'*RST',
                             ':SOUR:FUNC CURR',
                             f':SOUR:CURR {current}',
+                            ':SOUR:CURR:VLIM 0.020',
                             ':SENS:FUNC "VOLT"',
                             ':VOLT:RSEN 0',
                             ':VOLT:NPLC 2',
@@ -442,34 +497,8 @@ class StreamPot:
         # 3. Trigger both syringe pump and measurement device
         init_time = time.time()
 
-        async def start_polling_devices(duration: float, sample_rate: float):
-            # set up timer
-            timer = PollTimer(sample_rate, 'P/V PollTimer')
-            data = []
-            itime = time.time()
-            curtime = copy(itime)
-
-            while curtime < itime + duration:
-                # set new speed and start the poll_delay timer
-                pressure_response, _ = await asyncio.gather(
-                                     self.psensor.query('AIN2', command_type=CommandType.READ),
-                                     timer.cycle()
-                                     )
-                
-                #logging.info(speed_code_response)
-                
-                # get result
-                curtime = time.time()
-                data.append((time.time() - itime, pressure_response))
-
-                # wait until poll_delay timer has ended before setting new flow rate
-                await timer.wait_until_set()
-
-            return data
-                
-
         speed_data, poll_data, _ = await asyncio.gather(sp.ramp_speed(vol, flow_rates.tolist(), delay=baseline_duration, reverse=True),
-                                               start_polling_devices(expected_time + 2.0 * baseline_duration, 0.01),
+                                               self.start_polling(expected_time + 2.0 * baseline_duration, 0.01, [PollTask(self.psensor.query, 'AIN2', None, CommandType.READ)]),
                                                self.smu.write(':INIT'))
         #print(poll_data, speed_data)
 
@@ -551,7 +580,7 @@ def analyze_streampot(t, V, baseline):
     perr = np.sqrt(np.diag(pcov))
     #print(res, perr)
 
-    print(f'Response time (s): {res[1]/fs} +/- {perr[1]/fs}\nSignal (uV): {res[0]} +/- {perr[0]}')
+    print(f'Response time (s): {res[1]/fs} +/- {perr[1]/fs}\nSignal: {res[0]} +/- {perr[0]}')
 
     return mfVo, fitfunc(t, *res), res, perr
 
@@ -574,27 +603,34 @@ async def main():
 
     streampot = StreamPot(k, sp, lj)
     #R, dV, V, I = await sp.measure_iv()
-    baseline = 5
-    flow_rate = 0.1
+    baseline = 20
+    flow_rate = 0.2
     print(f'Actual speed: {sp._flow_rate(sp._speed_code(flow_rate / 60 * 1000)) / 1000 * 60:0.3f} mL/min')
     V, t, poll_data, speed_data = await streampot.measure_streaming_potential(min_flow_rate=flow_rate,
                                                 max_flow_rate=flow_rate,
-                                                volume=flow_rate / 10,
+                                                volume=flow_rate / 1,
                                                 baseline_duration=baseline)
 
     Rs = []
+    dRs = []
     V0s = []
+    dV0s = []
     for i in range(1):
         print(f'Measuring IV curve {i}')
-        R, V0, viv, iiv = await streampot.measure_iv()
+        R, dR, V0, dV0, viv, iiv, _ = await streampot.measure_iv(maxV=0.001)
         Rs.append(R)
+        dRs.append(dR)
         V0s.append(V0)
+        dV0s.append(dV0)
 
-    plt.plot(viv, iiv, 'o-')
+        plt.plot(viv, iiv, 'o-')
 
+    plt.show()
 
     print(f'R: Average: {np.average(Rs)}, SD: {np.std(Rs)}')    
+    print(f'dR: Average: {np.average(dRs)}, SD: {np.std(dRs)}')    
     print(f'V0: Average: {np.average(V0s)}, SD: {np.std(V0s)}')
+    print(f'dV0: Average: {np.average(dV0s)}, SD: {np.std(dV0s)}')
 
     k.stop()
     try:
@@ -635,8 +671,8 @@ async def main():
 
     poll_data = np.array(poll_data).T
     gain = 201
-    mv = poll_data[1] / gain
-    mv2pa = 0.2589 * 2.5 / 6894.75
+    mv = poll_data[1] / gain    # V
+    mv2pa = 0.2584e-3 * 2.5 / 6894.75 # V / Pa
     pa = mv / mv2pa
     y_cond, y_model, _, _ = analyze_streampot(poll_data[0], pa, baseline=baseline)
     fig, ax = plt.subplots(1, 2, figsize=(14, 8))
