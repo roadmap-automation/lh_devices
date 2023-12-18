@@ -247,6 +247,7 @@ class LabJackDriver(USBDriverBase):
     def __init__(self, timeout=0.05, name='LabJackDriver') -> None:
         super().__init__(timeout, name)
 
+        self.stop_stream: Event = Event()
         self.instr = None
 
     def open(self, model='T7'):
@@ -255,17 +256,25 @@ class LabJackDriver(USBDriverBase):
         result = ljm.eReadName(handle, "PRODUCT_ID")
         logging.info('Connecting to %s', result)
 
+        ljm.eWriteName(handle, 'AIN3_RANGE', 1)
+        #print(ljm.eReadName(lj.instr, 'AIN3_RANGE'))
+        #ljm.eWriteName(handle, 'AIN3_RESOLUTION_INDEX', 7)
+        #print(ljm.eReadName(lj.instr, 'AIN3_RESOLUTION_INDEX'))
+
         self.instr = handle
 
     def close(self):
 
         ljm.close(self.instr)
+        self.instr = None
 
     def run(self, loop: asyncio.AbstractEventLoop):
-        """Synchronous code to interact with the Keithley"""
+        """Synchronous code to interact with the Labjack via call-and-response"""
 
         # open instrument resource
-        self.open()
+        if self.instr is None:
+            self.open()
+
         self.clear()
         while not self.stop_event.is_set():
 
@@ -306,6 +315,44 @@ class LabJackDriver(USBDriverBase):
     async def query(self, cmd: str, value: str | None = None, command_type: CommandType = CommandType.WRITE) -> str:
         #await self.write()
         return await super().query((cmd, value, command_type))
+
+    def stream(self, ScansPerSecond: float = 1,
+                     addresses: List[int] = [3],
+                     ScanRate: float = 1000) -> Tuple[float, np.ndarray]:
+        """Synchronous code to interact with the Labjack via streaming
+
+        Args:
+            ScansPerSecond (int, optional): Scans per second. Defaults to 1.
+            addresses (List[int], optional): integer addresses to read (see Modbus Map). Defaults to [3] ('AIN3').
+            ScanRate (float, optional): Samples per second. Defaults to 1000.
+
+        Returns:
+            list: all data returned from stream
+        """
+        if self.instr is None:
+            self.open()
+
+        self.stop_stream.clear()
+        
+        all_data = []
+
+        def _stream_callback(handle):
+            data, deviceScanBacklog, ljmScanBacklog = ljm.eStreamRead(handle)
+            #print(deviceScanBacklog, ljmScanBacklog)
+            data = np.array(data)
+            data = data.reshape((len(addresses), -1), order='F')
+            all_data.append(data)
+
+        actual_scanrate = ljm.eStreamStart(self.instr, round(ScanRate / ScansPerSecond), len(addresses), addresses, ScanRate)
+        ljm.setStreamCallback(self.instr, _stream_callback)
+
+        self.stop_stream.wait()
+        _stream_callback(self.instr)
+        ljm.eStreamStop(self.instr)
+
+        all_data = np.concatenate(all_data, axis=1)
+
+        return actual_scanrate, all_data    
 
 class PollTask:
 
@@ -741,9 +788,36 @@ async def labjack():
     plt.show()
     lj.close()
 
+async def labjack_stream():
+
+    lj = LabJackDriver()
+    await asyncio.to_thread(lj.open)
+    sample_rate = 2000
+    stream = asyncio.create_task(asyncio.to_thread(lj.stream, 1, [6], sample_rate))
+    await asyncio.sleep(5)
+    lj.stop_stream.set()
+    actual_sample_rate, data = await stream
+    print(actual_sample_rate)
+    t = np.arange(int(data.shape[1])) / actual_sample_rate
+
+    plt.plot(t, data[0])
+    plt.show()
+
+    
+    #res = []
+    #init_time = time.time()
+    #for _ in range(100):
+    #    res.append((time.time() - init_time, ljm.eReadName(lj.instr, "AIN2")))
+   # 
+   # res = np.array(res).T
+    #print(np.average(res[1]), np.std(res[1]))
+    #plt.plot(res[0], res[1])
+    #plt.show()
+    lj.close()
+
 if __name__=='__main__':
     logging.basicConfig(
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
                             level=logging.INFO)
-    asyncio.run(main(), debug=True)
+    asyncio.run(labjack_stream(), debug=True)
