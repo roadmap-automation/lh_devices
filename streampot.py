@@ -250,6 +250,11 @@ class LabJackDriver(USBDriverBase):
         self.stop_stream: Event = Event()
         self.instr = None
 
+        self.channel_map = {'AIN0': 0,
+                            'AIN1': 2,
+                            'AIN2': 4,
+                            'AIN3': 6}
+
     def open(self, model='T7'):
         
         handle = ljm.openS("ANY","ANY","ANY")
@@ -317,14 +322,14 @@ class LabJackDriver(USBDriverBase):
         return await super().query((cmd, value, command_type))
 
     def stream(self, ScansPerSecond: float = 1,
-                     addresses: List[int] = [3],
-                     ScanRate: float = 1000) -> Tuple[float, np.ndarray]:
+                     addresses: List[int] = [6],
+                     ScanRate: float = 500) -> Tuple[float, np.ndarray]:
         """Synchronous code to interact with the Labjack via streaming
 
         Args:
             ScansPerSecond (int, optional): Scans per second. Defaults to 1.
-            addresses (List[int], optional): integer addresses to read (see Modbus Map). Defaults to [3] ('AIN3').
-            ScanRate (float, optional): Samples per second. Defaults to 1000.
+            addresses (List[int], optional): integer addresses to read (see Modbus Map). Defaults to [6] ('AIN3').
+            ScanRate (float, optional): Samples per second. Defaults to 500.
 
         Returns:
             list: all data returned from stream
@@ -354,6 +359,20 @@ class LabJackDriver(USBDriverBase):
 
         return actual_scanrate, all_data    
 
+class PressureSensor(LabJackDriver):
+
+    def __init__(self, channel: str = 'AIN2', gain=201, timeout=0.05, name='LabJackDriver') -> None:
+        super().__init__(timeout, name)
+
+        self.channel = channel
+        self.gain = gain
+
+    def stream(self, ScansPerSecond: float = 1, ScanRate: float = 500) -> Tuple[float, np.ndarray]:
+        sample_rate, data = super().stream(ScansPerSecond, [self.channel_map[self.channel]], ScanRate)
+        data /= self.gain
+
+        return sample_rate, data
+
 class PollTask:
 
     def __init__(self, async_function: Coroutine, *args, **kwargs) -> None:
@@ -367,7 +386,7 @@ class PollTask:
 
 class StreamPot:
 
-    def __init__(self, smu: KeithleyDriver, syringepump: SyringePumpRamp, psensor: LabJackDriver):
+    def __init__(self, smu: KeithleyDriver, syringepump: SyringePumpRamp, psensor: PressureSensor):
         self.smu = smu
         self.syringepump = syringepump
         self.psensor = psensor
@@ -426,7 +445,9 @@ class StreamPot:
             await self.smu.write(cmd)
 
         # start polling pressure sensor
-        poll_task = asyncio.create_task(self.start_polling(1e9, 0.01, [PollTask(self.psensor.query, 'AIN2', None, CommandType.READ)]))
+        #poll_task = asyncio.create_task(self.start_polling(1e9, 0.01, [PollTask(self.psensor.query, 'AIN2', None, CommandType.READ)]))
+        sample_rate = 500
+        stream = asyncio.create_task(asyncio.to_thread(self.psensor.stream, 1, sample_rate))
 
         # monitor output until correct number of points have been collected
         pointcount = 0
@@ -434,6 +455,10 @@ class StreamPot:
         while 'RUNNING' in status:
             await asyncio.sleep(time_per_point)
             status = await self.smu.query(':TRIG:STAT?')
+
+        # stop pressure sensor
+        self.psensor.stop_stream.set()
+
 
         #while pointcount < npts:
         #    await asyncio.sleep(time_per_point)
@@ -444,12 +469,10 @@ class StreamPot:
         # read all data        
         data = await self.smu.query(f':TRAC:DATA? 1, {pointcount}, "defbuffer1", SOUR, READ')
 
-        # stop polling pressure sensor and get result
-        self._stop_polling.set()
-        await poll_task
-        self._stop_polling.clear()
-        poll_data = poll_task.result()
-        poll_data = np.array(poll_data).T
+        # get pressure data result
+        actual_sample_rate, pdata = await stream
+        t = np.arange(pdata.shape[1]) / actual_sample_rate
+        pressure_data = t, pdata
 
         #plt.figure()
         #plt.plot(poll_data[0], poll_data[1])
@@ -465,7 +488,7 @@ class StreamPot:
         dV = b * 1e3
         ddV = db * 1e3
 
-        return R, dR, dV, ddV, V, I, poll_data
+        return R, dR, dV, ddV, V, I, pdata
 
     async def measure_streaming_potential(self,
                         current: float = 0,
@@ -541,12 +564,14 @@ class StreamPot:
             #logging.info('Writing %s', cmd)
             await self.smu.write(cmd)
 
-        # 3. Trigger both syringe pump and measurement device
+        # 3. Trigger syringe pump and measurement devices
         init_time = time.time()
 
-        speed_data, poll_data, _ = await asyncio.gather(sp.ramp_speed(vol, flow_rates.tolist(), delay=baseline_duration, reverse=True),
-                                               self.start_polling(expected_time + 2.0 * baseline_duration, 0.01, [PollTask(self.psensor.query, 'AIN2', None, CommandType.READ)]),
+        sample_rate = 500
+        stream = asyncio.create_task(asyncio.to_thread(self.psensor.stream, 1, sample_rate))
+        speed_data, _ = await asyncio.gather(sp.ramp_speed(vol, flow_rates.tolist(), delay=baseline_duration, reverse=True),
                                                self.smu.write(':INIT'))
+
         #print(poll_data, speed_data)
 
         # gets current syringe speed
@@ -564,18 +589,26 @@ class StreamPot:
             await asyncio.sleep(0.1)
             status = await self.smu.query(':TRIG:STAT?')
 
+        # stop pressure sensor
+        self.psensor.stop_stream.set()
+
         # Get number of available points
         pointcount = int(await self.smu.query(':TRAC:ACT? "defbuffer1"'))
 
         # read all data        
         data = await self.smu.query(f':TRAC:DATA? 1, {pointcount}, "defbuffer1", READ, REL')
-    
+
+        # get pressure data result
+        actual_sample_rate, pdata = await stream
+        tp = np.arange(pdata.shape[1]) / actual_sample_rate
+        pressure_data = tp, pdata
+
         # format data into numpy arrays
         data = np.fromstring(data, sep=',')
         V, t = data.reshape((2, pointcount), order='F')
 
-        return V, t, poll_data, speed_data
-
+        return V, t, pressure_data, speed_data
+    
 def response_function(yr, mag, sigma, dt):
     #print(sigma)
     xwdw = np.arange(max(10*sigma, 10))
@@ -644,18 +677,19 @@ async def main():
     thread_task = asyncio.create_task(k.start())
     #await asyncio.sleep(0.1)
 
-    lj = LabJackDriver(timeout=0.05)
-    thread_task2 = asyncio.create_task(lj.start())
+    lj = PressureSensor(channel='AIN2', timeout=0.05)
+    await asyncio.to_thread(lj.open)
+    #thread_task2 = asyncio.create_task(lj.start())
     #await asyncio.sleep(0.1)
 
     streampot = StreamPot(k, sp, lj)
     #R, dV, V, I = await sp.measure_iv()
-    baseline = 20
+    baseline = 5
     flow_rate = 0.2
     print(f'Actual speed: {sp._flow_rate(sp._speed_code(flow_rate / 60 * 1000)) / 1000 * 60:0.3f} mL/min')
-    V, t, poll_data, speed_data = await streampot.measure_streaming_potential(min_flow_rate=flow_rate,
+    V, t, pressure_data, speed_data = await streampot.measure_streaming_potential(min_flow_rate=flow_rate,
                                                 max_flow_rate=flow_rate,
-                                                volume=flow_rate / 1,
+                                                volume=flow_rate / 10,
                                                 baseline_duration=baseline)
 
     Rs = []
@@ -678,18 +712,6 @@ async def main():
     print(f'dR: Average: {np.average(dRs)}, SD: {np.std(dRs)}')    
     print(f'V0: Average: {np.average(V0s)}, SD: {np.std(V0s)}')
     print(f'dV0: Average: {np.average(dV0s)}, SD: {np.std(dV0s)}')
-
-    k.stop()
-    try:
-        await thread_task
-    except asyncio.CancelledError:
-        pass
-
-    lj.stop()
-    try:
-        await thread_task2
-    except asyncio.CancelledError:
-        pass
 
     #print(f'R (ohm): {R}, dV (mV): {dV}')
     #plt.plot(t, V*1e6, '-', alpha=0.3)
@@ -716,17 +738,15 @@ async def main():
 #    plt.figure()
 #    plt.plot(speed_data[0] + baseline, speed_data[1])
 
-    poll_data = np.array(poll_data).T
-    gain = 201
-    mv = poll_data[1] / gain    # V
+    tp, mv = pressure_data
     mv2pa = 0.2584e-3 * 2.5 / 6894.75 # V / Pa
-    pa = mv / mv2pa
-    y_cond, y_model, _, _ = analyze_streampot(poll_data[0], pa, baseline=baseline)
+    pa = mv[0] / mv2pa
+    y_cond, y_model, _, _ = analyze_streampot(tp, pa, baseline=baseline)
     fig, ax = plt.subplots(1, 2, figsize=(14, 8))
     axleft, axright = ax
-    axleft.plot(poll_data[0], pa, alpha=0.5)
-    axright.plot(poll_data[0], y_cond, alpha=0.5)
-    axright.plot(poll_data[0], y_model, alpha=0.5)
+    axleft.plot(tp, pa, alpha=0.5)
+    axright.plot(tp, y_cond, alpha=0.5)
+    axright.plot(tp, y_model, alpha=0.5)
 
     #plt.figure()
     #plt.plot(t, V / np.interp(t, poll_data[0], y_cond))
@@ -790,17 +810,17 @@ async def labjack():
 
 async def labjack_stream():
 
-    lj = LabJackDriver()
+    lj = PressureSensor(channel='AIN2')
     await asyncio.to_thread(lj.open)
-    sample_rate = 2000
-    stream = asyncio.create_task(asyncio.to_thread(lj.stream, 1, [6], sample_rate))
+    sample_rate = 500
+    stream = asyncio.create_task(asyncio.to_thread(lj.stream, 1, sample_rate))
     await asyncio.sleep(5)
     lj.stop_stream.set()
     actual_sample_rate, data = await stream
     print(actual_sample_rate)
     t = np.arange(int(data.shape[1])) / actual_sample_rate
 
-    plt.plot(t, data[0])
+    plt.plot(t, data[0] - 0.4 / lj.gain)
     plt.show()
 
     
@@ -820,4 +840,4 @@ if __name__=='__main__':
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
                             level=logging.INFO)
-    asyncio.run(labjack_stream(), debug=True)
+    asyncio.run(main(), debug=True)
