@@ -238,6 +238,40 @@ class KeithleyDriver(USBDriverBase):
             
         self.close()
 
+    async def setup_source_current_measure_voltage(self, current: float = 0, voltage_limit: float = 0.02, time: float|None = None, additional_commands: List[str] = []):
+        if time is None:
+            time = 100000
+        setup_commands = [
+                        ':SOUR:FUNC CURR',
+                        f':SOUR:CURR {current}',
+                        f':SOUR:CURR:VLIM {voltage_limit:0.3f}',
+                        ':SENS:FUNC "VOLT"',
+                        ':VOLT:RSEN 0',
+                        ':VOLT:NPLC 2',
+                        ':VOLT:RANG:AUTO ON'] + \
+                           additional_commands + \
+                        [f':TRIG:LOAD "DurationLoop", {time:0.3f}']
+
+        for cmd in setup_commands:
+            await self.write(cmd)
+
+    async def setup_source_voltage_measure_current(self, voltage: float = 0, time: float|None = None, additional_commands: List[str] = []):
+        if time is None:
+            time = 100000
+        setup_commands = [
+                            #'*RST',
+                            ':SOUR:FUNC VOLT',
+                            f':SOUR:VOLT {voltage}',
+                            ':SENS:FUNC "CURR"',
+                            ':CURR:RSEN 0',
+                            ':CURR:NPLC 2',
+                            ':CURR:RANG:AUTO ON'] + \
+                        additional_commands + \
+                        [f':TRIG:LOAD "DurationLoop", {time:0.3f}']
+        
+        for cmd in setup_commands:
+            await self.write(cmd)
+
 class CommandType(Enum):
     READ = 'read'
     WRITE = 'write'
@@ -261,7 +295,6 @@ class LabJackDriver(USBDriverBase):
         result = ljm.eReadName(handle, "PRODUCT_ID")
         logging.info('Connecting to %s', result)
 
-        ljm.eWriteName(handle, 'AIN3_RANGE', 1)
         #print(ljm.eReadName(lj.instr, 'AIN3_RANGE'))
         #ljm.eWriteName(handle, 'AIN3_RESOLUTION_INDEX', 7)
         #print(ljm.eReadName(lj.instr, 'AIN3_RESOLUTION_INDEX'))
@@ -359,13 +392,45 @@ class LabJackDriver(USBDriverBase):
 
         return actual_scanrate, all_data    
 
-class PressureSensor(LabJackDriver):
+class PressureSensorwithInAmp(LabJackDriver):
 
-    def __init__(self, channel: str = 'AIN2', gain=201, timeout=0.05, name='LabJackDriver') -> None:
+    def __init__(self, channel: str = 'AIN2', gain=201, sensor_voltage = 2.5, timeout=0.05, name='LabJackDriver') -> None:
         super().__init__(timeout, name)
 
         self.channel = channel
         self.gain = gain
+        self.sensor_voltage = sensor_voltage
+
+    def open(self, model='T7') -> None:
+        super().open(model)
+
+        ljm.eWriteName(self.instr, self.channel + '_RANGE', 1)
+
+    def stream(self, ScansPerSecond: float = 1, ScanRate: float = 500) -> Tuple[float, np.ndarray]:
+        sample_rate, data = super().stream(ScansPerSecond, [self.channel_map[self.channel]], ScanRate)
+        data /= self.gain
+
+        return sample_rate, data
+    
+class PressureSensorDifferential(LabJackDriver):
+
+    def __init__(self, channel: str = 'AIN0', sensor_voltage: float = 5.0, timeout=0.05, name='LabJackDriver') -> None:
+        super().__init__(timeout, name)
+
+        self.channel = channel
+        self.sensor_voltage = sensor_voltage
+        self.gain = 1
+
+    def open(self, model='T7'):
+        super().open(model)
+
+        # set up differential measurement
+        negative_channel = self.channel_map[self.channel] + 1
+        ljm.eWriteName(self.instr, self.channel + '_RANGE', 0.01)
+        ljm.eWriteName(self.instr, self.channel + '_NEGATIVE_CH', negative_channel)
+
+        # set up output voltage
+        #ljm.eWriteName(self.instr, self.dac_channel, self.dac_output)
 
     def stream(self, ScansPerSecond: float = 1, ScanRate: float = 500) -> Tuple[float, np.ndarray]:
         sample_rate, data = super().stream(ScansPerSecond, [self.channel_map[self.channel]], ScanRate)
@@ -386,7 +451,7 @@ class PollTask:
 
 class StreamPot:
 
-    def __init__(self, smu: KeithleyDriver, syringepump: SyringePumpRamp, psensor: PressureSensor):
+    def __init__(self, smu: KeithleyDriver, syringepump: SyringePumpRamp, psensor: LabJackDriver):
         self.smu = smu
         self.syringepump = syringepump
         self.psensor = psensor
@@ -535,34 +600,10 @@ class StreamPot:
 
         # run setup commands
         if True:
-            setup_commands = [
-                            #'*RST',
-                            ':SOUR:FUNC CURR',
-                            f':SOUR:CURR {current}',
-                            ':SOUR:CURR:VLIM 0.020',
-                            ':SENS:FUNC "VOLT"',
-                            ':VOLT:RSEN 0',
-                            ':VOLT:NPLC 2',
-                            ':VOLT:RANG:AUTO ON',
-                            f':TRIG:LOAD "DurationLoop", {expected_time + 2 * baseline_duration:0.3f}'
-                            ]
+            await self.smu.setup_source_current_measure_voltage(current, time=expected_time + 2 * baseline_duration)
 
         else:
-            setup_commands = [
-                            #'*RST',
-                            ':SOUR:FUNC VOLT',
-                            f':SOUR:VOLT {current}',
-                            ':SENS:FUNC "CURR"',
-                            ':CURR:RSEN 0',
-                            ':CURR:NPLC 2',
-                            ':CURR:RANG:AUTO ON',
-                            f':TRIG:LOAD "DurationLoop", {expected_time + 2 * baseline_duration:0.3f}'
-                            ]
-
-
-        for cmd in setup_commands:
-            #logging.info('Writing %s', cmd)
-            await self.smu.write(cmd)
+            await self.smu.setup_source_voltage_measure_current(current, time=expected_time + 2 * baseline_duration)
 
         # 3. Trigger syringe pump and measurement devices
         init_time = time.time()
@@ -609,6 +650,61 @@ class StreamPot:
 
         return V, t, pressure_data, speed_data
     
+    async def exchange(self, volume: float, flow_rate: float, baseline_duration: float = 10) -> None:
+
+        sp = self.syringepump
+
+        # set up voltage measurement
+        await self.smu.setup_source_current_measure_voltage(0.0, time=None)
+
+        # calculate aspirate time
+        aspirate_time = volume / sp.max_aspirate_flow_rate
+
+        async def aspirate():
+            await sp.move_valve(sp.valve.aspirate_position)
+            await sp.run_until_idle(sp.aspirate(volume, sp.max_aspirate_flow_rate))
+            await sp.move_valve(sp.valve.dispense_position)
+
+        # start aspirating immediately (simultaneously with waiting for baseline)
+        aspirate_task = asyncio.create_task(aspirate())
+
+        # if baseline is longer than aspiration time, allow aspiration to proceed before triggering data collection
+        if aspirate_time > baseline_duration:
+            await asyncio.sleep(aspirate_time - baseline_duration)
+
+        # start psensor stream
+        sample_rate = 500
+        stream = asyncio.create_task(asyncio.to_thread(self.psensor.stream, 1, sample_rate))
+
+        # trigger measurement and wait baseline duration
+        await asyncio.gather(asyncio.sleep(baseline_duration),
+                             self.smu.write(':INIT'),
+                             aspirate_task)
+
+        # start the syringepump
+        await sp.run_until_idle(sp.dispense(volume, flow_rate))
+
+        # get a new baseline
+        await asyncio.sleep(baseline_duration)
+
+        # stop the measurements
+        self.psensor.stop_stream.set()
+        await self.smu.write(':ABOR')
+        await self.smu.write(':OUTP 0')
+
+        # collect the measurements
+        actual_sample_rate, pdata = await stream
+        tp = np.arange(pdata.shape[1]) / actual_sample_rate
+        pressure_data = tp, pdata
+
+        # Get number of available points and read all data
+        pointcount = int(await self.smu.query(':TRAC:ACT? "defbuffer1"'))
+        data = await self.smu.query(f':TRAC:DATA? 1, {pointcount}, "defbuffer1", READ, REL')
+        data = np.fromstring(data, sep=',')
+        V, t = data.reshape((2, pointcount), order='F')
+
+        return (t, V), (tp, pdata)
+    
 def response_function(yr, mag, sigma, dt):
     #print(sigma)
     xwdw = np.arange(max(10*sigma, 10))
@@ -619,11 +715,12 @@ def response_function(yr, mag, sigma, dt):
     return convolve(yr*mag, wdw / np.trapz(wdw, xwdw), 'same')
 
 
-def analyze_streampot(t, V, baseline):
+def analyze_streampot(t, V, baseline, baseline_pad = 0):
     """Subtract baseline from signal.
     """
     init_baseline = t <= baseline
-    fit_init_baseline = t <= baseline - 0.5
+    fit_init_baseline = t <= baseline - baseline_pad
+    fit_final_baseline = t >= t[-1] - baseline + baseline_pad
     final_baseline = t >= t[-1] - baseline
     inner = (~init_baseline) & (~final_baseline)
 
@@ -639,7 +736,7 @@ def analyze_streampot(t, V, baseline):
         plt.plot(np.polyval(baseline_p, t))
         plt.show()
 
-    final_baseline_offset = np.average(mfVi[final_baseline])
+    final_baseline_offset = np.average(mfVi[fit_final_baseline])
     global_offset = np.zeros_like(t)
     global_offset[final_baseline] = final_baseline_offset
     global_offset[inner] = np.linspace(0, final_baseline_offset, sum(inner) + 2, endpoint=True)[1:-1]
@@ -655,10 +752,10 @@ def analyze_streampot(t, V, baseline):
     #print(fs)
 
     #res, pcov = curve_fit(lambda x, mag, sig, dt: response_function(model0, mag, sig, dt), t, mfVo, p0=(np.min(mfVo[inner]), 100/fs, 0.0), bounds=([-np.inf, 1./fs, -np.inf], [np.inf, np.inf, np.inf]))
-    fitfunc = lambda x, mag, sig: response_function(model0, mag, sig, 0.0)
-    res, pcov = curve_fit(fitfunc, t, mfVo, p0=(np.min(mfVo[inner]), 100/fs), bounds=([-np.inf, 1./fs], [np.inf, np.inf]))
+    fitfunc = lambda x, mag, sig, dt: response_function(model0, mag, sig, dt)
+    res, pcov = curve_fit(fitfunc, t, mfVo, p0=(np.min(mfVo[inner]), 100/fs, 0), bounds=([-np.inf, 1./fs, -100.0], [np.inf, np.inf, 100.0]))
     perr = np.sqrt(np.diag(pcov))
-    #print(res, perr)
+    print(res, perr)
 
     print(f'Response time (s): {res[1]/fs} +/- {perr[1]/fs}\nSignal: {res[0]} +/- {perr[0]}')
 
@@ -667,9 +764,9 @@ def analyze_streampot(t, V, baseline):
 async def main():
 
     ser = HamiltonSerial(port='COM6', baudrate=38400)
-    sp = SyringePumpRamp(ser, '3', SyringeLValve(4, name='syringe_LValve'), 5000, True, name='syringe_pump')
-    sp.max_dispense_flow_rate = 10. / 60 * 1000.
-    sp.max_aspirate_flow_rate = 10. / 60 * 1000.
+    sp = SyringePumpRamp(ser, '3', SyringeLValve(4, name='syringe_LValve'), 250, True, name='syringe_pump')
+    sp.max_dispense_flow_rate = 5. / 60 * 1000.
+    sp.max_aspirate_flow_rate = 5. / 60 * 1000.
 
     await sp.run_until_idle(sp.initialize())
 
@@ -677,16 +774,46 @@ async def main():
     thread_task = asyncio.create_task(k.start())
     #await asyncio.sleep(0.1)
 
-    lj = PressureSensor(channel='AIN2', timeout=0.05)
+    lj = PressureSensorDifferential(channel='AIN0', sensor_voltage=5.0)
+    #lj = PressureSensorwithInAmp(channel='AIN2', gain=201)
     await asyncio.to_thread(lj.open)
     #thread_task2 = asyncio.create_task(lj.start())
     #await asyncio.sleep(0.1)
 
     streampot = StreamPot(k, sp, lj)
     #R, dV, V, I = await sp.measure_iv()
-    baseline = 5
-    flow_rate = 0.2
+    baseline = 120
+    flow_rate = 0.02
     print(f'Actual speed: {sp._flow_rate(sp._speed_code(flow_rate / 60 * 1000)) / 1000 * 60:0.3f} mL/min')
+
+    volume = flow_rate * 1000 *2
+    expected_length = 2.0 * baseline + volume / (flow_rate / 60 * 1000)
+    #volume = 1.0 * 1000
+    e_data, p_data = await streampot.exchange(volume, flow_rate / 60 * 1000, baseline)
+    #plt.figure()
+    #plt.plot(e_data[0], e_data[1])
+    plt.figure()
+    mv2pa = 0.2584e-3 * lj.sensor_voltage / 6894.75
+    pa = (p_data[1][0]) / mv2pa
+    tp = p_data[0]
+
+    baseline_crit = (tp>1) & (tp < 2)
+    crit = (tp > 11) & (tp < 12)
+    pa_sub = np.average(pa[crit]) - np.average(pa[baseline_crit])
+    print(f'Average pressure (Pa): {pa_sub} +/- {np.std(pa[crit])}')
+
+    np.savetxt('viscosity_data.csv', np.stack((tp, pa), axis=-1), delimiter=',')
+
+    tcrit = tp < expected_length
+    y_cond, y_model, _, _ = analyze_streampot(tp[tcrit], pa[tcrit], baseline=baseline, baseline_pad=50.0)
+    #plt.plot(tp, pa)
+    plt.plot(tp[tcrit], y_cond)
+    plt.plot(tp[tcrit], y_model)
+    plt.show()
+    
+
+    return
+
     V, t, pressure_data, speed_data = await streampot.measure_streaming_potential(min_flow_rate=flow_rate,
                                                 max_flow_rate=flow_rate,
                                                 volume=flow_rate / 10,
@@ -755,7 +882,7 @@ async def main():
 async def sp_test():
 
     ser = HamiltonSerial(port='COM6', baudrate=38400)
-    sp = SyringePumpRamp(ser, '3', SyringeLValve(4, name='syringe_LValve'), 5000, False, name='syringe_pump')
+    sp = SyringePumpRamp(ser, '3', SyringeLValve(4, name='syringe_LValve'), 250, False, name='syringe_pump')
     sp.max_dispense_flow_rate = 10. / 60 * 1000.
     sp.max_aspirate_flow_rate = 10. / 60 * 1000.
 
@@ -771,6 +898,10 @@ async def sp_test():
         #print(sp.syringe_position)
         #await sp.run_until_idle(sp.move_absolute(0, sp.max_dispense_flow_rate))
         await sp.move_valve(3)
+        #await sp.move_valve(sp.valve.aspirate_position)
+        #await sp.run_until_idle(sp.home())
+        #for _ in range(10):
+        #    await sp.smart_dispense(250, sp.max_dispense_flow_rate)
     else:
         vol = 200
         #await sp.move_valve(sp.valve.dispense_position)
@@ -810,7 +941,7 @@ async def labjack():
 
 async def labjack_stream():
 
-    lj = PressureSensor(channel='AIN2')
+    lj = PressureSensorDifferential(channel='AIN1', negative_channel='AIN0', dac_channel='DAC0', dac_output=5)
     await asyncio.to_thread(lj.open)
     sample_rate = 500
     stream = asyncio.create_task(asyncio.to_thread(lj.stream, 1, sample_rate))
@@ -820,7 +951,7 @@ async def labjack_stream():
     print(actual_sample_rate)
     t = np.arange(int(data.shape[1])) / actual_sample_rate
 
-    plt.plot(t, data[0] - 0.4 / lj.gain)
+    plt.plot(t, data[0])
     plt.show()
 
     
