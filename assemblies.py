@@ -2,6 +2,7 @@ import json
 import asyncio
 import logging
 from copy import deepcopy
+from aiohttp import web
 from typing import List, Tuple, Dict, Coroutine
 
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
@@ -227,6 +228,23 @@ class AssemblyBase:
     @property
     def idle(self) -> bool:
         return all(dev.idle for dev in self.devices) # & (not len(self.running_tasks))
+    
+    def create_web_app(self) -> web.Application:
+        """Creates a web application for this specific assembly by creating a webpage per device
+
+        Returns:
+            web.Application: web application for this device
+        """
+
+        app = web.Application()
+        routes = web.RouteTableDef()
+
+        app.add_routes(routes)
+
+        for device in self.devices:
+            app.add_subapp(f'/{device.name}/', device.create_web_app())
+
+        return app
     
 class AssemblyBasewithGSIOC(AssemblyBase):
     """Assembly with support for GSIOC commands
