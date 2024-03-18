@@ -69,15 +69,55 @@ class ValveBase(ComponentBase):
         
         self._portmap: dict[int, int] = {}
 
-    def move(self, position) -> None:
+    def move(self, position: int) -> None:
+        """Move valve to position
+
+        Args:
+            position (int): desired position
+        """
+        if self.validate_move(position):
+            self.position = position
+            self.update_map()
+            self.clear_connections()
+            self.update_connections()
+    
+    def validate_move(self, position: int) -> bool:
+        """Validate a move to a desired position
+
+        Args:
+            position (int): desired position
+
+        Returns:
+            bool: True if valid, False if not
+        """
+
         if position not in range(0, self.n_positions + 1):
-            logging.error(f'Requested position {position} is not an integer between 0 (off) and {self.n_positions}')
-            return
+            logging.error(f'{self.name} Move validation error: requested position {position} is not an integer between 0 (off) and {self.n_positions}')
+            return False
         
-        self.position = position
-        self.update_map()
-        self.clear_connections()
-        self.update_connections()
+        return True
+    
+    def get_info(self) -> dict:
+        """Dictionary of valve status information
+
+        Returns:
+            dict: valve status information
+        """
+
+        return {
+                'name': self.name,
+                'valve_position': self.position,
+                'number_positions': self.n_positions,
+                'number_ports': self.n_ports
+        }
+    
+class SyringeValveBase(ValveBase):
+
+    def __init__(self, n_ports: int, n_positions: int, position: int = 1, ports: List[Port] = [], name: str = '') -> None:
+        super().__init__(n_ports, n_positions, position, ports, name)
+
+        self.aspirate_position: int | None = None
+        self.dispense_position: int | None = None
 
 class DistributionValve(ValveBase):
     """Distribution valve representation. "Position" corresponds to the port number of the outlet port.
@@ -135,17 +175,23 @@ class LoopFlowValve(ValveBase):
         else:
             self._portmap = {}
 
-class TValve(ValveBase):
-    """T Valve (each position connects two adjacent inlets / outlets)
+class SyringeLValve(SyringeValveBase):
+    """L Valve (each position connects two adjacent inlets / outlets) that sits atop syringe
+        pump. Port 0 is down (syringe), and ports are numbered clockwise from the syringe port.
+        Default aspiration and dispense positions are the first and last ports (reservoir inlet
+        on the left, outlet on the right)
 
     """
 
     def __init__(self, n_ports: int, position: int = 0, ports: List[Port] = [], name=None) -> None:
         super().__init__(n_ports, n_ports, position, ports, name)
 
-        hamilton_valve_codes = {4: 1}
+        hamilton_valve_codes = {3: 0, 4: 4}
         if n_ports in hamilton_valve_codes.keys():
             self.hamilton_valve_code = hamilton_valve_codes[n_ports]
+
+        self.aspirate_position = 1
+        self.dispense_position = n_ports
 
     def update_map(self):
         """Updates the port map.
@@ -155,11 +201,10 @@ class TValve(ValveBase):
             self._portmap[self.position - 1] = self.position % self.n_ports
             self._portmap[self.position % self.n_ports] = self.position - 1
 
-class SyringeYValve(TValve):
-    """Y valve to sit atop syringe pump. Port 0 is down, and ports are number clockwise.
-        Implementation is that of a 3-port T valve.
+class SyringeYValve(SyringeLValve):
+    """Syringe Pump Y valve, which is an implementation of a 3-port L valve.
     """
 
     def __init__(self, position: int = 0, ports: List[Port] = [], name=None) -> None:
         super().__init__(3, position, ports, name)
-        self.hamilton_valve_code = 0
+

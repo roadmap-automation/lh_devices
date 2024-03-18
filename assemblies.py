@@ -1,8 +1,14 @@
+import json
 import asyncio
 import logging
-from typing import List, Tuple, Dict
+import jinja2
+from uuid import uuid4
+from copy import deepcopy
+from aiohttp import web
+import aiohttp_jinja2
+from typing import List, Tuple, Dict, Coroutine
 
-from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType, GSIOCDeviceBase
+from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from connections import Port, Node, connect_nodes
 from components import ComponentBase
@@ -23,6 +29,11 @@ class Network:
         nodes = [node for device in self.devices for node in device.get_nodes()]
         self._port_to_node_map = {n.base_port: n for n in nodes}
         self.nodes = nodes
+
+    def add_device(self, device: HamiltonBase | ComponentBase) -> None:
+        """Adds a device to node network and updates it"""
+        self.devices.append(device)
+        self.update()
 
     def get_dead_volume(self, source_port: Port, destination_port: Port) -> float:
         """Gets dead volume in the fluid path from a source to destination port. Both
@@ -88,6 +99,15 @@ def merge_networks(network1: Network, node1: Node, network2: Network, node2: Nod
     unique_devices = set(network1.devices) | set(network2.devices)
     return Network(list(unique_devices))
 
+class Mode:
+    """Define assembly configuration. Contains a dictionary of valves of the current
+        assembly to move. Also defines final node for dead volume tracing"""
+    
+    def __init__(self, valves: Dict[HamiltonValvePositioner, int], final_node: Node | None = None) -> None:
+
+        self.valves = valves
+        self.final_node = final_node
+
 class AssemblyBase:
     """Assembly of Hamilton LH devices
     """
@@ -95,12 +115,16 @@ class AssemblyBase:
     def __init__(self, devices: List[HamiltonBase], name='') -> None:
         
         self.name = name
+        self.id = str(uuid4())
         self.devices = devices
         self.network = Network(self.devices)
-        self.batch_queue = asyncio.Queue()
-        self.modes = {}
+        self.modes: Dict[str, Mode] = {}
         self.current_mode = None
-    
+        self.running_tasks = set()
+
+        # Event that is triggered when all methods are completed
+        self.event_finished: asyncio.Event = asyncio.Event()
+
     async def initialize(self) -> None:
         """Initialize network of devices
         """
@@ -114,11 +138,11 @@ class AssemblyBase:
         """
 
         if mode in self.modes:
-            logging.info(f'{self}: Changing mode to {mode}')
-            await self.move_valves(self.modes[mode])
+            logging.info(f'{self.name}: Changing mode to {mode}')
+            await self.move_valves(self.modes[mode].valves)
             self.current_mode = mode
         else:
-            logging.error(f'Mode {mode} not in modes dictionary of {self}')
+            logging.error(f'Mode {mode} not in modes dictionary {self.modes}')
 
     async def move_valves(self, valve_config: Dict[HamiltonValvePositioner, int]) -> None:
         """Batch change valve conditions. Enables predefined valve modes.
@@ -130,65 +154,215 @@ class AssemblyBase:
 
         await asyncio.gather(*(dev.run_until_idle(dev.move_valve(pos)) for dev, pos in valve_config.items() if dev in self.devices))
 
-    def get_dead_volume(self) -> float:
-        """Gets dead volume of current configuration mode
+    def get_dead_volume(self, source_node: Node, mode: str | None = None) -> float:
+        """Gets dead volume of configuration mode given a source connection
+
+        Args:
+            source_node (Node): Node of source connection.
+            mode (str | None, optional): mode to interrogate. Defaults to None.
 
         Returns:
             float: dead volume in uL
         """
+        
+        # use current mode if mode is not given        
+        mode = self.current_mode if mode is None else mode
 
-        nodes: List[Node] = self.modes[self.current_mode]['dead_volume_nodes']
-        return self.network.get_dead_volume(nodes[0].base_port, nodes[1].base_port)
+        if mode in self.modes:
+
+            final_node = self.modes[mode].final_node
+
+            if (source_node is not None) & (final_node is not None):
+
+                valve_config: Dict[HamiltonValvePositioner, int] = self.modes[mode].valves
+
+                # this isn't optimal because it temporarily changes state
+                current_positions = []
+                for dev, pos in valve_config.items():
+                    if dev in self.devices:
+                        current_positions.append(dev.valve.position)
+                        dev.valve.move(pos)
+
+                self.network.update()
+
+                dead_volume = self.network.get_dead_volume(source_node.base_port, final_node.base_port)
+
+                for dev, pos in zip(valve_config.keys(), current_positions):
+                    if dev in self.devices:
+                        dev.valve.move(pos)
+
+                self.network.update()
+
+                return dead_volume
+
+            else:
+                logging.warning(f'{self.name}: source_node or final_node not defined. Returning 0')
+                return 0.0
+       
+        else:
+            logging.error(f'{self.name}: mode {mode} does not exist')
+
+    def method_complete_callback(self, result: asyncio.Future) -> None:
+        """Callback when method is complete
+
+        Args:
+            result (Any): calling method
+        """
+
+        self.running_tasks.discard(result)
+
+        # if this was the last method to finish, set event_finished
+        if len(self.running_tasks) == 0:
+            self.event_finished.set()
+
+    def run_method(self, method: Coroutine) -> None:
+        """Runs a coroutine method. Designed for complex operations with assembly hardware"""
+
+        # clear finished event because something is now running
+        self.event_finished.clear()
+
+        # create a task and add to set to avoid garbage collection
+        task = asyncio.create_task(method)
+        logging.debug(f'Running task {task} from method {method}')
+        self.running_tasks.add(task)
+
+        # register callback upon task completion
+        task.add_done_callback(self.method_complete_callback)
 
     @property
     def idle(self) -> bool:
-        return all(dev.idle for dev in self.devices)
+        return all(dev.idle for dev in self.devices) # & (not len(self.running_tasks))
     
-class AssemblyBasewithGSIOC(AssemblyBase, GSIOCDeviceBase):
-    """Assembly with GSIOC support
+    def create_web_app(self) -> web.Application:
+        """Creates a web application for this specific assembly by creating a webpage per device
+
+        Returns:
+            web.Application: web application for this device
+        """
+
+        app = web.Application()
+        aiohttp_jinja2.setup(app,
+            loader=jinja2.FileSystemLoader('templates'))
+        routes = web.RouteTableDef()
+
+        for device in self.devices:
+            app.add_subapp(f'/{device.id}/', device.create_web_app())
+
+        @routes.get('/')
+        @aiohttp_jinja2.template('assembly.html')
+        async def get_handler(request: web.Request) -> web.Response:
+            return {'id': self.id,
+                    'name': self.name,
+                    'devices': json.dumps({device.id: device.name for device in self.devices})}
+
+        app.add_routes(routes)
+
+        return app
+    
+class AssemblyBasewithGSIOC(AssemblyBase):
+    """Assembly with support for GSIOC commands
     """
 
-    def __init__(self, devices: List[HamiltonBase], gsioc: GSIOC, name='') -> None:
-        AssemblyBase.__init__(self, devices, name=name)
-        GSIOCDeviceBase.__init__(self, gsioc)
+    def __init__(self, devices: List[HamiltonBase], name='') -> None:
+        super().__init__(devices, name=name)
+
+        # enables triggering
+        self.waiting: asyncio.Event = asyncio.Event()
         self.trigger: asyncio.Event = asyncio.Event()
 
-    async def initialize(self) -> None:
-        """Initialize but start GSIOC handlers
+    async def initialize_gsioc(self, gsioc: GSIOC) -> None:
+        """Initialize GSIOC communications. Only use for top-level assemblies."""
+
+        await asyncio.gather(gsioc.listen(), self.monitor_gsioc(gsioc))
+
+    async def monitor_gsioc(self, gsioc: GSIOC) -> None:
+        """Monitor GSIOC communications. Note that only one device should be
+            listening to a GSIOC device at a time.
         """
-        await asyncio.gather(AssemblyBase.initialize(self), GSIOCDeviceBase.initialize(self))
+
+        while True:
+            data: GSIOCMessage = await gsioc.message_queue.get()
+
+            response = await self.handle_gsioc(data)
+            if data.messagetype == GSIOCCommandType.IMMEDIATE:
+                await gsioc.response_queue.put(response)
+
+    async def wait_for_trigger(self) -> None:
+        """Uses waiting and trigger events to signal that assembly is waiting for a trigger signal
+            and then release upon receiving the trigger signal"""
+        
+        self.waiting.set()
+        await self.trigger.wait()
+        self.waiting.clear()
+        self.trigger.clear()
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
-        """Handles GSIOC messages. Base version only handles idle requests
+        """Handles GSIOC messages. Put actions into gsioc_command_queue for async processing.
 
         Args:
             data (GSIOCMessage): GSIOC Message to be parsed / handled
 
         Returns:
-            str: response (only for GSIOC immediate commands)
+            str: response (only for GSIOC immediate commands, else None)
         """
+        
+        response = None
 
         if data.data == 'Q':
             # busy query
-            return 'idle' if self.idle else 'busy'
-        
+            if self.waiting.is_set():
+                response = 'waiting'
+            elif self.idle:
+                response = 'idle'
+            else:
+                response = 'busy'
+
         # get dead volume of current mode in uL
-        if data.data == 'D':
-            return f'{self.get_dead_volume():0.0f}'
-        
+        elif data.data == 'V':
+            response = f'{self.get_dead_volume():0.0f}'
+
         # set trigger
         elif data.data == 'T':
+            self.waiting.clear()
             self.trigger.set()
+            response = 'ok'
 
-        # requested mode change
+        # requested mode change (deprecated)
         elif data.data.startswith('mode: '):
             mode = data.data.split('mode: ', 1)[1]
-            self.gsioc_command_queue.put(asyncio.create_task(self.change_mode(mode)))
+            self.run_method(self.change_mode(mode))
+                
+        # received JSON data for running a method
+        elif data.data.startswith('{'):
+
+            # parse JSON
+            try:
+                dd: dict = json.loads(data.data)
+            except json.decoder.JSONDecodeError as e:
+                logging.error(f'{self.name}: JSON decoding error on string {data.data}: {e.msg}')
+                dd: dict = {}
+
+            if 'method' in dd.keys():
+                method_name, method_kwargs = dd['method'], dd['kwargs']
+                logging.debug(f'{self.name}: Method {method_name} requested')
+
+                # check that method exists
+                if hasattr(self, method_name):
+                    logging.info(f'{self.name}: Starting method {method_name} with kwargs {method_kwargs}')
+                    method = getattr(self, method_name)
+                    self.run_method(method(**method_kwargs))
+
+                else:
+                    logging.warning(f'{self.name}: unknown method name {method_name}')
+            
+            else:
+                response = 'error: unknown JSON data'
         
         else:
-            return 'error: unknown command'
-        
-        return None
+            response = 'error: unknown command'
+
+        return response
+
 
 class AssemblyTest(AssemblyBase):
 
