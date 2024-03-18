@@ -7,7 +7,7 @@
 
         var id = "{{id | safe}}";
         var name = "{{name | safe}}";
-        console.log(id)
+        //console.log(id)
 
         function issue_command(command, data) {
             console.log('sending', {'command': command,
@@ -19,7 +19,7 @@
         function update_controls(controls) {
             $('#controls').empty()
             for (const [cid, cdata] of Object.entries(controls)) {
-                console.log(cid, cdata)
+                //console.log(cid, cdata)
                 ctype = cdata['type']
                 var newctrl = null
                 if (ctype == 'button') {
@@ -54,7 +54,7 @@
                 .then(function (response) {
                     return response.json();
                 }).then(function (data) {
-                    console.log(data)
+                    //console.log(data)
                     $("#device_name").empty().append(data['name']);
                     $("#config").empty().append(JSON.stringify(data['config']));
                     $("#state").empty().append(JSON.stringify(data['state']));
