@@ -1,144 +1,76 @@
 <head>
     <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js" integrity="sha512-q/dWJ3kcmjBLU4Qc47E4A9kTB4m3wuTY7vkFJDTZKjTs8jhyGQnaUrxa0Ytd0ssMZhbNua9hE+E7Qv1j+DyZwA==" crossorigin="anonymous"></script>
     <script>
+
+        var socket = io();
 
         var id = "{{id | safe}}";
         var name = "{{name | safe}}";
         console.log(id)
 
-        methoddata = {}
-        wells = {}
-        var form_counter = 0
-        var sample_counter = 0
+        function issue_command(command, data) {
+            console.log('sending', {'command': command,
+                                    'data': data})
+            socket.emit(id, {'command': command,
+                             'data': data})
+        }
 
-        function add_form() {
-            //var key = $("#method_select").options[$("#method_select").selectedIndex]
-            var formtag = 'form' + form_counter.toString()
-            form_counter += 1
-            var key = $("#method_select :selected").text()
-            var method_name = $("#method_select :selected").attr('tag')
-            var newform = $('<div>').attr({
-                id: formtag,
-                tag: method_name
-            })
-            $('<hr>').appendTo(newform)
-            $('<label>').text(key).appendTo(newform)
-            $('<br>').text(key).appendTo(newform)
-            //console.log(key)
-            //console.log(methoddata)
-            for (const field of methoddata[method_name]['fields']) {
-                //console.log(field)
-                var lbl = $("<label>").text(field)
-                if (field.includes('Source') | field.includes('Target')) {
-                    newsel = $("<select>").attr({
-                        name: field,
-                        tag: formtag + '_element'
-                        }).appendTo(lbl)
-                    for (const well of Object.keys(wells)) {
-                        $("<option>").text(well).appendTo(newsel)
+        function update_controls(controls) {
+            $('#controls').empty()
+            for (const [cid, cdata] of Object.entries(controls)) {
+                console.log(cid, cdata)
+                ctype = cdata['type']
+                var newctrl = null
+                if (ctype == 'button') {
+                    var newctrl = $('<button>')
+                                    .attr("id", cid)
+                                    .text(cdata['text'])
+                                    .on('click', function () {
+                                        issue_command(cid, {})
+                                    })
+                }
+                else if (ctype=='select') {
+                    var newctrl = $('<div>')
+                                    .attr("id", cid)
+                                    .text(cdata['text']);
+                    var newselect = $('<select>')
+                                    .attr("id", cid + "_select")
+                    for (const option of cdata['options']) {
+                        $("<option>").text(option).appendTo(newselect)
                     }
+                    newselect.val(cdata['current'])
+                    newselect.on("change", function () {
+                        issue_command(cid, {'index': newselect.prop('selectedIndex')})
+                    })
+                    newctrl.append(newselect)
                 }
-                else {
-                    
-                    $("<input>").attr({
-                        name: field,
-                        tag: formtag + '_element',
-                        value: "0"
-                        }).appendTo(lbl)
-                }
-                $("<br>").appendTo(lbl)
-                lbl.appendTo(newform)
-                newform.appendTo($('#subforms'))
+                $("#controls").append(newctrl)
             }
         }
 
-        function clear_form() {
-            form_counter = 0
-            $("#subforms").empty()
-        }
-
-        function send_sample() {
-            var data = {}
-            data['id'] = sample_counter
-            sample_counter += 1
-            data['name'] = $('#sample_name').val()
-            data['description'] = $('#sample_description').val()
-
-            var methods = []
-            for (i = 0; i < form_counter; i++) {
-                var subdata = {}
-                var formtag = '#form' + i
-                var key = $(formtag).attr('tag')
-                subdata['method_name'] = key
-                subdata['sample_name'] = data['name']
-                subdata['sample_description'] = data['description']
-                $('*[tag=form' + i + '_element]').each(function() {
-                    if (this.value.includes('Well:')) {
-                        subdata[this.name] = wells[this.value]
-                    }
-                    else {
-                        subdata[this.name] = this.value
-                    }
-                })
-                methods.push(subdata)
-            }
-    
-            data['methods'] = methods
-            data['methods_complete'] = Array(methods.length).fill(false)
-            //console.log(data)
-            
-            fetch('/webform/AddSample', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json; charset=UTF-8'
-                },
-                body: JSON.stringify(data),
-                })
-                .then(function (response) {
-                    return response.json()            
-                })            
-        }
-
-        window.onload = function() {
+        function update() {
             fetch(window.location.href + 'state')
                 .then(function (response) {
                     return response.json();
                 }).then(function (data) {
                     console.log(data)
-                    $("#device_name").append(data['name']);
-                    $("#config").append(JSON.stringify(data['config']));
-                    $("#state").append(JSON.stringify(data['state']));
+                    $("#device_name").empty().append(data['name']);
+                    $("#config").empty().append(JSON.stringify(data['config']));
+                    $("#state").empty().append(JSON.stringify(data['state']));
+                    update_controls(data['controls'])
                 });
-            /*
-            fetch('/GUI/GetAllMethods/')
-                .then(function (response) {
-                    return response.json();
-                }).then(function (data) {
-                    for (const k of Object.keys(data['methods'])) {
-                        //console.log(data['methods'][k])
-                        $('<option>').text(data['methods'][k]['display_name']).attr({
-                            tag: k
-                        }).appendTo('#method_select')
-                    }
-                    methoddata = data['methods']
-                });
+            }
 
-            fetch('/GUI/GetLayout/')
-                .then(function(response) {
-                    return response.json();
-                }).then(function(data) {
-                    //console.log(data['layout'])
-                    for (const [rack_name, rack] of Object.entries(data['racks'])) {
-                        //console.log(rack)
-                        for (const well of rack['wells']) {
-                            well_id = 'Well: ' + well['rack_id'] + ' ' + well['well_number']
-                            wells[well_id] = well
-                        }
-                    }
-                })
-            //console.log(wells)
-            */
-        }
+        window.onload = function() {
+            update()
+            }
+
+        socket.on(id, function () {
+            console.log('Received update signal')
+            update()
+        })
+
     </script>
 </head>
 <body>

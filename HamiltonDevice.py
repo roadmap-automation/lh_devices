@@ -13,6 +13,7 @@ import jinja2
 from HamiltonComm import HamiltonSerial
 from valve import ValveBase, SyringeValveBase
 from connections import Node
+from webview import sio
 
 TEMPLATE_PATH = Path(__file__).parent / 'templates'
 
@@ -215,10 +216,25 @@ class HamiltonBase:
             state = await self.get_info()
             return web.Response(text=json.dumps(state), status=200)
 
+        @sio.on(self.id)
+        async def event_handler(event, data):
+            await self.event_handler(data['command'], data['data'])
+            await sio.emit(self.id)
+        
         app.add_routes(routes)
 
         return app
 
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        logging.info(f'{self.name} received {command} with data {data}')
+        
     async def get_handler(self, request: web.Request) -> web.Response:
         """Handles GET requests to index
 
@@ -261,8 +277,8 @@ class HamiltonBase:
                            'com_port': self.serial.port,
                            'address': self.address},
                 'state': {'initialized': init,
-                          'idle': self.idle}}
-                
+                          'idle': self.idle},
+                'controls': {}}
 
 class HamiltonValvePositioner(HamiltonBase):
     """Hamilton MVP4 device
@@ -411,7 +427,28 @@ class HamiltonValvePositioner(HamiltonBase):
         info = await super().get_info()
         add_state = {'valve': self.valve.get_info()}
         info['state'] = info['state'] | add_state
+        controls = {'move_valve': {'type': 'select',
+                                   'text': 'Move Valve',
+                                   'options': [str(i) for i in range(self.valve.n_positions + 1)],
+                                   'current': str(self.valve.position)}
+                   }
+        info['controls'] = info['controls'] | controls
         return info
+    
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        await super().event_handler(command, data)
+
+        if command == 'move_valve':
+            newposition = data['index']
+            await self.run_until_idle(self.move_valve(int(newposition)))
+
 
 class HamiltonSyringePump(HamiltonValvePositioner):
     """Hamilton syringe pump device. Includes both a syringe motor and a built-in valve positioner.
@@ -472,7 +509,24 @@ class HamiltonSyringePump(HamiltonValvePositioner):
                                 'position': await self.get_syringe_position()
         }}
         info['state']= info['state'] | add_state
+
+        controls = {'home_syringe': {'type': 'button',
+                                     'text': 'Home Syringe'}}
+        info['controls'] = info['controls'] | controls
         return info
+    
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        await super().event_handler(command, data)
+
+        if command == 'home_syringe':
+            await self.run_until_idle(self.home())
 
     async def get_syringe_status(self) -> str:
         """Gets full status string of device
