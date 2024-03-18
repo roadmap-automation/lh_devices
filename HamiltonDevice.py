@@ -1,10 +1,17 @@
-import copy
-from typing import Tuple, List
 import asyncio
 import logging
+import copy
+import json
+
+from typing import Tuple, List
+from pathlib import Path
+from aiohttp import web
+
 from HamiltonComm import HamiltonSerial
 from valve import ValveBase, SyringeValveBase
 from connections import Node
+
+TEMPLATE_PATH = Path(__file__).parent / 'templates'
 
 class PollTimer:
     """Async timer for polling delay
@@ -177,6 +184,76 @@ class HamiltonBase:
             self.idle = True
 
         return response.split(c, 1)[1], error
+    
+    def create_web_app(self) -> web.Application:
+        """Creates a web application for this specific device
+
+        Returns:
+            web.Application: web application for this device
+        """
+
+        app = web.Application()
+        routes = web.RouteTableDef()
+
+        @routes.get('/')
+        async def get_handler(request: web.Request) -> web.Response:
+            return await self.get_handler(request)
+
+        @routes.post('/post')
+        async def post_handler(request: web.Request) -> web.Response:
+            return await self.post_handler(request)
+
+        @routes.get('/state')
+        async def get_state(request: web.Request) -> web.Response:
+            state = await self.get_info()
+            return web.Response(text=json.dumps(state), status=200)
+
+        app.add_routes(routes)
+
+        return app
+
+    async def get_handler(self, request: web.Request) -> web.Response:
+        """Handles GET requests to index
+
+        Args:
+            request (web.Request): incoming GET request
+
+        Returns:
+            web.Response: response to request
+        """
+
+        data = await request.text()
+        print(data)
+        return web.Response(text=f'GET request to {self.name}: \n' + json.dumps(data), status=200)
+
+    async def post_handler(self, request: web.Request) -> web.Response:
+        """Handles POST requests to index
+
+        Args:
+            request (web.Request): incoming POST request
+
+        Returns:
+            web.Response: response to request
+        """
+
+        data = await request.text()
+        return web.Response(text=f'POST request to {self.name}: \n' + json.dumps(data), status=200)
+
+    async def get_info(self) -> dict:
+        """Gets object state as dictionary
+
+        Returns:
+            dict: object state
+        """
+
+        init = await self.is_initialized()
+
+        return {'config': {'name': self.name,
+                           'com_port': self.serial.port,
+                           'address': self.address},
+                'state': {'initialized': init,
+                          'idle': self.idle}}
+                
 
 class HamiltonValvePositioner(HamiltonBase):
     """Hamilton MVP4 device
@@ -316,6 +393,16 @@ class HamiltonValvePositioner(HamiltonBase):
             else:
                 logging.debug(f'{self}: Move successful to position {position}')
 
+    async def get_info(self) -> dict:
+        """Gets information about valve positioner
+
+        Returns:
+            dict: information dictionary
+        """
+        info = await super().get_info()
+        add_state = {'valve': self.valve.get_info()}
+        info['state'] = info['state'] | add_state
+        return info
 
 class HamiltonSyringePump(HamiltonValvePositioner):
     """Hamilton syringe pump device. Includes both a syringe motor and a built-in valve positioner.
@@ -337,9 +424,6 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         # default high resolution mode is False
         self._high_resolution = high_resolution
 
-        # syringe position
-        self.syringe_position: int = 0.0
-
         # min and max V
         self.minV, self.maxV = 2, 10000
 
@@ -351,7 +435,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
     async def initialize(self) -> None:
         await super().initialize()
         await self.run_until_idle(self.set_high_resolution(self._high_resolution))
-        await self.run_until_idle(self.get_syringe_position())
+        #await self.run_until_idle(self.get_syringe_position())
 
     async def is_initialized(self) -> bool:
         """Query device to get initialization state
@@ -365,6 +449,21 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         valve_initialized = await super().is_initialized()
 
         return (valve_initialized & syringe_initialized)
+
+    async def get_info(self) -> dict:
+        """Gets information about valve positioner
+
+        Returns:
+            dict: information dictionary
+        """
+        info = await super().get_info()
+        add_state = {'syringe': {
+                                'status_string': await self.get_syringe_status(),
+                                'high_resolution': self._high_resolution,
+                                'position': await self.get_syringe_position()
+        }}
+        info['state']= info['state'] | add_state
+        return info
 
     async def get_syringe_status(self) -> str:
         """Gets full status string of device
@@ -470,7 +569,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         response, error = await self.query('?')
         
-        self.syringe_position = int(response)
+        return int(response)
 
     async def aspirate(self, volume: float, flow_rate: float) -> None:
         """Aspirate (Pick-up)
@@ -480,13 +579,13 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             flow_rate (float): flow rate in uL / s
         """
 
-        await self.get_syringe_position()
+        syringe_position = await self.get_syringe_position()
         stroke_length = self._stroke_length(volume)
         max_position = self._full_stroke() / 2
         logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
 
-        if max_position < (stroke_length + self.syringe_position):
-            logging.error(f'{self}: Invalid syringe move from current position {self.syringe_position} with stroke length {stroke_length} and maximum position {max_position}')
+        if max_position < (stroke_length + syringe_position):
+            logging.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and maximum position {max_position}')
             
             # TODO: this is a hack to clear the response queue...need to fix this
             #await self.update_status()
@@ -506,12 +605,12 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             flow_rate (float): flow rate in uL / s
         """
 
-        await self.get_syringe_position()
+        syringe_position = await self.get_syringe_position()
         stroke_length = self._stroke_length(volume)
         logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
 
-        if (self.syringe_position - stroke_length) < 0:
-            logging.error(f'{self}: Invalid syringe move from current position {self.syringe_position} with stroke length {stroke_length} and minimum position 0')
+        if (syringe_position - stroke_length) < 0:
+            logging.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and minimum position 0')
             #await self.update_status()
         else:
             V = self._speed_code(flow_rate)
@@ -551,8 +650,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         full_stroke = self._full_stroke() // 2
 
         # update current syringe position (usually zero)
-        await self.get_syringe_position()
-        current_position = copy.copy(self.syringe_position)
+        syringe_position = await self.get_syringe_position()
+        current_position = copy.copy(syringe_position)
         logging.debug(f'{self.name}: smart dispense, syringe at {current_position}')
 
         # calculate number of aspirate/dispense operations and volume per operation
