@@ -1,5 +1,5 @@
 from typing import Any, Coroutine, List
-import aiohttp
+from aiohttp import ClientSession, web, ClientConnectionError
 import asyncio
 import logging
 from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial
@@ -8,6 +8,7 @@ from components import InjectionPort, FlowCell, Node
 from gsioc import GSIOC, GSIOCMessage
 from assemblies import AssemblyBasewithGSIOC, Network, connect_nodes, Mode
 from liquid_handler import SimLiquidHandler
+from webview import run_socket_app
 
 class Timer:
     """Basic timer. Essentially serves as a sleep but only allows one instance to run."""
@@ -36,9 +37,9 @@ class Timer:
 class QCMDRecorder(Timer):
     """QCMD-specific timer. At end of timing interval, sends HTTP request to QCMD to record tag."""
 
-    def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, name='QCMDRecorder') -> None:
+    def __init__(self, http_address: str = 'http://localhost:5011', name='QCMDRecorder') -> None:
         super().__init__(name)
-        self.session = aiohttp.ClientSession(f'http://{qcmd_address}:{qcmd_port}')
+        self.session = ClientSession(http_address)
 
     async def record(self, tag_name: str = '', record_time: float = 0.0, sleep_time: float = 0.0) -> None:
         """Executes timer and sends record command to QCMD. Call by sending
@@ -65,7 +66,7 @@ class QCMDRecorder(Timer):
                 async with self.session.post('/QCMD/', json=post_data, timeout=10) as resp:
                     response_json = await resp.json()
                     logging.info(f'{self.session._base_url}/QCMD/ <= {response_json}')
-            except (ConnectionRefusedError, aiohttp.ClientConnectorError):
+            except (ConnectionRefusedError, ClientConnectorError):
                 logging.error(f'request to {self.session._base_url}/QCMD/ failed: connection refused')
 
 class QCMDRecorderDevice(AssemblyBasewithGSIOC):
@@ -73,7 +74,7 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
 
     def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, name='QCMDRecorderDevice') -> None:
         super().__init__([], name)
-        self.recorder = QCMDRecorder(qcmd_address, qcmd_port, f'{self.name}.QCMDRecorder')
+        self.recorder = QCMDRecorder(f'http://{qcmd_address}:{qcmd_port}', f'{self.name}.QCMDRecorder')
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
         """Handles GSIOC message but deals with Q more robustly than the base method"""
@@ -95,6 +96,13 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
 
         # wait the full time
         await self.recorder.record(tag_name, record_time, sleep_time)
+
+class QCMDMultiChannelRecorderDevice(QCMDRecorderDevice):
+    """QCMD recording device simultaneously recording on multiple QCMD instruments"""
+
+    def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, n_channels: int = 1, name='QCMDRecorderDevice') -> None:
+        super().__init__(qcmd_address, qcmd_port, name)
+        
 
 class QCMDLoop(AssemblyBasewithGSIOC):
 
@@ -120,7 +128,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         super().__init__([loop_valve, syringe_pump], name=name)
 
         # Measurement device
-        self.recorder = QCMDRecorder(qcmd_address, qcmd_port, f'{self.name}.QCMDRecorder')
+        self.recorder = QCMDRecorder(http_address=f'http://{qcmd_address}:{qcmd_port}', name=f'{self.name}.QCMDRecorder')
 
         # Define node connections for dead volume estimations
         self.network = Network(self.devices + [self.flow_cell, self.sample_loop])
@@ -530,7 +538,7 @@ async def qcmd_loop():
 
 async def qcmd_distribution():
     gsioc = GSIOC(62, 'COM13', 19200)
-    ser = HamiltonSerial(port='COM6', baudrate=38400)
+    ser = HamiltonSerial(port='COM7', baudrate=38400)
     #ser = HamiltonSerial(port='COM3', baudrate=38400)
     dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='distribution_valve_positioner')
     mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
@@ -541,7 +549,7 @@ async def qcmd_distribution():
     fc = FlowCell(139, 'flow_cell')
     sampleloop = FlowCell(5060., 'sample_loop')
 
-    qcmd_channel = QCMDLoop(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], name='QCMD Channel')
+    qcmd_channel = QCMDLoop(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], name='qcmd_channel')
 
     # connect LH injection port to distribution port valve 0
     connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 124 + 20)
@@ -565,6 +573,8 @@ async def qcmd_distribution():
     connect_nodes(mvp.valve.nodes[5], fc.outlet_node, 0.0)
 
     qcmd_system = QCMDSystem(dvp, qcmd_channel, ip, name='QCMD System')
+    app = qcmd_system.create_web_app()
+    runner = await run_socket_app(app, 'localhost', 5003)
 
     #lh = SimLiquidHandler(qcmd_channel)
 
@@ -573,7 +583,7 @@ async def qcmd_distribution():
         await qcmd_system.initialize()
         await asyncio.sleep(2)
         await qcmd_channel.change_mode('PumpPrimeLoop')
-        await qcmd_channel.primeloop(2)
+        #await qcmd_channel.primeloop(2)
         #await qcmd_system.change_mode('LoopInject')
         #await qcmd_channel.change_mode('LoadLoop')
         #await asyncio.sleep(2)
@@ -592,7 +602,8 @@ async def qcmd_distribution():
         await gsioc_task
     finally:
         logging.info('Cleaning up...')
-        await qcmd_channel.recorder.session.close()
+        asyncio.gather(qcmd_channel.recorder.session.close(),
+                       runner.cleanup())
 
 async def main():
     gsioc = GSIOC(62, 'COM13', 19200)

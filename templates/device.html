@@ -1,0 +1,86 @@
+<head>
+    <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js" integrity="sha512-q/dWJ3kcmjBLU4Qc47E4A9kTB4m3wuTY7vkFJDTZKjTs8jhyGQnaUrxa0Ytd0ssMZhbNua9hE+E7Qv1j+DyZwA==" crossorigin="anonymous"></script>
+    <script>
+
+        var socket = io();
+
+        var id = "{{id | safe}}";
+        var name = "{{name | safe}}";
+        //console.log(id)
+
+        function issue_command(command, data) {
+            console.log('sending', {'command': command,
+                                    'data': data})
+            socket.emit(id, {'command': command,
+                             'data': data})
+        }
+
+        function update_controls(controls) {
+            $('#controls').empty()
+            for (const [cid, cdata] of Object.entries(controls)) {
+                //console.log(cid, cdata)
+                ctype = cdata['type']
+                var newctrl = null
+                if (ctype == 'button') {
+                    var newctrl = $('<button>')
+                                    .attr("id", cid)
+                                    .text(cdata['text'])
+                                    .on('click', function () {
+                                        issue_command(cid, {})
+                                    })
+                }
+                else if (ctype=='select') {
+                    var newctrl = $('<div>')
+                                    .attr("id", cid)
+                                    .text(cdata['text']);
+                    var newselect = $('<select>')
+                                    .attr("id", cid + "_select")
+                    for (const option of cdata['options']) {
+                        $("<option>").text(option).appendTo(newselect)
+                    }
+                    newselect.val(cdata['current'])
+                    newselect.on("change", function () {
+                        issue_command(cid, {'index': newselect.prop('selectedIndex')})
+                    })
+                    newctrl.append(newselect)
+                }
+                $("#controls").append(newctrl)
+            }
+        }
+
+        function update() {
+            fetch(window.location.href + 'state')
+                .then(function (response) {
+                    return response.json();
+                }).then(function (data) {
+                    //console.log(data)
+                    $("#device_name").empty().append(data['name']);
+                    $("#config").empty().append(JSON.stringify(data['config']));
+                    $("#state").empty().append(JSON.stringify(data['state']));
+                    update_controls(data['controls'])
+                });
+            }
+
+        window.onload = function() {
+            update()
+            }
+
+        socket.on(id, function () {
+            console.log('Received update signal')
+            update()
+        })
+
+    </script>
+</head>
+<body>
+    <div id="device_name">
+    </div>
+    <div id="config">
+    </div>
+    <div id="state">
+    </div>
+    <div id="controls">
+
+    </div>
+</body>
