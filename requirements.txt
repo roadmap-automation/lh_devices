@@ -1,3 +1,6 @@
 aiohttp
 aioserial
 aioconsole
+numpy
+scipy
+labjack-ljm
