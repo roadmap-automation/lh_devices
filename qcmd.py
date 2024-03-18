@@ -36,9 +36,9 @@ class Timer:
 class QCMDRecorder(Timer):
     """QCMD-specific timer. At end of timing interval, sends HTTP request to QCMD to record tag."""
 
-    def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, name='QCMDRecorder') -> None:
+    def __init__(self, http_address: str = 'http://localhost:5011', name='QCMDRecorder') -> None:
         super().__init__(name)
-        self.session = aiohttp.ClientSession(f'http://{qcmd_address}:{qcmd_port}')
+        self.session = aiohttp.ClientSession(http_address)
 
     async def record(self, tag_name: str = '', record_time: float = 0.0, sleep_time: float = 0.0) -> None:
         """Executes timer and sends record command to QCMD. Call by sending
@@ -73,7 +73,7 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
 
     def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, name='QCMDRecorderDevice') -> None:
         super().__init__([], name)
-        self.recorder = QCMDRecorder(qcmd_address, qcmd_port, f'{self.name}.QCMDRecorder')
+        self.recorder = QCMDRecorder(f'http://{qcmd_address}:{qcmd_port}', f'{self.name}.QCMDRecorder')
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
         """Handles GSIOC message but deals with Q more robustly than the base method"""
@@ -95,6 +95,13 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
 
         # wait the full time
         await self.recorder.record(tag_name, record_time, sleep_time)
+
+class QCMDMultiChannelRecorderDevice(QCMDRecorderDevice):
+    """QCMD recording device simultaneously recording on multiple QCMD instruments"""
+
+    def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, n_channels: int = 1, name='QCMDRecorderDevice') -> None:
+        super().__init__(qcmd_address, qcmd_port, name)
+        
 
 class QCMDLoop(AssemblyBasewithGSIOC):
 
