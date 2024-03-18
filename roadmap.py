@@ -1,9 +1,10 @@
 import logging
+from typing import List
 
-from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
+from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from gsioc import GSIOC
 from components import InjectionPort, FlowCell
-from assemblies import AssemblyBase, Network
+from assemblies import AssemblyBase, AssemblyBasewithGSIOC, Network
 from connections import connect_nodes
 
 class LoopInjectAssembly(AssemblyBase):
@@ -49,13 +50,33 @@ class LoopInjectAssembly(AssemblyBase):
                         'dead_volume_nodes': [injection_port.nodes[0], loop_valve.valve.nodes[3]]}
                     }
 
+class MultiChannelAssembly(AssemblyBasewithGSIOC):
+
+    def __init__(self, channels: List[LoopInjectAssembly], distribution_valve: HamiltonValvePositioner, injection_port: InjectionPort, name='') -> None:
+        super().__init__([dev for ch in channels for dev in ch.devices], name)
+
+    """TODO:
+        1. Make ROADMAP channels akin to QCMD channels
+            a. Should know about distribution valve all the way up to injection port (define all
+                of these and their connections before connecting them into channels)
+            b. Mode definitions should include distribution valve positions, probably
+            c. ROADMAP channels should also have a change_direction method that switches the injection
+            direction. This can be done once at the beginning of inject methods.
+        2. Collect ROADMAP channels into MultiChannel Assembly
+            a. handle_gsioc should pass channel-specific commands to those channels and route responses back
+            b. implement distribution valve lock so only one channel can use it at a time (or is this
+                a channel-level function?)
+
+        """
+
+
 if __name__=='__main__':
 
     import asyncio
     from HamiltonComm import HamiltonSerial
     from valve import LoopFlowValve, SyringeYValve
 
-    logging.basicConfig(format='%(asctime)s.%(msecs)03d %(message)s',
+    logging.basicConfig(format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S',
                     level=logging.DEBUG)
 

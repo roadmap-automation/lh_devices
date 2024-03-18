@@ -39,6 +39,7 @@ class FlowCell(ComponentBase):
         self.ports = [self.inlet_port, self.outlet_port]
         
         self._generate_nodes()
+        self.inlet_node, self.outlet_node = self.get_nodes()
         self._volume = 0.0
         self.set_volume(volume)
 
@@ -69,6 +70,6 @@ class InjectionPort(ComponentBase):
     def __init__(self, name: str = '') -> None:
         super().__init__(name)
 
-        self.inlet_port = Port(name=f'{self.name}.inlet_port')
-        self.ports = [self.inlet_port]
+        self.injection_port = Port(name=f'{self.name}.injection_port')
+        self.ports = [self.injection_port]
         self._generate_nodes()

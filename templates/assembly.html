@@ -1,0 +1,30 @@
+<head>
+    <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
+    <script>
+
+        var id = "{{id | safe}}";
+        var name = "{{name | safe}}";
+        var devices = JSON.parse('{{devices | safe}}');
+        console.log(id)
+
+        window.onload = function() {
+            $("#assembly_name").append(name + "<br>");
+            $("#assembly_name").append(id);
+            for (const [device_id, device_name] of Object.entries(devices)) {
+                console.log(device_id, device_name)
+                var newref = new $("<a>")
+                    .attr("href", device_id + "/")
+                    .text(device_name);
+                $("#devices").append(newref)
+                $("#devices").append("<br>")
+            }
+        }
+
+    </script>
+</head>
+<body>
+    <div id="assembly_name">
+    </div>
+    <div id="devices">
+    </div>
+</body>

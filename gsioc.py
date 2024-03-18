@@ -1,4 +1,5 @@
-from typing import Dict
+import json
+from typing import Dict, Tuple
 import logging
 from enum import Enum
 from dataclasses import dataclass
@@ -62,13 +63,8 @@ class GSIOC(aioserial.AioSerial):
         self.message_queue: asyncio.Queue = asyncio.Queue(1)
         self.response_queue: asyncio.Queue = asyncio.Queue(1)
 
-        #signal.signal(signal.SIGINT, self.signal_handler)
-
-    def signal_handler(self, signal, frame):
-        """
-        Handles stop signals for a clean exit
-        """
-        self.interrupt = True
+    # TODO: register listeners so can only have one listener (or at
+    #   least only one responder) per GSIOC device.
 
     async def listen(self) -> None:
         """
@@ -92,7 +88,7 @@ class GSIOC(aioserial.AioSerial):
 
                 if cmd:
 
-                    logging.info(f'{self.port} (GSIOC) <= {cmd}')
+                    logging.debug(f'{self.port} (GSIOC) <= {cmd}')
 
                     # process ID request immediately
                     if cmd == '%':
@@ -113,6 +109,8 @@ class GSIOC(aioserial.AioSerial):
             logging.debug('Connection reset...')
 
         # close serial port before exiting when interrupt is received
+        logging.info('Sending break and closing GSIOC connection...')
+        await self.write1(chr(10))
         self.close()
 
     async def wait_for_connection(self):
@@ -125,8 +123,8 @@ class GSIOC(aioserial.AioSerial):
 
         # if address matches, echo the address
         if comm == self.address + 128:
-            logging.debug(f'address matches, writing {chr(self.address + 128).encode()}')
             await self.write1(chr(self.address + 128))
+            logging.debug(f'address matches, writing {chr(self.address + 128).encode()}')
             self.connected = True
         
         # if result is byte 255, send a break character
@@ -163,6 +161,10 @@ class GSIOC(aioserial.AioSerial):
 
                 return msg
             
+            # address repeated (lagging communications); resend my own address and wait again
+            elif comm == self.address + 128:
+                await self.write1(chr(self.address + 128))
+
             # immediate command...read a single character
             else:
                 return chr(comm)
@@ -205,7 +207,18 @@ class GSIOC(aioserial.AioSerial):
         """
         ret = await self.read1()
         if ret != 6:
-            logging.warning(f'Warning: wrong acknowledgement character received: {ret}')
+            logging.warning(f'Warning: wrong acknowledgement character received: {ret}; attempting to repair comms')
+            #await self.repair_comms()
+
+    async def repair_comms(self):
+        """
+        Attempts to repair comms
+        """
+
+        # TODO: try sending break signal, close and re-open serial port, etc.
+
+        self.reset_input_buffer()
+        await asyncio.sleep(0)
 
     async def write1(self, char: str):
         """
@@ -224,96 +237,7 @@ class GSIOC(aioserial.AioSerial):
         # last character gets sent with high bit (add ASCII 128)
         await self.write1(chr(ord(msg[-1]) + 128))
 
-        logging.info(f'{self.port} (GSIOC) => {msg}')
-
-class GSIOCDeviceBase:
-
-    def __init__(self, gsioc: GSIOC) -> None:
-        self.gsioc = gsioc
-        self.gsioc_command_queue: asyncio.Queue = asyncio.Queue()
-
-    async def initialize(self) -> None:
-        """Starts async processes"""
-
-        await asyncio.gather(self.gsioc.listen(), self.monitor_gsioc(), self.gsioc_actions())
-
-    async def monitor_gsioc(self) -> None:
-        """Monitor GSIOC queue
-        """
-
-        while True:
-            data: GSIOCMessage = await self.gsioc.message_queue.get()
-
-            response = await self.handle_gsioc(data)
-            if data.messagetype == GSIOCCommandType.IMMEDIATE:
-                await self.gsioc.response_queue.put(response)
-
-    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
-        """Handles GSIOC messages. Put actions into gsioc_command_queue for async processing.
-
-        Args:
-            data (GSIOCMessage): GSIOC Message to be parsed / handled
-
-        Returns:
-            str: response (only for GSIOC immediate commands)
-        """
-        
-        return None
-
-    async def gsioc_actions(self) -> None:
-        """Monitors GSIOC command queue and performs actions asynchronously
-        """
-
-        while True:
-            task: asyncio.Future = self.gsioc_command_queue.get()
-            await task
-
-class GSIOCTimer(GSIOCDeviceBase):
-    """Basic GSIOC Timer. When timer command is received, starts a timer for specified time,
-        during which idle queries will return a busy signal. Designed for use with Gilson LH,
-        which can pause until timer is no longer idle."""
-
-    def __init__(self, gsioc: GSIOC, name='GSIOCTimer') -> None:
-        super().__init__(gsioc)
-        self.idle = True
-        self.name = name
-
-    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
-        """Handles GSIOC messages.
-        Args:
-            data (GSIOCMessage): GSIOC Message to be parsed / handled
-
-        Returns:
-            str: response (only for GSIOC immediate commands)
-        """
-
-        if data.data == 'Q':
-            # busy query
-            return 'idle' if self.idle else 'busy'
-        
-        elif data.data.startswith('timer: '):
-            timer_time = float(data.data.split('timer: ', 1)[1])
-            await self.gsioc_command_queue.put(asyncio.create_task(self.timer(timer_time)))
-        
-        else:
-            return 'error: unknown command'
-        
-        return None
-
-    async def timer(self, wait_time: float) -> None:
-        """Executes timer
-
-        Args:
-            wait_time (float): Time to wait in seconds
-        """
-
-        # don't start another timer if one is already running
-        if self.idle:
-            self.idle = False
-            await asyncio.sleep(wait_time)
-            self.idle = True
-        else:
-            logging.warning(f'{self.name}: Timer is already running...')
+        logging.debug(f'{self.port} (GSIOC) => {msg}')
 
 async def main():
 
@@ -326,8 +250,8 @@ async def main():
 #    signal.signal(signal.SIGINT, signal_handler)
 
     gsioc = GSIOC(gsioc_address, port=virtual_port, baudrate=baud_rate, parity=aioserial.PARITY_EVEN)
-    gtd = GSIOCTimer(gsioc)
-    await gtd.initialize()
+    #gtd = GSIOCTimer(gsioc)
+    #await gtd.initialize()
     #await asyncio.gather(gsioc.listen(), gtd.monitor_gsioc(), gtd.gsioc_actions())
 
 
