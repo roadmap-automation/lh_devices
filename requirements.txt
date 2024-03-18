@@ -1,6 +1,8 @@
 aiohttp
+aiohttp-jinja2
 aioserial
 aioconsole
+python-socketio
 numpy
 scipy
 labjack-ljm
