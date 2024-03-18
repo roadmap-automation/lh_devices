@@ -1,8 +1,11 @@
 import json
 import asyncio
 import logging
+import jinja2
+from uuid import uuid4
 from copy import deepcopy
 from aiohttp import web
+import aiohttp_jinja2
 from typing import List, Tuple, Dict, Coroutine
 
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
@@ -112,6 +115,7 @@ class AssemblyBase:
     def __init__(self, devices: List[HamiltonBase], name='') -> None:
         
         self.name = name
+        self.id = str(uuid4())
         self.devices = devices
         self.network = Network(self.devices)
         self.modes: Dict[str, Mode] = {}
@@ -237,12 +241,21 @@ class AssemblyBase:
         """
 
         app = web.Application()
+        aiohttp_jinja2.setup(app,
+            loader=jinja2.FileSystemLoader('templates'))
         routes = web.RouteTableDef()
 
-        app.add_routes(routes)
-
         for device in self.devices:
-            app.add_subapp(f'/{device.name}/', device.create_web_app())
+            app.add_subapp(f'/{device.id}/', device.create_web_app())
+
+        @routes.get('/')
+        @aiohttp_jinja2.template('assembly.html')
+        async def get_handler(request: web.Request) -> web.Response:
+            return {'id': self.id,
+                    'name': self.name,
+                    'devices': json.dumps({device.id: device.name for device in self.devices})}
+
+        app.add_routes(routes)
 
         return app
     
