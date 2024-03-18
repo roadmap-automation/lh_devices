@@ -155,7 +155,10 @@ class HamiltonBase:
 
         self.idle = False
         await cmd
+        # TODO: Figure out whether this is the best updating strategy
+        await self.trigger_update()
         await self.poll_until_idle()
+        await self.trigger_update()
 
     async def update_status(self) -> None:
         """
@@ -207,10 +210,6 @@ class HamiltonBase:
         async def get_handler(request: web.Request) -> web.Response:
             return await self.get_info()
 
-        @routes.post('/post')
-        async def post_handler(request: web.Request) -> web.Response:
-            return await self.post_handler(request)
-
         @routes.get('/state')
         async def get_state(request: web.Request) -> web.Response:
             state = await self.get_info()
@@ -218,12 +217,17 @@ class HamiltonBase:
 
         @sio.on(self.id)
         async def event_handler(event, data):
+            # starts handling the event
             await self.event_handler(data['command'], data['data'])
-            await sio.emit(self.id)
         
         app.add_routes(routes)
 
         return app
+
+    async def trigger_update(self):
+        """Emits a socketio event with id"""
+
+        await sio.emit(self.id)
 
     async def event_handler(self, command: str, data: dict) -> None:
         """Handles events from web interface
