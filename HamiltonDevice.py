@@ -4,8 +4,11 @@ import copy
 import json
 
 from typing import Tuple, List
+from uuid import uuid4
 from pathlib import Path
 from aiohttp import web
+import aiohttp_jinja2
+import jinja2
 
 from HamiltonComm import HamiltonSerial
 from valve import ValveBase, SyringeValveBase
@@ -70,6 +73,7 @@ class HamiltonBase:
     def __init__(self, serial_instance: HamiltonSerial, address: str, name=None) -> None:
         
         self.serial = serial_instance
+        self.id = str(uuid4())
         self.name = name
         self.idle = True
         self.busy_code = '@'
@@ -193,11 +197,14 @@ class HamiltonBase:
         """
 
         app = web.Application()
+        aiohttp_jinja2.setup(app,
+            loader=jinja2.FileSystemLoader('templates'))
         routes = web.RouteTableDef()
 
         @routes.get('/')
+        @aiohttp_jinja2.template('device.html')
         async def get_handler(request: web.Request) -> web.Response:
-            return await self.get_handler(request)
+            return await self.get_info()
 
         @routes.post('/post')
         async def post_handler(request: web.Request) -> web.Response:
@@ -248,7 +255,9 @@ class HamiltonBase:
 
         init = await self.is_initialized()
 
-        return {'config': {'name': self.name,
+        return {'name': self.name,
+                'id': self.id,
+                'config': {
                            'com_port': self.serial.port,
                            'address': self.address},
                 'state': {'initialized': init,
