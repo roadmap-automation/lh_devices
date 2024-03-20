@@ -12,6 +12,7 @@ from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from connections import Port, Node, connect_nodes
 from components import ComponentBase
+from webview import sio
 
 class Network:
     """Representation of a node network
@@ -265,14 +266,48 @@ class AssemblyBase:
         @routes.get('/')
         @aiohttp_jinja2.template('assembly.html')
         async def get_handler(request: web.Request) -> web.Response:
-            return {'id': self.id,
-                    'name': self.name,
-                    'devices': json.dumps({device.id: device.name for device in self.devices})}
+            return self.get_info()
+
+        @routes.get('/state')
+        async def get_state(request: web.Request) -> web.Response:
+            state = await self.get_info()
+            return web.Response(text=json.dumps(state), status=200)
+
+        @sio.on(self.id)
+        async def event_handler(event, data):
+            # starts handling the event
+            await self.event_handler(data['command'], data['data'])
 
         app.add_routes(routes)
 
         return app
     
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        logging.info(f'{self.name} received {command} with data {data}')
+        if command == 'change_mode':
+            newmode = data['mode']
+            await self.change_mode(newmode)
+
+    async def get_info(self) -> dict:
+        """Gets object state as dictionary
+
+        Returns:
+            dict: object state
+        """
+
+        return {'id': self.id,
+                    'name': self.name,
+                    'devices': json.dumps({device.id: device.name for device in self.devices}),
+                    'modes': json.dumps([mode for mode in self.modes]),
+                    'current_mode': self.current_mode}
+
 class AssemblyBasewithGSIOC(AssemblyBase):
     """Assembly with support for GSIOC commands
     """
