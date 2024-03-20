@@ -1,10 +1,11 @@
+import json
 import logging
 from typing import Coroutine, List, Dict
 from dataclasses import dataclass
 
 from assemblies import Mode
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
-from gsioc import GSIOC
+from gsioc import GSIOC, GSIOCMessage
 from components import InjectionPort, FlowCell
 from assemblies import AssemblyBase, AssemblyBasewithGSIOC, Network
 from connections import connect_nodes, Node
@@ -16,6 +17,7 @@ class RoadmapChannelBase(AssemblyBasewithGSIOC):
                        syringe_pump: HamiltonSyringePump,
                        flow_cell: FlowCell,
                        sample_loop: FlowCell,
+                       gsioc: GSIOC | None = None,
                        injection_node: Node | None = None,
                        name: str = '') -> None:
         
@@ -25,6 +27,7 @@ class RoadmapChannelBase(AssemblyBasewithGSIOC):
         self.flow_cell = flow_cell
         self.sample_loop = sample_loop
         self.injection_node = injection_node
+        self.gsioc = gsioc
         super().__init__([loop_valve, syringe_pump], name=name)
         self.methods: Dict[str, MethodBase] = {}
 
@@ -99,28 +102,40 @@ class LoadLoop(MethodBase):
         pump_volume = float(method.pump_volume)
         excess_volume = float(method.excess_volume)
 
+        # Connect to GSIOC communications
+        gsioc_task = asyncio.create_task(self.channel.initialize_gsioc(self.channel.gsioc))
+
+        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
+        # method to make sure this updates in time)
+        dead_volume = self.channel.get_dead_volume(self.channel.injection_node, self.dead_volume_mode)
+
+        # blocks if there's already something in the dead volume queue
+        await self.channel.dead_volume.put(dead_volume)
+        logging.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
+
         # Wait for trigger to switch to LoadLoop mode
-        logging.info(f'{method.name}: Waiting for first trigger')
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.channel.wait_for_trigger()
-        logging.info(f'{method.name}: Switching to LoadLoop mode')
+        logging.info(f'{self.channel.name}.{method.name}: Switching to LoadLoop mode')
         await self.channel.change_mode('LoadLoop')
 
         # Wait for trigger to switch to PumpAspirate mode
-        logging.info(f'{method.name}: Waiting for second trigger')
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
         await self.channel.wait_for_trigger()
 
-        # At this point, liquid handler is done
+        # At this point, liquid handler is done, release communications
+        gsioc_task.cancel()
         #self.release_liquid_handler.set()
 
-        logging.info(f'{method.name}: Switching to PumpPrimeLoop mode')
+        logging.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
         await self.channel.change_mode('PumpPrimeLoop')
 
         # smart dispense the volume required to move plug quickly through loop
-        logging.info(f'{method.name}: Moving plug through loop, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume + excess_volume)} uL')
+        logging.info(f'{self.channel.name}.{method.name}: Moving plug through loop, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume + excess_volume)} uL')
         await self.channel.syringe_pump.smart_dispense(self.channel.sample_loop.get_volume() - (pump_volume + excess_volume), self.channel.syringe_pump.max_dispense_flow_rate)
 
         # switch to standby mode
-        logging.info(f'{method.name}: Switching to Standby mode')            
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
         await self.channel.change_mode('Standby')
 
 class InjectLoop(MethodBase):
@@ -148,7 +163,7 @@ class InjectLoop(MethodBase):
 
         # change to inject mode
         await self.channel.change_mode('PumpInject')
-        logging.info(f'{method.name}: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
+        logging.info(f'{self.channel.name}.{method.name}: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
         await self.channel.syringe_pump.smart_dispense(pump_volume, pump_flow_rate)
 
         # Prime loop
@@ -181,7 +196,7 @@ class MultiChannelAssembly(AssemblyBasewithGSIOC):
     def __init__(self, channels: List[RoadmapChannel], distribution_valve: HamiltonValvePositioner, injection_port: InjectionPort, name='') -> None:
         super().__init__([dev for ch in channels for dev in ch.devices], name)
 
-    """TODO:
+        """TODO:
         1. Make ROADMAP channels akin to QCMD channels
             a. Should know about distribution valve all the way up to injection port (define all
                 of these and their connections before connecting them into channels)
@@ -195,6 +210,35 @@ class MultiChannelAssembly(AssemblyBasewithGSIOC):
 
         """
 
+        self.injection_port = injection_port
+        self.distribution_valve = distribution_valve
+
+        # Distribution lock indicates that the distribution valve is being used
+        self.distribution_lock: asyncio.Lock = asyncio.Lock()
+
+        # Build network
+        self.network = Network([dev for ch in channels for dev in ch.network.devices] + [distribution_valve, injection_port])
+
+        self.modes = {'Standby': Mode(valves={distribution_valve: 8}), # don't do anything to the qcmd_loop for standby
+                      'LoopInject': Mode(valves={distribution_valve: 1}),
+                      'LHInject': Mode(valves={distribution_valve: 2})}
+
+        # for dead volume tracing, update qcmd loop with entire network, with injection node, and add the distribution valve to each channel
+        for i, ch in enumerate(channels):
+            ch.network = self.network
+            ch.injection_node = injection_port.nodes[0]
+            for k, mode in self.modes.items():
+                if k in ch.modes.keys():
+                    ch.modes[k].valves.update(mode.valves[distribution_valve] + 2 * i)
+
+        self.channels = channels
+
+    async def initialize(self) -> None:
+        """Initialize the loop as a unit and the distribution valve separately"""
+        await asyncio.gather(*[ch.initialize() for ch in self.channels], self.distribution_valve.initialize())
+
+    async def run_method(self, channel: int, method_name: str, method_data: dict) -> None:
+        return self.channels[channel].run_method(method_name, **method_data)
 
 if __name__=='__main__':
 
