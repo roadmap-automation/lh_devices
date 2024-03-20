@@ -474,6 +474,9 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         # default high resolution mode is False
         self._high_resolution = high_resolution
 
+        # save syringe position. Updated every time status is updated
+        self.syringe_position: int = 0
+
         # min and max V
         self.minV, self.maxV = 2, 10000
 
@@ -485,7 +488,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
     async def initialize(self) -> None:
         await super().initialize()
         await self.run_until_idle(self.set_high_resolution(self._high_resolution))
-        #await self.run_until_idle(self.get_syringe_position())
+        await self.run_until_idle(self.get_syringe_position())
 
     async def is_initialized(self) -> bool:
         """Query device to get initialization state
@@ -510,7 +513,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         add_state = {'syringe': {
                                 'status_string': await self.get_syringe_status(),
                                 'high_resolution': self._high_resolution,
-                                'position': await self.get_syringe_position()
+                                'position': self.syringe_position
         }}
         info['state']= info['state'] | add_state
 
@@ -627,6 +630,17 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         return round(desired_volume * (self._full_stroke() / 2) / self.syringe_volume)
 
+    async def update_status(self) -> None:
+        """
+        Polls the status of the device using 'Q'
+        """
+
+        error = await self.get_syringe_position()
+
+        # TODO: Handle error
+        if error:
+            logging.error(f'{self}: Error in update_status: {error}')
+
     async def get_syringe_position(self) -> int:
         """Reads absolute position of syringe
 
@@ -636,7 +650,9 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         response, error = await self.query('?')
         
-        return int(response)
+        self.syringe_position = int(response)
+
+        return error
 
     async def aspirate(self, volume: float, flow_rate: float) -> None:
         """Aspirate (Pick-up)
@@ -646,7 +662,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             flow_rate (float): flow rate in uL / s
         """
 
-        syringe_position = await self.get_syringe_position()
+        await self.get_syringe_position()
+        syringe_position = self.syringe_position
         stroke_length = self._stroke_length(volume)
         max_position = self._full_stroke() / 2
         logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
@@ -672,7 +689,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             flow_rate (float): flow rate in uL / s
         """
 
-        syringe_position = await self.get_syringe_position()
+        await self.get_syringe_position()
+        syringe_position = self.syringe_position
         stroke_length = self._stroke_length(volume)
         logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
 
@@ -717,7 +735,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         full_stroke = self._full_stroke() // 2
 
         # update current syringe position (usually zero)
-        syringe_position = await self.get_syringe_position()
+        await self.get_syringe_position()
+        syringe_position = self.syringe_position
         current_position = copy.copy(syringe_position)
         logging.debug(f'{self.name}: smart dispense, syringe at {current_position}')
 
