@@ -24,10 +24,10 @@
                 .then(function (response) {
                     return response.json();
                 }).then(function (data) {
-                    //console.log(data)
+                    console.log(data)
                     $("#assembly_name").empty().append(data['name'] + "<br>" + data['id']);
                     update_devices(data['devices'])
-                    update_modes(data['modes'])
+                    update_modes(data['modes'], data['current_mode'])
                 });
             }
 
@@ -52,20 +52,24 @@
             }
         }
 
-        function update_modes(modes) {
-            $("#modes").empty()
+        function update_modes(modes, current_mode) {
+            $("#modes").empty().append("Select mode: ")
             var newselect = $('<select>')
                                     .attr("id", "mode_select")
+            $("<option>").text("").appendTo(newselect)
             for (const mode of modes) {
                 $("<option>").text(mode).appendTo(newselect)
             }
             if (modes.includes(current_mode)) {
-                newselect.val(cdata['current'])
+                newselect.val(current_mode)
             }
             newselect.on("change", function () {
-                issue_command(cid, {'change_mode': newselect.val()})
+                var val = newselect.val()
+                if (val != "") {
+                    issue_command("change_mode", val)
+                }
             })
-            $("#modes").append(newctrl)
+            $("#modes").append(newselect)
         }
 
     </script>
