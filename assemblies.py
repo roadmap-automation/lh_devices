@@ -266,7 +266,7 @@ class AssemblyBase:
         @routes.get('/')
         @aiohttp_jinja2.template('assembly.html')
         async def get_handler(request: web.Request) -> web.Response:
-            return self.get_info()
+            return await self.get_info()
 
         @routes.get('/state')
         async def get_state(request: web.Request) -> web.Response:
@@ -292,8 +292,7 @@ class AssemblyBase:
 
         logging.info(f'{self.name} received {command} with data {data}')
         if command == 'change_mode':
-            newmode = data['mode']
-            await self.change_mode(newmode)
+            await self.change_mode(data)
 
     async def get_info(self) -> dict:
         """Gets object state as dictionary
@@ -304,8 +303,8 @@ class AssemblyBase:
 
         return {'id': self.id,
                     'name': self.name,
-                    'devices': json.dumps({device.id: device.name for device in self.devices}),
-                    'modes': json.dumps([mode for mode in self.modes]),
+                    'devices': {device.id: device.name for device in self.devices},
+                    'modes': [mode for mode in self.modes],
                     'current_mode': self.current_mode}
 
 class AssemblyBasewithGSIOC(AssemblyBase):
