@@ -97,6 +97,20 @@ class ValveBase(ComponentBase):
         
         return True
     
+    def get_info(self) -> dict:
+        """Dictionary of valve status information
+
+        Returns:
+            dict: valve status information
+        """
+
+        return {
+                'name': self.name,
+                'valve_position': self.position,
+                'number_positions': self.n_positions,
+                'number_ports': self.n_ports
+        }
+    
 class SyringeValveBase(ValveBase):
 
     def __init__(self, n_ports: int, n_positions: int, position: int = 1, ports: List[Port] = [], name: str = '') -> None:
