@@ -461,6 +461,19 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         return round(desired_volume * (self._full_stroke() / 2) / self.syringe_volume)
 
+    async def update_status(self) -> None:
+        """
+        Polls the status of the device using 'Q'
+        """
+
+        response, error = await self.query('?')
+        
+        self.syringe_position = int(response)
+
+        # TODO: Handle error
+        if error:
+            logging.error(f'{self}: Error in update_status: {error}')
+
     async def get_syringe_position(self) -> int:
         """Reads absolute position of syringe
 
@@ -468,9 +481,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             int: absolute position of syringe in steps
         """
 
-        response, error = await self.query('?')
-        
-        self.syringe_position = int(response)
+        await self.update_status()
 
     async def aspirate(self, volume: float, flow_rate: float) -> None:
         """Aspirate (Pick-up)
