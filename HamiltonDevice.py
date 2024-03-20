@@ -77,6 +77,7 @@ class HamiltonBase:
         self.id = str(uuid4())
         self.name = name
         self.idle = True
+        self.reserved = False   # like a lock; allows reserving the device before running a method
         self.busy_code = '@'
         self.idle_code = '`'
         self.poll_delay = 0.1   # Hamilton-recommended 100 ms delay when polling

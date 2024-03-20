@@ -231,7 +231,21 @@ class AssemblyBase:
 
     @property
     def idle(self) -> bool:
+        """Assembly is idle if all devices in the assembly are idle
+
+        Returns:
+            bool: True if all devices are idle
+        """
         return all(dev.idle for dev in self.devices) # & (not len(self.running_tasks))
+    
+    @property
+    def reserved(self) -> bool:
+        """Assembly is reserved if any of the devices are reserved
+
+        Returns:
+            bool: True if any devices are reserved
+        """
+        return any(dev.reserved for dev in self.devices)
     
     def create_web_app(self) -> web.Application:
         """Creates a web application for this specific assembly by creating a webpage per device
