@@ -198,38 +198,37 @@ class MultiChannelAssembly(AssemblyBasewithGSIOC):
 
         """TODO:
         1. Make ROADMAP channels akin to QCMD channels
-            a. Should know about distribution valve all the way up to injection port (define all
+            a. DONE Should know about distribution valve all the way up to injection port (define all
                 of these and their connections before connecting them into channels)
-            b. Mode definitions should include distribution valve positions, probably
+            b. DONE Mode definitions should include distribution valve positions, probably
             c. ROADMAP channels should also have a change_direction method that switches the injection
             direction. This can be done once at the beginning of inject methods.
         2. Collect ROADMAP channels into MultiChannel Assembly
-            a. handle_gsioc should pass channel-specific commands to those channels and route responses back
+            a. handle_gsioc should pass channel-specific commands to those channels and route responses back (DONE: methods actually request GSIOC connection now)
             b. implement distribution valve lock so only one channel can use it at a time (or is this
                 a channel-level function?)
-
         """
 
         self.injection_port = injection_port
         self.distribution_valve = distribution_valve
 
-        # Distribution lock indicates that the distribution valve is being used
-        self.distribution_lock: asyncio.Lock = asyncio.Lock()
-
         # Build network
         self.network = Network([dev for ch in channels for dev in ch.network.devices] + [distribution_valve, injection_port])
 
-        self.modes = {'Standby': Mode(valves={distribution_valve: 8}), # don't do anything to the qcmd_loop for standby
-                      'LoopInject': Mode(valves={distribution_valve: 1}),
-                      'LHInject': Mode(valves={distribution_valve: 2})}
+        self.modes = {'Standby': Mode(valves={distribution_valve: 8})}
 
-        # for dead volume tracing, update qcmd loop with entire network, with injection node, and add the distribution valve to each channel
+        # update channels with upstream information
         for i, ch in enumerate(channels):
             ch.network = self.network
             ch.injection_node = injection_port.nodes[0]
-            for k, mode in self.modes.items():
-                if k in ch.modes.keys():
-                    ch.modes[k].valves.update(mode.valves[distribution_valve] + 2 * i)
+            if 'LoadLoop' in ch.modes.keys():
+                ch.modes['LoadLoop'].valves.update({distribution_valve: 1 + 2 * i})
+            if 'LoadLoop' in ch.methods.keys():
+                ch.methods['LoadLoop'].devices.append(distribution_valve)
+            if 'DirectInject' in ch.modes.keys():
+                ch.modes['DirectInject'].valves.update({distribution_valve: 2 + 2 * i})
+            if 'DirectInject' in ch.methods.keys():
+                ch.methods['DirectInject'].devices.append(distribution_valve)
 
         self.channels = channels
 
