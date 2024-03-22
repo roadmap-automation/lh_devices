@@ -89,7 +89,7 @@ class LoadLoop(MethodBase):
     def __init__(self, channel: RoadmapChannelBase) -> None:
         super().__init__([channel.syringe_pump, channel.loop_valve])
         self.channel = channel
-        self.dead_volume_mode: str = self.MethodDefinition.name
+        self.dead_volume_mode: str = 'LoadLoop'
 
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
@@ -180,7 +180,7 @@ class DirectInject(MethodBase):
     def __init__(self, channel: RoadmapChannelBase) -> None:
         super().__init__([channel.loop_valve])
         self.channel = channel
-        self.dead_volume_mode: str = self.MethodDefinition.name
+        self.dead_volume_mode: str = 'LHInject'
 
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
