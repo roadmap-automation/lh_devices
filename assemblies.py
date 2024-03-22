@@ -12,7 +12,7 @@ from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from connections import Port, Node, connect_nodes
 from components import ComponentBase
-from webview import sio
+from webview import sio, WebNodeBase
 
 class Network:
     """Representation of a node network
@@ -109,7 +109,7 @@ class Mode:
         self.valves = valves
         self.final_node = final_node
 
-class AssemblyBase:
+class AssemblyBase(WebNodeBase):
     """Assembly of Hamilton LH devices
     """
 
@@ -255,32 +255,7 @@ class AssemblyBase:
             web.Application: web application for this device
         """
 
-        app = web.Application()
-        aiohttp_jinja2.setup(app,
-            loader=jinja2.FileSystemLoader('templates'))
-        routes = web.RouteTableDef()
-
-        for device in self.devices:
-            app.add_subapp(f'/{device.id}/', device.create_web_app())
-
-        @routes.get('/')
-        @aiohttp_jinja2.template('assembly.html')
-        async def get_handler(request: web.Request) -> web.Response:
-            return await self.get_info()
-
-        @routes.get('/state')
-        async def get_state(request: web.Request) -> web.Response:
-            state = await self.get_info()
-            return web.Response(text=json.dumps(state), status=200)
-
-        @sio.on(self.id)
-        async def event_handler(event, data):
-            # starts handling the event
-            await self.event_handler(data['command'], data['data'])
-
-        app.add_routes(routes)
-
-        return app
+        return super().create_web_app('assembly.html')
     
     async def event_handler(self, command: str, data: dict) -> None:
         """Handles events from web interface
@@ -290,7 +265,7 @@ class AssemblyBase:
             data (dict): any data required by the command
         """
 
-        logging.info(f'{self.name} received {command} with data {data}')
+        await super().event_handler(command, data)
         if command == 'change_mode':
             await self.change_mode(data)
 
@@ -301,11 +276,12 @@ class AssemblyBase:
             dict: object state
         """
 
-        return {'id': self.id,
-                    'name': self.name,
+        d = await super().get_info()
+
+        return d.update({
                     'devices': {device.id: device.name for device in self.devices},
                     'modes': [mode for mode in self.modes],
-                    'current_mode': self.current_mode}
+                    'current_mode': self.current_mode})
 
 class AssemblyBasewithGSIOC(AssemblyBase):
     """Assembly with support for GSIOC commands

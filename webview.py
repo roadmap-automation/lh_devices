@@ -1,5 +1,10 @@
-from aiohttp import web
+import json
+import jinja2
+import logging
+import aiohttp_jinja2
 import socketio
+
+from aiohttp import web
 
 """
 Code to automatically generate a web application with:
@@ -17,6 +22,70 @@ Approach:
 """
 
 sio = socketio.AsyncServer()
+
+class WebNodeBase:
+
+    id: str = ''
+    name: str = ''
+
+    def create_web_app(self, template: str) -> web.Application:
+        """Creates a web application for this specific assembly by creating a webpage per device
+
+        Args:
+            template (str | None): template for root path. Required.
+
+        Returns:
+            web.Application: web application for this device
+        """
+
+        app = web.Application()
+        aiohttp_jinja2.setup(app,
+            loader=jinja2.FileSystemLoader('templates'))
+        routes = web.RouteTableDef()
+
+        @routes.get('/')
+        @aiohttp_jinja2.template(template)
+        async def get_handler(request: web.Request) -> web.Response:
+            return await self.get_info()
+
+        @routes.get('/state')
+        async def get_state(request: web.Request) -> web.Response:
+            state = await self.get_info()
+            return web.Response(text=json.dumps(state), status=200)
+
+        @sio.on(self.id)
+        async def event_handler(event, data):
+            # starts handling the event
+            await self.event_handler(data['command'], data['data'])
+
+        app.add_routes(routes)
+
+        return app
+
+    async def get_info(self) -> dict:
+        """Gets object state as dictionary
+
+        Returns:
+            dict: object state
+        """
+
+        return {'name': self.name,
+                'id': self.id}
+
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        logging.info(f'{self.name} received {command} with data {data}')
+
+    async def trigger_update(self):
+        """Emits a socketio event with id"""
+
+        await sio.emit(self.id)
 
 async def run_socket_app(app: web.Application, host='localhost', port=5003) -> web.AppRunner:
     """Connects socketio app to aiohttp application and runs it

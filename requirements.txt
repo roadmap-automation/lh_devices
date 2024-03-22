@@ -5,4 +5,4 @@ aioconsole
 python-socketio
 numpy
 scipy
-labjack-ljm
+
