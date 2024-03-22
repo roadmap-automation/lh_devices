@@ -173,6 +173,67 @@ class InjectLoop(MethodBase):
         # Prime loop
         await self.channel.primeloop(volume=1000)
 
+class DirectInject(MethodBase):
+    """Directly inject from LH to a ROADMAP channel flow cell
+    """
+
+    def __init__(self, channel: RoadmapChannelBase) -> None:
+        super().__init__([channel.loop_valve])
+        self.channel = channel
+        self.dead_volume_mode: str = self.MethodDefinition.name
+
+    @dataclass
+    class MethodDefinition(MethodBase.MethodDefinition):
+        
+        name: str = "DirectInject"
+
+    async def run(self, **kwargs):
+        """LoadLoop method, synchronized via GSIOC to liquid handler"""
+
+        method = self.MethodDefinition(**kwargs)
+
+        # Connect to GSIOC communications
+        gsioc_task = asyncio.create_task(self.channel.initialize_gsioc(self.channel.gsioc))
+
+        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
+        # method to make sure this updates in time)
+        dead_volume = self.channel.get_dead_volume(self.channel.injection_node, self.dead_volume_mode)
+
+        # blocks if there's already something in the dead volume queue
+        await self.channel.dead_volume.put(dead_volume)
+        logging.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
+
+        # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
+        await self.channel.wait_for_trigger()
+        logging.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
+        await self.channel.change_mode('LHPrime')
+
+        # Wait for trigger to switch to {method.name} mode (LH performs injection)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
+        await self.channel.wait_for_trigger()
+
+        logging.info(f'{self.channel.name}.{method.name}: Switching to LHInject mode')
+        await self.channel.change_mode('LHInject')
+
+        # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
+        await self.channel.wait_for_trigger()
+
+        logging.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
+        await self.channel.change_mode('LHPrime')
+
+        # Wait for trigger to switch to Standby mode (this may not be necessary)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
+        await self.channel.wait_for_trigger()
+
+        # switch to standby mode
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        await self.channel.change_mode('Standby')
+
+        # At this point, liquid handler is done, release communications
+        gsioc_task.cancel()
+
 class RoadmapChannel(RoadmapChannelBase):
     """Roadmap channel with populated methods
     """
@@ -181,7 +242,8 @@ class RoadmapChannel(RoadmapChannelBase):
         super().__init__(loop_valve, syringe_pump, flow_cell, sample_loop, injection_node, name)
 
         self.methods = {'LoadLoop': LoadLoop(self),
-                        'InjectLoop': InjectLoop(self)}
+                        'InjectLoop': InjectLoop(self),
+                        'DirectInject': DirectInject(self)}
         
     def is_ready(self, method_name: str) -> bool:
         """Checks if all devices are unreserved for method
@@ -195,22 +257,14 @@ class RoadmapChannel(RoadmapChannelBase):
 
         return self.methods[method_name].is_ready()
         
-class MultiChannelAssembly(AssemblyBasewithGSIOC):
+class RoadmapChannelAssembly(AssemblyBase):
 
     def __init__(self, channels: List[RoadmapChannel], distribution_valve: HamiltonValvePositioner, injection_port: InjectionPort, name='') -> None:
         super().__init__([dev for ch in channels for dev in ch.devices], name)
 
         """TODO:
-        1. Make ROADMAP channels akin to QCMD channels
-            a. DONE Should know about distribution valve all the way up to injection port (define all
-                of these and their connections before connecting them into channels)
-            b. DONE Mode definitions should include distribution valve positions, probably
-            c. ROADMAP channels should also have a change_direction method that switches the injection
-            direction. This can be done once at the beginning of inject methods.
-        2. Collect ROADMAP channels into MultiChannel Assembly
-            a. handle_gsioc should pass channel-specific commands to those channels and route responses back (DONE: methods actually request GSIOC connection now)
-            b. implement distribution valve lock so only one channel can use it at a time (or is this
-                a channel-level function?)
+            1. distribution valve is generalized to a distribution system
+            2. add change_direction capability to ROADMAP channels
         """
 
         self.injection_port = injection_port
@@ -221,7 +275,7 @@ class MultiChannelAssembly(AssemblyBasewithGSIOC):
 
         self.modes = {'Standby': Mode(valves={distribution_valve: 8})}
 
-        # update channels with upstream information
+        # update channels and methods with upstream information
         for i, ch in enumerate(channels):
             ch.network = self.network
             ch.injection_node = injection_port.nodes[0]
