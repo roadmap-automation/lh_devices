@@ -62,7 +62,11 @@ class RoadmapChannelBase(AssemblyBasewithGSIOC):
         return super().get_dead_volume(self.injection_node, mode)
     
     def run_method(self, method_name: str, method_kwargs: dict) -> None:
-        return super().run_method(self.methods[method_name].run(**method_kwargs))
+
+        if not self.methods[method_name].is_ready():
+            logging.error(f'{self.name}: not all devices in {method_name} are available')
+        else:
+            super().run_method(self.methods[method_name].run(**method_kwargs))
 
     async def primeloop(self,
                         n_prime: int = 1, # number of repeats
