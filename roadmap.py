@@ -3,6 +3,9 @@ import logging
 from typing import Coroutine, List, Dict
 from dataclasses import dataclass
 
+from aiohttp.web_app import Application as Application
+from aiohttp import web
+
 from assemblies import Mode
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from gsioc import GSIOC, GSIOCMessage
@@ -294,8 +297,42 @@ class RoadmapChannelAssembly(AssemblyBase):
         """Initialize the loop as a unit and the distribution valve separately"""
         await asyncio.gather(*[ch.initialize() for ch in self.channels], self.distribution_valve.initialize())
 
-    async def run_method(self, channel: int, method_name: str, method_data: dict) -> None:
+    def run_channel_method(self, channel: int, method_name: str, method_data: dict) -> None:
         return self.channels[channel].run_method(method_name, **method_data)
+    
+    def create_web_app(self) -> Application:
+        app = super().create_web_app(template='roadmap.html')
+        routes = web.RouteTableDef()
+
+        @routes.post('/SubmitTask')
+        async def handle_task(request: web.Request) -> web.Response:
+            # TODO: turn task into a dataclass; parsing will change
+            task = request.json()
+            channel: int = task['channel']
+            method_name: str = task['method_name']
+            method_data: dict = task['method_data']
+            if self.channels[channel].is_ready(method_name):
+                self.run_channel_method(channel, method_name, method_data)
+                return web.Response(text='accepted', status=200)
+            
+            return web.Response(text='busy', status=200)
+        
+        @routes.get('/GetTaskData')
+        async def handle_task(request: web.Request) -> web.Response:
+            # TODO: turn task into a dataclass; parsing will change
+            task = request.json()
+            task_id = task['id']
+
+            # TODO: actually return task data
+            # TODO: Determine what task data we want to save. Logging? success? Any returned errors?
+            return web.Response(text=json.dumps({'id': task_id}), status=200)
+        
+        app.add_routes(routes)
+
+        for i, channel in enumerate(self.channels):
+            app.add_subapp(f'/{i}/', channel.create_web_app())
+
+        return app
 
 if __name__=='__main__':
 

@@ -1,0 +1,65 @@
+<head>
+    <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js" integrity="sha512-q/dWJ3kcmjBLU4Qc47E4A9kTB4m3wuTY7vkFJDTZKjTs8jhyGQnaUrxa0Ytd0ssMZhbNua9hE+E7Qv1j+DyZwA==" crossorigin="anonymous"></script>
+    <script src="device_views.js"></script>
+    <script>
+        var id = JSON.parse('{{id | safe}}')
+        var name = JSON.parse('{{name | safe}}')
+        var devices = JSON.parse('{{devices | safe}}');
+        var assemblies = JSON.parse('{{assemblies | safe}}');
+
+        function create_controls(devices, assemblies) {
+            for (const device_id of devices) {
+                var newdiv = new $('div')
+                                .attr("id", device_id)
+                                .addClass("devicebox")
+                $('#elements').append(newdiv)
+                update(device_id)
+
+                socket.on(id, function () {
+                    console.log('Received update signal')
+                    update(device_id)
+                })
+            }
+            for (const assembly_id of assemblies) {
+                var newdiv = new $('div')
+                                .attr("id", assembly_id)
+                                .addClass("assemblybox")
+                $('#elements').append(newdiv)
+                update(assembly_id)
+
+                socket.on(id, function () {
+                    console.log('Received update signal')
+                    update(assembly_id)
+                })
+            }
+        }
+
+        window.onload = function() {
+            create_controls(devices, assemblies)
+            }
+
+        socket.on(id, function () {
+            console.log('Received update signal')
+            update_main()
+        })
+
+        function update_main() {
+            fetch(window.location.href + id + '/state')
+                .then(function (response) {
+                    return response.json();
+                }).then(function (data) {
+                    // Do some stuff here (maybe change busy state, etc.)
+                    $('#assembly_data').empty().append(data['name'] + '<br>' + data['id'])
+                });
+        }
+     
+
+    </script>
+</head>
+<body>
+    <div id="assembly_name">
+    </div>
+    <div id="elements">
+    </div>
+</body>
