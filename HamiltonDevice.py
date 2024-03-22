@@ -13,7 +13,7 @@ import jinja2
 from HamiltonComm import HamiltonSerial
 from valve import ValveBase, SyringeValveBase
 from connections import Node
-from webview import sio
+from webview import sio, WebNodeBase
 
 TEMPLATE_PATH = Path(__file__).parent / 'templates'
 
@@ -60,7 +60,7 @@ class PollTimer:
         """Waits until the internal timer has expired"""
         await self.expired.wait()
 
-class HamiltonBase:
+class HamiltonBase(WebNodeBase):
     """Base class for Hamilton multi-valve positioner (MVP) and syringe pump (PSD) devices.
 
         Requires:
@@ -201,71 +201,7 @@ class HamiltonBase:
             web.Application: web application for this device
         """
 
-        app = web.Application()
-        aiohttp_jinja2.setup(app,
-            loader=jinja2.FileSystemLoader('templates'))
-        routes = web.RouteTableDef()
-
-        @routes.get('/')
-        @aiohttp_jinja2.template('device.html')
-        async def get_handler(request: web.Request) -> web.Response:
-            return await self.get_info()
-
-        @routes.get('/state')
-        async def get_state(request: web.Request) -> web.Response:
-            state = await self.get_info()
-            return web.Response(text=json.dumps(state), status=200)
-
-        @sio.on(self.id)
-        async def event_handler(event, data):
-            # starts handling the event
-            await self.event_handler(data['command'], data['data'])
-        
-        app.add_routes(routes)
-
-        return app
-
-    async def trigger_update(self):
-        """Emits a socketio event with id"""
-
-        await sio.emit(self.id)
-
-    async def event_handler(self, command: str, data: dict) -> None:
-        """Handles events from web interface
-
-        Args:
-            command (str): command name
-            data (dict): any data required by the command
-        """
-
-        logging.info(f'{self.name} received {command} with data {data}')
-        
-    async def get_handler(self, request: web.Request) -> web.Response:
-        """Handles GET requests to index
-
-        Args:
-            request (web.Request): incoming GET request
-
-        Returns:
-            web.Response: response to request
-        """
-
-        data = await request.text()
-        print(data)
-        return web.Response(text=f'GET request to {self.name}: \n' + json.dumps(data), status=200)
-
-    async def post_handler(self, request: web.Request) -> web.Response:
-        """Handles POST requests to index
-
-        Args:
-            request (web.Request): incoming POST request
-
-        Returns:
-            web.Response: response to request
-        """
-
-        data = await request.text()
-        return web.Response(text=f'POST request to {self.name}: \n' + json.dumps(data), status=200)
+        return super().create_web_app('device.html')
 
     async def get_info(self) -> dict:
         """Gets object state as dictionary
@@ -274,16 +210,18 @@ class HamiltonBase:
             dict: object state
         """
 
+        d = await super().get_info()
+
         init = await self.is_initialized()
 
-        return {'name': self.name,
-                'id': self.id,
+        return d.update({
                 'config': {
                            'com_port': self.serial.port,
                            'address': self.address},
                 'state': {'initialized': init,
-                          'idle': self.idle},
-                'controls': {}}
+                          'idle': self.idle,
+                          'reserved': self.reserved},
+                'controls': {}})
 
 class HamiltonValvePositioner(HamiltonBase):
     """Hamilton MVP4 device
