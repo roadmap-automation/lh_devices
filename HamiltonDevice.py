@@ -194,14 +194,14 @@ class HamiltonBase(WebNodeBase):
 
         return response.split(c, 1)[1], error
     
-    def create_web_app(self) -> web.Application:
+    def create_web_app(self, template='device.html') -> web.Application:
         """Creates a web application for this specific device
 
         Returns:
             web.Application: web application for this device
         """
 
-        return super().create_web_app('device.html')
+        return super().create_web_app(template)
 
     async def get_info(self) -> dict:
         """Gets object state as dictionary

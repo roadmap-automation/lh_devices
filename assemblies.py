@@ -248,14 +248,14 @@ class AssemblyBase(WebNodeBase):
         """
         return any(dev.reserved for dev in self.devices)
     
-    def create_web_app(self) -> web.Application:
+    def create_web_app(self, template='assembly.html') -> web.Application:
         """Creates a web application for this specific assembly by creating a webpage per device
 
         Returns:
             web.Application: web application for this device
         """
 
-        return super().create_web_app('assembly.html')
+        return super().create_web_app(template)
     
     async def event_handler(self, command: str, data: dict) -> None:
         """Handles events from web interface
