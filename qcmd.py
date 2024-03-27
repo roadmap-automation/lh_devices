@@ -2,6 +2,7 @@ from typing import Any, Coroutine, List
 from aiohttp import ClientSession, web, ClientConnectionError
 import asyncio
 import logging
+import json
 from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial
 from valve import LoopFlowValve, SyringeLValve, DistributionValve
 from components import InjectionPort, FlowCell, Node
@@ -573,9 +574,9 @@ async def qcmd_distribution():
     connect_nodes(mvp.valve.nodes[5], fc.outlet_node, 0.0)
 
     qcmd_system = QCMDSystem(dvp, qcmd_channel, ip, name='QCMD System')
-    app = qcmd_system.create_web_app()
+    app = qcmd_system.create_web_app(template='roadmap.html')
     runner = await run_socket_app(app, 'localhost', 5003)
-
+    print(json.dumps(await qcmd_system.get_info()))
     #lh = SimLiquidHandler(qcmd_channel)
 
     try:

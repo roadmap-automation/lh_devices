@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<head>
+    <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js" integrity="sha512-q/dWJ3kcmjBLU4Qc47E4A9kTB4m3wuTY7vkFJDTZKjTs8jhyGQnaUrxa0Ytd0ssMZhbNua9hE+E7Qv1j+DyZwA==" crossorigin="anonymous"></script>
+    <script>
+        var socket = io()
+
+        function issue_command(id, command, data) {
+            console.log('sending', {'command': command,
+                                    'data': data})
+            socket.emit(id, {'command': command,
+                            'data': data})
+        }
+
+        function create_device(device_id, parent_div) {
+            var newdevicediv = create_device_div(device_id)
+            parent_div.children(".assembly_devices").append(newdevicediv)
+
+            // Register update function
+            let exist = socket.hasListeners(device_id)
+            if (!exist) {
+                socket.on(device_id, function () {
+                    update(device_id)
+                })
+            }
+
+            // Update controls
+            update(device_id)
+        }
+
+        function gen_assembly_tree(info, parent_div) {
+            if (info['type'] == 'assembly') {
+                for (const [assembly_id, assembly_name] of Object.entries(info['assemblies'])) {
+                    // Recursively create the assembly div tree:
+                    // 1. Create a new div for the assembly
+                    let newdiv = create_assembly_div(assembly_id)
+
+                    // 2. Get info about the div
+                    fetch(window.location.href + assembly_id + '/state')
+                        .then(function (response) {
+                            return response.json();
+                        }).then(function (newinfo) {
+                            // 3. Recursively create new divs for the subassemblies
+                            console.log(newinfo)
+                            gen_assembly_tree(newinfo, newdiv)
+
+                        });
+                    parent_div.children(".sub_assemblies").append(newdiv)
+                }
+                for (const [device_id, device_name] of Object.entries(info['devices'])) {
+                    // Create device divs
+                    create_device(device_id, parent_div)
+                }
+                // Register update function (only once)
+                let exist = socket.hasListeners(info['id'])
+                if (!exist) {
+                    socket.on(info['id'], function () {
+                        update(info['id'])
+                    })
+                }
+
+                // Update with current mode
+                update(info['id'])
+            }
+            else if (info['type'] == 'device') {
+                create_device(info['id'], parent_div)
+            }
+        }
+
+        function create_assembly_div(assembly_id) {
+            var newdiv = new $('<div>')
+                            .addClass(assembly_id)
+                            .addClass("assembly")
+            newdiv.append(new $('<div>').addClass("assembly_name"))
+            newdiv.append(new $('<div>').addClass("assembly_id"))
+            newdiv.append(new $('<div>').addClass("assembly_modes"))
+            assembliesdiv = new $('<div>')
+                .addClass('sub_assemblies')
+                .addClass("grid-container")
+                .appendTo(newdiv)
+            devicesdiv = new $('<div>')
+                .addClass('assembly_devices')
+                .addClass("grid-container")
+                .appendTo(newdiv)
+
+            return newdiv
+        }
+
+        function create_device_div(device_id) {
+            var newdiv = new $('<div>')
+                            .addClass(device_id)
+                            .addClass("devicebox")
+            newdiv.append(new $('<div>').addClass("device_name"))
+            newdiv.append(new $('<div>').addClass("device_id"))
+            newdiv.append(new $('<div>').addClass("device_config"))
+            newdiv.append(new $('<div>').addClass("device_state"))
+            newdiv.append(new $('<div>').addClass("device_controls"))
+
+            return newdiv
+        }
+
+        function update(id) {
+            fetch(window.location.href + id + "/state")
+                .then(function (response) {
+                    return response.json();
+                }).then(function (data) {
+                    // if a device
+                    if (data['type'] == 'device') {
+                        // select all objects with class corresponding to object's id
+                        $('.' + id).each(function (index) {
+                            $(this).children(".device_name").empty().append(data['name']);
+                            $(this).children(".device_id").empty().append(new $("<a>").attr("href", data['id'] + "/").text(data['id']));
+                            $(this).children(".config").empty().append(JSON.stringify(data['config']));
+                            $(this).children(".state").empty().append(JSON.stringify(data['state']));
+                            update_controls($(this), id, data['controls'])
+                        });
+                    }
+                    else if (data['type'] == 'assembly') {
+                        $('.' + id).each( function(index) {
+                            $(this).children(".assembly_name").empty().append(data['name']);
+                            $(this).children(".assembly_id").empty().append(new $("<a>").attr("href", data['id'] + "/").text(data['id']));
+                            update_modes($(this), id, data['modes'], data['current_mode'])
+                        });
+                    }
+                });
+            }
+
+        function update_modes(currentdiv, id, modes, current_mode) {
+            modediv = currentdiv.children(".assembly_modes")
+            modediv.empty().append("Select mode: ")
+            var newselect = $('<select>')
+                                    .addClass("mode_select")
+            $("<option>").text("").appendTo(newselect)
+            for (const mode of modes) {
+                $("<option>").text(mode).appendTo(newselect)
+            }
+            if (modes.includes(current_mode)) {
+                newselect.val(current_mode)
+            }
+            newselect.on("change", function () {
+                var val = newselect.val()
+                if (val != "") {
+                    issue_command(id, "change_mode", val)
+                }
+            })
+            modediv.append(newselect)
+        }
+
+        function update_controls(currentdiv, device_id, controls) {
+            devicediv = currentdiv.children(".device_controls")
+            devicediv.empty()
+            for (const [cid, cdata] of Object.entries(controls)) {
+                //console.log(cid, cdata)
+                ctype = cdata['type']
+                var newctrl = null
+                if (ctype == 'button') {
+                    var newctrl = $('<button>')
+                                    .addClass(cid)
+                                    .addClass(ctype)
+                                    .text(cdata['text'])
+                                    .on('click', function () {
+                                        issue_command(device_id, cid, {})
+                                    })
+                }
+                else if (ctype=='select') {
+                    var newctrl = $('<div>')
+                                    .addClass(cid)
+                                    .addClass(ctype)
+                                    .text(cdata['text']);
+                    var newselect = $('<select>')
+                    for (const option of cdata['options']) {
+                        $("<option>").text(option).appendTo(newselect)
+                    }
+                    newselect.val(cdata['current'])
+                    newselect.on("change", function () {
+                        issue_command(device_id, cid, {'index': newselect.prop('selectedIndex')})
+                    })
+                    newctrl.append(newselect)
+                }
+                devicediv.append(newctrl)
+            }
+        }
+
+        window.onload = function() {
+            fetch(window.location.href + 'state')
+                .then(function (response) {
+                    return response.json();
+                }).then(function (info) {
+                    console.log(info)
+                    var newdiv = create_assembly_div(info['id'])
+                    gen_assembly_tree(info, newdiv)
+                    newdiv.addClass("top-frame")
+                    newdiv.children(".assembly_name").addClass("top_assembly_name_text")
+                    newdiv.children(".sub_assemblies").find(".assembly_name").addClass("assembly_name_text")
+                    $("#top_assembly").append(newdiv)
+                });
+            }
+
+    </script>
+
+<style>
+    div {
+        font-family: sans-serif;
+        box-sizing: border-box;
+    /*display: flex;
+    flex-direction: column;*/
+        /*white-space: pre-wrap;*/
+    }
+    .top_assembly_name_text {
+        text-align: center;
+        font-size: xx-large;
+    }
+    .assembly_name_text {
+        color: #444444;
+        font-size: larger;
+        font-weight: bolder;
+        text-align: center;
+    }
+    .assembly_id {
+        color: #444444;
+        font-size: smaller;
+        font-weight: normal;
+        text-align: center;
+    }
+    .assembly_id a {
+        color: #444444;
+        font-weight: normal;
+        text-align: center;
+    }
+    .device_name {
+        color: #444444;
+        font-size: normal;
+        font-weight: bolder;
+        text-align: center;
+    }
+    .device_id {
+        color: #444444;
+        font-size: smaller;
+        font-weight: normal;
+        text-align: center;
+    }
+    .device_id a {
+        color: #444444;
+        font-weight: normal;
+        text-align: center;
+    }
+    .assembly_modes {
+        padding: 10px;
+    }
+    .monitortext {
+        font-size: large;
+        font-weight: bolder;
+        text-align: right;
+    }
+    .titletext-connected {
+        color: green
+    }
+    .titletext-disconnected {
+        color: red
+    }
+    .fit-step {
+        border-radius: 10px;
+        border: 2px solid steelblue;
+        background-color: rgb(229, 242, 252);
+        margin: 5px;
+        padding: 10px;
+        /*color: blue*/
+    }        
+    .devicebox {
+        background-color: lightsteelblue;
+        border-radius: 10px;
+        border: 2px solid steelblue;
+        margin: 5px;
+        padding: 10px;
+        /*color: purple*/
+    }
+    .assembly {
+        /*max-height: 30vh;*/
+        /*height:100%;*/
+        border: 2px solid green;
+        border-radius: 10px;
+        background-color: rgb(209, 250, 230);
+        padding: 10px
+    }
+    .grid-container {
+        box-sizing: border-box;
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        /*grid-template-columns: repeat(auto-fill, minmax(min(10rem, 100%), 1fr));*/
+        /*grid-template-rows: [row0] minmax(0, 1fr) [row1] minmax(0, 3fr) [row2] minmax(0, 6fr);
+        grid-gap: 20px;
+        height: 95%;*/
+        width: 100%
+    }
+    .top-frame {
+        border-radius: 10px;
+        border: 2px solid rgb(107, 70, 180);
+        background-color: rgb(220, 206, 248);
+        margin: 0px;
+        padding: 10px;
+        height: 100%;
+        width: 100%
+    }
+    .btn-container {
+        display: table;
+        width: 100%
+    }
+    .btn {
+        display: table-cell;
+        margin-left: 10px;
+        padding: 5px;
+        border-radius: 5px;
+        min-width: 20%;
+        font-stretch: narrower;
+    }
+    .btn-disabled {
+        background-color: gray !important;
+    }
+    #btnStart {
+        color: white;
+        background-color: rgb(71, 130, 71);
+    }
+    #btnStop {
+        color: white;
+        background-color: rgb(180, 92, 92);
+    }
+    #btnTerminateCount {
+        background-color: rgb(206, 200, 143);
+    }
+    #btnTerminateFit {
+        background-color: rgb(206, 200, 143);
+    }
+
+</style>
+</head>
+<body>
+    <div id="top_assembly">
+    </div>
+</body>
