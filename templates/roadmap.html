@@ -1,64 +1,179 @@
 <head>
     <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js" integrity="sha512-q/dWJ3kcmjBLU4Qc47E4A9kTB4m3wuTY7vkFJDTZKjTs8jhyGQnaUrxa0Ytd0ssMZhbNua9hE+E7Qv1j+DyZwA==" crossorigin="anonymous"></script>
-    <script src="device_views.js"></script>
     <script>
-        var id = JSON.parse('{{id | safe}}')
-        var name = JSON.parse('{{name | safe}}')
-        var devices = JSON.parse('{{devices | safe}}');
-        var assemblies = JSON.parse('{{assemblies | safe}}');
+        var socket = io()
 
-        function create_controls(devices, assemblies) {
-            for (const device_id of devices) {
-                var newdiv = new $('div')
-                                .attr("id", device_id)
-                                .addClass("devicebox")
-                $('#elements').append(newdiv)
-                update(device_id)
+        function issue_command(id, command, data) {
+            console.log('sending', {'command': command,
+                                    'data': data})
+            socket.emit(id, {'command': command,
+                            'data': data})
+        }
 
-                socket.on(id, function () {
-                    console.log('Received update signal')
-                    update(device_id)
-                })
+        function gen_assembly_tree(info, parent_div) {
+            if ('assemblies' in info) {
+                for (const [assembly_id, assembly_name] of Object.entries(info['assemblies'])) {
+                    // Recursively create the assembly div tree:
+                    // 1. Create a new div for the assembly
+                    var newdiv = create_assembly_div(assembly_id)
+
+                    // 2. Get info about the div
+                    fetch(window.location.href + assembly_id + '/state')
+                        .then(function (response) {
+                            return response.json();
+                        }).then(function (newinfo) {
+                            // 3. Recursively create new divs for the subassemblies
+                            gen_assembly_tree(newinfo, newdiv)
+
+                        });
+                    parent_div.append(newdiv)
+                }
             }
-            for (const assembly_id of assemblies) {
-                var newdiv = new $('div')
-                                .attr("id", assembly_id)
-                                .addClass("assemblybox")
-                $('#elements').append(newdiv)
-                update(assembly_id)
+            if ('devices' in info) {
+                for (const [device_id, device_name] of Object.entries(info['devices'])) {
+                    // Create device divs
+                    var newdiv = create_device_div(device_id)
+                    parent_div.append(newdiv)
 
-                socket.on(id, function () {
-                    console.log('Received update signal')
-                    update(assembly_id)
-                })
+                    // Register update function
+                    socket.on(device_id, function () {
+                        update(device_id)
+                    })
+
+                    // Update controls
+                    update(device_id)
+                }
+            }
+            // Register update function
+            socket.on(info['id'], function () {
+                update(info['id'])
+            })
+
+            // Update with current mode
+            update(info['id'])
+        }
+
+        function create_assembly_div(assembly_id) {
+            var newdiv = new $('<div>')
+                            .addClass(assembly_id)
+                            .addClass("assembly")
+            newdiv.append(new $('<div>').addClass("assembly_name"))
+            newdiv.append(new $('<div>').addClass("assembly_modes"))
+            devicesdiv = new $('<div>')
+                .addClass('assembly_devices')
+                .appendTo(newdiv)
+
+            return newdiv
+        }
+
+        function create_device_div(device_id) {
+            var newdiv = new $('<div>')
+                            .addClass(device_id)
+                            .addClass("devicebox")
+            newdiv.append(new $('<div>').addClass("device_name"))
+            newdiv.append(new $('<div>').addClass("device_config"))
+            newdiv.append(new $('<div>').addClass("device_state"))
+            newdiv.append(new $('<div>').addClass("device_controls"))
+
+            return newdiv
+        }
+
+        function update(id) {
+            fetch(window.location.href + id + "/state")
+                .then(function (response) {
+                    return response.json();
+                }).then(function (data) {
+                    // if a device
+                    if (data['type'] == 'device') {
+                        // select all objects with class corresponding to object's id
+                        $('.' + id).each(function (index) {
+                            $(this).children(".device_name").empty().append(data['name'] + "<br>" + data['id']);
+                            $(this).children(".config").empty().append(JSON.stringify(data['config']));
+                            $(this).children(".state").empty().append(JSON.stringify(data['state']));
+                            update_controls($(this), id, data['controls'])
+                        });
+                    }
+                    else if (data['type'] == 'assembly') {
+                        $('.' + id).each( function(index) {
+                            $(this).children(".assembly_name").empty().append(data['name'] + "<br>" + data['id']);
+                            update_modes($(this), id, data['modes'], data['current_mode'])
+                        });
+                    }
+                });
+            }
+
+        function update_modes(currentdiv, id, modes, current_mode) {
+            modediv = currentdiv.children(".assembly_modes")
+            modediv.empty().append("Select mode: ")
+            var newselect = $('<select>')
+                                    .addClass("mode_select")
+            $("<option>").text("").appendTo(newselect)
+            for (const mode of modes) {
+                $("<option>").text(mode).appendTo(newselect)
+            }
+            if (modes.includes(current_mode)) {
+                newselect.val(current_mode)
+            }
+            newselect.on("change", function () {
+                var val = newselect.val()
+                if (val != "") {
+                    issue_command(id, "change_mode", val)
+                }
+            })
+            modediv.append(newselect)
+        }
+
+        function update_controls(currentdiv, device_id, controls) {
+            devicediv = currentdiv.children(".device_controls")
+            devicediv.empty()
+            for (const [cid, cdata] of Object.entries(controls)) {
+                //console.log(cid, cdata)
+                ctype = cdata['type']
+                var newctrl = null
+                if (ctype == 'button') {
+                    var newctrl = $('<button>')
+                                    .addClass(cid)
+                                    .addClass(ctype)
+                                    .text(cdata['text'])
+                                    .on('click', function () {
+                                        issue_command(device_id, cid, {})
+                                    })
+                }
+                else if (ctype=='select') {
+                    var newctrl = $('<div>')
+                                    .addClass(cid)
+                                    .addClass(ctype)
+                                    .text(cdata['text']);
+                    var newselect = $('<select>')
+                    for (const option of cdata['options']) {
+                        $("<option>").text(option).appendTo(newselect)
+                    }
+                    newselect.val(cdata['current'])
+                    newselect.on("change", function () {
+                        issue_command(device_id, cid, {'index': newselect.prop('selectedIndex')})
+                    })
+                    newctrl.append(newselect)
+                }
+                devicediv.append(newctrl)
             }
         }
 
         window.onload = function() {
-            create_controls(devices, assemblies)
-            }
-
-        socket.on(id, function () {
-            console.log('Received update signal')
-            update_main()
-        })
-
-        function update_main() {
-            fetch(window.location.href + id + '/state')
+            fetch(window.location.href + 'state')
                 .then(function (response) {
                     return response.json();
-                }).then(function (data) {
-                    // Do some stuff here (maybe change busy state, etc.)
-                    $('#assembly_data').empty().append(data['name'] + '<br>' + data['id'])
+                }).then(function (info) {
+                    var newdiv = create_assembly_div(info['id'])
+                    gen_assembly_tree(info, newdiv)
+                    $("#top_assembly").append(newdiv)
                 });
-        }
-     
+            }
 
     </script>
 </head>
 <body>
-    <div id="assembly_name">
+    <div id="top_assembly" class="assembly">
     </div>
     <div id="elements">
     </div>

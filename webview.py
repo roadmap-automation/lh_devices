@@ -1,9 +1,8 @@
 import json
-import jinja2
 import logging
-import aiohttp_jinja2
 import socketio
 
+from pathlib import Path
 from aiohttp import web
 
 """
@@ -20,6 +19,8 @@ Approach:
 * top-level code crawls through the network and makes a URL structure that reflects it
 
 """
+
+TEMPLATE_PATH = Path(__file__).parent / 'templates'
 
 sio = socketio.AsyncServer()
 
@@ -39,16 +40,14 @@ class WebNodeBase:
         """
 
         app = web.Application()
-        aiohttp_jinja2.setup(app,
-            loader=jinja2.FileSystemLoader('templates'))
         routes = web.RouteTableDef()
 
         @routes.get('/')
-        @aiohttp_jinja2.template(template)
         async def get_handler(request: web.Request) -> web.Response:
-            return await self.get_info()
+            return web.FileResponse(TEMPLATE_PATH / template)
 
         @routes.get('/state')
+        @routes.get(f'/{self.id}/state')
         async def get_state(request: web.Request) -> web.Response:
             state = await self.get_info()
             return web.Response(text=json.dumps(state), status=200)
@@ -70,7 +69,8 @@ class WebNodeBase:
         """
 
         return {'name': self.name,
-                'id': self.id}
+                'id': self.id,
+                'type': None}
 
     async def event_handler(self, command: str, data: dict) -> None:
         """Handles events from web interface

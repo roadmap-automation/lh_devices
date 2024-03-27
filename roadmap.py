@@ -334,6 +334,10 @@ class RoadmapChannelAssembly(AssemblyBase):
 
         return app
 
+    async def get_info(self) -> Dict:
+        d = await super().get_info()
+        d['assemblies'] = {ch.id: ch.name for ch in self.channels}
+
 if __name__=='__main__':
 
     import asyncio

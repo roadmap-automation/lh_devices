@@ -5,17 +5,12 @@ import json
 
 from typing import Tuple, List
 from uuid import uuid4
-from pathlib import Path
 from aiohttp import web
-import aiohttp_jinja2
-import jinja2
 
 from HamiltonComm import HamiltonSerial
 from valve import ValveBase, SyringeValveBase
 from connections import Node
 from webview import sio, WebNodeBase
-
-TEMPLATE_PATH = Path(__file__).parent / 'templates'
 
 class PollTimer:
     """Async timer for polling delay
@@ -214,7 +209,8 @@ class HamiltonBase(WebNodeBase):
 
         init = await self.is_initialized()
 
-        return d.update({
+        d.update({
+                'type': 'device',
                 'config': {
                            'com_port': self.serial.port,
                            'address': self.address},
@@ -222,6 +218,8 @@ class HamiltonBase(WebNodeBase):
                           'idle': self.idle,
                           'reserved': self.reserved},
                 'controls': {}})
+        
+        return d
 
 class HamiltonValvePositioner(HamiltonBase):
     """Hamilton MVP4 device
@@ -371,7 +369,7 @@ class HamiltonValvePositioner(HamiltonBase):
         add_state = {'valve': self.valve.get_info()}
         info['state'] = info['state'] | add_state
         controls = {'move_valve': {'type': 'select',
-                                   'text': 'Move Valve',
+                                   'text': 'Move Valve: ',
                                    'options': [str(i) for i in range(self.valve.n_positions + 1)],
                                    'current': str(self.valve.position)}
                    }
