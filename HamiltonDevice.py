@@ -189,7 +189,7 @@ class HamiltonBase(WebNodeBase):
 
         return response.split(c, 1)[1], error
     
-    def create_web_app(self, template='device.html') -> web.Application:
+    def create_web_app(self, template='roadmap.html') -> web.Application:
         """Creates a web application for this specific device
 
         Returns:
