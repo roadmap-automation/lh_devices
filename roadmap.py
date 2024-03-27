@@ -283,6 +283,7 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBasewithGSIOC):
         for i, ch in enumerate(channels):
             ch.network = self.network
             ch.injection_node = injection_port.nodes[0]
+            #ch.devices.append(distribution_valve)
             if 'LoadLoop' in ch.modes.keys():
                 ch.modes['LoadLoop'].valves.update({distribution_valve: 1 + 2 * i})
             if 'LoadLoop' in ch.methods.keys():
@@ -362,6 +363,9 @@ if __name__=='__main__':
 
             channel_0 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='channel_0')
             channel_1 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='channel_1')
+            channel_2 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='channel_2')
+            channel_3 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='channel_3')
+
 
             # connect LH injection port to distribution port valve 0
             connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 124 + 20)
@@ -384,7 +388,7 @@ if __name__=='__main__':
             # connect cell outlet to loop valve port 5
             connect_nodes(mvp.valve.nodes[5], fc.outlet_node, 0.0)
 
-            qcmd_system = RoadmapChannelAssembly([channel_0, channel_1], dvp, ip, name='MultiChannel System')
+            qcmd_system = RoadmapChannelAssembly([channel_0, channel_1, channel_2, channel_3], dvp, ip, name='MultiChannel System')
             app = qcmd_system.create_web_app(template='roadmap.html')
             runner = await run_socket_app(app, 'localhost', 5003)
             print(json.dumps(await qcmd_system.get_info()))

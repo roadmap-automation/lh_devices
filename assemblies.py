@@ -151,7 +151,7 @@ class AssemblyBase(WebNodeBase):
                                                         position as value
         """
 
-        await asyncio.gather(*(dev.run_until_idle(dev.move_valve(pos)) for dev, pos in valve_config.items() if dev in self.devices))
+        await asyncio.gather(*(dev.run_until_idle(dev.move_valve(pos)) for dev, pos in valve_config.items()))
 
     def get_dead_volume(self, source_node: Node, mode: str | None = None) -> float:
         """Gets dead volume of configuration mode given a source connection
