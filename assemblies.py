@@ -394,6 +394,33 @@ class AssemblyBasewithGSIOC(AssemblyBase):
 
         return response
 
+class NestedAssemblyBase(AssemblyBase):
+    """Nested assembly class that allows specification of sub-assemblies
+    """
+
+    def __init__(self, devices: List[HamiltonBase], assemblies: List[AssemblyBase], name='') -> None:
+        unique_devices = set([dev for assembly in assemblies for dev in assembly.devices] + devices)
+        super().__init__(list(unique_devices), name)
+
+        self.assemblies = assemblies
+
+    def create_web_app(self, template='assembly.html') -> web.Application:
+        app = super().create_web_app(template)
+
+        for assembly in self.assemblies:
+            app.add_subapp(f'/{assembly.id}/', assembly.create_web_app())
+
+        return app
+
+    async def get_info(self) -> Dict:
+        """Updates base class information with 
+
+        Returns:
+            Dict: _description_
+        """
+        d = await super().get_info()
+        d.update({'assemblies': {assembly.id: assembly.name for assembly in self.assemblies}})
+        return d
 
 class AssemblyTest(AssemblyBase):
 

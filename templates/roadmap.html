@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <head>
     <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js" integrity="sha512-q/dWJ3kcmjBLU4Qc47E4A9kTB4m3wuTY7vkFJDTZKjTs8jhyGQnaUrxa0Ytd0ssMZhbNua9hE+E7Qv1j+DyZwA==" crossorigin="anonymous"></script>
@@ -24,6 +25,7 @@
                             return response.json();
                         }).then(function (newinfo) {
                             // 3. Recursively create new divs for the subassemblies
+                            console.log(newinfo)
                             gen_assembly_tree(newinfo, newdiv)
 
                         });
@@ -164,6 +166,7 @@
                 .then(function (response) {
                     return response.json();
                 }).then(function (info) {
+                    console.log(info)
                     var newdiv = create_assembly_div(info['id'])
                     gen_assembly_tree(info, newdiv)
                     $("#top_assembly").append(newdiv)
