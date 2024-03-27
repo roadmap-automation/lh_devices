@@ -246,7 +246,7 @@ class AssemblyBase(WebNodeBase):
         """
         return any(dev.reserved for dev in self.devices)
     
-    def create_web_app(self, template='assembly.html') -> web.Application:
+    def create_web_app(self, template='roadmap.html') -> web.Application:
         """Creates a web application for this specific assembly by creating a webpage per device
 
         Returns:

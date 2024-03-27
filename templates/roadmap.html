@@ -12,8 +12,24 @@
                             'data': data})
         }
 
+        function create_device(device_id, parent_div) {
+            var newdevicediv = create_device_div(device_id)
+            parent_div.children(".assembly_devices").append(newdevicediv)
+
+            // Register update function
+            let exist = socket.hasListeners(device_id)
+            if (!exist) {
+                socket.on(device_id, function () {
+                    update(device_id)
+                })
+            }
+
+            // Update controls
+            update(device_id)
+        }
+
         function gen_assembly_tree(info, parent_div) {
-            if ('assemblies' in info) {
+            if (info['type'] == 'assembly') {
                 for (const [assembly_id, assembly_name] of Object.entries(info['assemblies'])) {
                     // Recursively create the assembly div tree:
                     // 1. Create a new div for the assembly
@@ -31,35 +47,24 @@
                         });
                     parent_div.children(".sub_assemblies").append(newdiv)
                 }
-            }
-            if ('devices' in info) {
                 for (const [device_id, device_name] of Object.entries(info['devices'])) {
                     // Create device divs
-                    var newdevicediv = create_device_div(device_id)
-                    parent_div.children(".assembly_devices").append(newdevicediv)
-
-                    // Register update function
-                    let exist = socket.hasListeners(device_id)
-                    if (!exist) {
-                        socket.on(device_id, function () {
-                            update(device_id)
-                        })
-                    }
-
-                    // Update controls
-                    update(device_id)
+                    create_device(device_id, parent_div)
                 }
-            }
-            // Register update function (only once)
-            let exist = socket.hasListeners(info['id'])
-            if (!exist) {
-                socket.on(info['id'], function () {
-                    update(info['id'])
-                })
-            }
+                // Register update function (only once)
+                let exist = socket.hasListeners(info['id'])
+                if (!exist) {
+                    socket.on(info['id'], function () {
+                        update(info['id'])
+                    })
+                }
 
-            // Update with current mode
-            update(info['id'])
+                // Update with current mode
+                update(info['id'])
+            }
+            else if (info['type'] == 'device') {
+                create_device(info['id'], parent_div)
+            }
         }
 
         function create_assembly_div(assembly_id) {
