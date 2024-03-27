@@ -113,7 +113,7 @@
                     else if (data['type'] == 'assembly') {
                         $('.' + id).each( function(index) {
                             $(this).children(".assembly_name").empty().append(data['name']);
-                            $(this).children(".assembly_id").empty().append(data['id']);
+                            $(this).children(".assembly_id").empty().append(new $("<a>").attr("href", data['id'] + "/").text(data['id']));
                             update_modes($(this), id, data['modes'], data['current_mode'])
                         });
                     }
@@ -217,6 +217,11 @@
         font-weight: normal;
         text-align: center;
     }
+    .assembly_id a {
+        color: #444444;
+        font-weight: normal;
+        text-align: center;
+    }
     .device_name {
         color: #444444;
         font-size: normal;
@@ -226,6 +231,11 @@
     .device_id {
         color: #444444;
         font-size: smaller;
+        font-weight: normal;
+        text-align: center;
+    }
+    .device_id a {
+        color: #444444;
         font-weight: normal;
         text-align: center;
     }
