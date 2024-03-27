@@ -1,17 +1,16 @@
 import json
 import asyncio
 import logging
-import jinja2
 from uuid import uuid4
 from copy import deepcopy
 from aiohttp import web
-import aiohttp_jinja2
 from typing import List, Tuple, Dict, Coroutine
 
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from connections import Port, Node, connect_nodes
 from components import ComponentBase
+from webview import sio, WebNodeBase
 
 class Network:
     """Representation of a node network
@@ -108,7 +107,7 @@ class Mode:
         self.valves = valves
         self.final_node = final_node
 
-class AssemblyBase:
+class AssemblyBase(WebNodeBase):
     """Assembly of Hamilton LH devices
     """
 
@@ -152,7 +151,7 @@ class AssemblyBase:
                                                         position as value
         """
 
-        await asyncio.gather(*(dev.run_until_idle(dev.move_valve(pos)) for dev, pos in valve_config.items() if dev in self.devices))
+        await asyncio.gather(*(dev.run_until_idle(dev.move_valve(pos)) for dev, pos in valve_config.items()))
 
     def get_dead_volume(self, source_node: Node, mode: str | None = None) -> float:
         """Gets dead volume of configuration mode given a source connection
@@ -231,34 +230,66 @@ class AssemblyBase:
 
     @property
     def idle(self) -> bool:
+        """Assembly is idle if all devices in the assembly are idle
+
+        Returns:
+            bool: True if all devices are idle
+        """
         return all(dev.idle for dev in self.devices) # & (not len(self.running_tasks))
     
-    def create_web_app(self) -> web.Application:
+    @property
+    def reserved(self) -> bool:
+        """Assembly is reserved if any of the devices are reserved
+
+        Returns:
+            bool: True if any devices are reserved
+        """
+        return any(dev.reserved for dev in self.devices)
+    
+    def create_web_app(self, template='roadmap.html') -> web.Application:
         """Creates a web application for this specific assembly by creating a webpage per device
 
         Returns:
             web.Application: web application for this device
         """
 
-        app = web.Application()
-        aiohttp_jinja2.setup(app,
-            loader=jinja2.FileSystemLoader('templates'))
-        routes = web.RouteTableDef()
+        app = super().create_web_app(template)
 
         for device in self.devices:
             app.add_subapp(f'/{device.id}/', device.create_web_app())
 
-        @routes.get('/')
-        @aiohttp_jinja2.template('assembly.html')
-        async def get_handler(request: web.Request) -> web.Response:
-            return {'id': self.id,
-                    'name': self.name,
-                    'devices': json.dumps({device.id: device.name for device in self.devices})}
-
-        app.add_routes(routes)
-
         return app
+
     
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        await super().event_handler(command, data)
+        if command == 'change_mode':
+            await self.change_mode(data)
+
+    async def get_info(self) -> dict:
+        """Gets object state as dictionary
+
+        Returns:
+            dict: object state
+        """
+
+        d = await super().get_info()
+
+        d.update({  'type': 'assembly',
+                    'devices': {device.id: device.name for device in self.devices},
+                    'modes': [mode for mode in self.modes],
+                    'current_mode': self.current_mode,
+                    'assemblies': {}})
+        
+        return d
+
 class AssemblyBasewithGSIOC(AssemblyBase):
     """Assembly with support for GSIOC commands
     """
@@ -363,6 +394,33 @@ class AssemblyBasewithGSIOC(AssemblyBase):
 
         return response
 
+class NestedAssemblyBase(AssemblyBase):
+    """Nested assembly class that allows specification of sub-assemblies
+    """
+
+    def __init__(self, devices: List[HamiltonBase], assemblies: List[AssemblyBase], name='') -> None:
+        unique_devices = set([dev for assembly in assemblies for dev in assembly.devices] + devices)
+        super().__init__(list(unique_devices), name)
+
+        self.assemblies = assemblies
+
+    def create_web_app(self, template='assembly.html') -> web.Application:
+        app = super().create_web_app(template)
+
+        for assembly in self.assemblies:
+            app.add_subapp(f'/{assembly.id}/', assembly.create_web_app())
+
+        return app
+
+    async def get_info(self) -> Dict:
+        """Updates base class information with 
+
+        Returns:
+            Dict: _description_
+        """
+        d = await super().get_info()
+        d.update({'assemblies': {assembly.id: assembly.name for assembly in self.assemblies}})
+        return d
 
 class AssemblyTest(AssemblyBase):
 
