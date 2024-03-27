@@ -1,11 +1,9 @@
 import json
 import asyncio
 import logging
-import jinja2
 from uuid import uuid4
 from copy import deepcopy
 from aiohttp import web
-import aiohttp_jinja2
 from typing import List, Tuple, Dict, Coroutine
 
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
@@ -255,7 +253,13 @@ class AssemblyBase(WebNodeBase):
             web.Application: web application for this device
         """
 
-        return super().create_web_app(template)
+        app = super().create_web_app(template)
+
+        for device in self.devices:
+            app.add_subapp(f'/{device.id}/', device.create_web_app())
+
+        return app
+
     
     async def event_handler(self, command: str, data: dict) -> None:
         """Handles events from web interface
@@ -278,10 +282,13 @@ class AssemblyBase(WebNodeBase):
 
         d = await super().get_info()
 
-        return d.update({
+        d.update({  'type': 'assembly',
                     'devices': {device.id: device.name for device in self.devices},
                     'modes': [mode for mode in self.modes],
-                    'current_mode': self.current_mode})
+                    'current_mode': self.current_mode,
+                    'assemblies': {}})
+        
+        return d
 
 class AssemblyBasewithGSIOC(AssemblyBase):
     """Assembly with support for GSIOC commands
