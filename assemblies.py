@@ -113,6 +113,10 @@ class Mode:
 
         await asyncio.gather(*(valve.run_until_idle(valve.move_valve(position)) for valve, position in self.valves.items()))
 
+    def __repr__(self) -> str:
+
+        return '; '.join(f'{valve.name} -> {position}' for valve, position in self.valves.items())
+
 class AssemblyBase(WebNodeBase):
     """Assembly of Hamilton LH devices
     """
