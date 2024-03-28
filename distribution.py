@@ -21,7 +21,7 @@ class DistributionBase(AssemblyBase):
 
         self.injection_port = injection_port
         self.n_positions = n_positions
-        self.modes: Dict[int, Mode] = {}
+        self.modes: Dict[str, Mode] = {}
 
 class DistributionSingleValve(DistributionBase):
 
