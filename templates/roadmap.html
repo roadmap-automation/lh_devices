@@ -110,8 +110,8 @@
                         $('.' + id).each(function (index) {
                             $(this).children(".device_name").empty().append(data['name']);
                             $(this).children(".device_id").empty().append(new $("<a>").attr("href", data['id'] + "/").text(data['id']));
-                            $(this).children(".config").empty().append(JSON.stringify(data['config']));
-                            $(this).children(".state").empty().append(JSON.stringify(data['state']));
+                            /*$(this).children(".device_config").empty().append(JSON.stringify(data['config']));
+                            $(this).children(".device_state").empty().append(JSON.stringify(data['state']));*/
                             update_controls($(this), id, data['controls'])
                         });
                     }
