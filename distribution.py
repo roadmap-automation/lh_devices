@@ -28,4 +28,4 @@ class DistributionSingleValve(DistributionBase):
     def __init__(self, distribution_valve: HamiltonValvePositioner, injection_port: InjectionPort, name='') -> None:
         super().__init__(distribution_valve.valve.n_positions, [distribution_valve], injection_port, name)
 
-        self.modes = {i: Mode({distribution_valve: i}) for i in range(self.n_positions)}
+        self.modes = {str(i): Mode({distribution_valve: i}) for i in range(self.n_positions + 1)}

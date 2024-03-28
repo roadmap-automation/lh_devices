@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from aiohttp.web_app import Application as Application
 from aiohttp import web
 
-from assemblies import Mode
+from distribution import DistributionBase, DistributionSingleValve
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from gsioc import GSIOC, GSIOCMessage
 from components import InjectionPort, FlowCell
-from assemblies import AssemblyBase, AssemblyBasewithGSIOC, Network, NestedAssemblyBase
+from assemblies import AssemblyBase, AssemblyBasewithGSIOC, Network, NestedAssemblyBase, Mode, AssemblyMode
 from connections import connect_nodes, Node
 from methods import MethodBase
 
@@ -85,14 +85,27 @@ class RoadmapChannelBase(AssemblyBasewithGSIOC):
         for _ in range(n_prime):
             await self.syringe_pump.smart_dispense(volume, self.syringe_pump.max_aspirate_flow_rate)
 
+    def is_ready(self, method_name: str) -> bool:
+        """Checks if all devices are unreserved for method
+
+        Args:
+            method_name (str): name of method to check
+
+        Returns:
+            bool: True if all devices are unreserved
+        """
+
+        return self.methods[method_name].is_ready()
+
 class LoadLoop(MethodBase):
     """Loads the loop of one ROADMAP channel
     """
 
-    def __init__(self, channel: RoadmapChannelBase) -> None:
-        super().__init__([channel.syringe_pump, channel.loop_valve])
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode) -> None:
+        super().__init__([channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys()])
         self.channel = channel
         self.dead_volume_mode: str = 'LoadLoop'
+        self.distribution_mode = distribution_mode
 
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
@@ -103,6 +116,8 @@ class LoadLoop(MethodBase):
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
+
+        self.reserve_all()
 
         method = self.MethodDefinition(**kwargs)
 
@@ -124,7 +139,9 @@ class LoadLoop(MethodBase):
         logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.channel.wait_for_trigger()
         logging.info(f'{self.channel.name}.{method.name}: Switching to LoadLoop mode')
-        await self.channel.change_mode('LoadLoop')
+
+        # Move all valves
+        await asyncio.gather(self.distribution_mode.activate(), self.channel.change_mode('LoadLoop'))
 
         # Wait for trigger to switch to PumpAspirate mode
         logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
@@ -145,6 +162,8 @@ class LoadLoop(MethodBase):
         logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
         await self.channel.change_mode('Standby')
 
+        self.release_all()
+
 class InjectLoop(MethodBase):
     """Injects the contents of the loop of one ROADMAP channel
     """
@@ -163,6 +182,8 @@ class InjectLoop(MethodBase):
     async def run(self, **kwargs):
         """InjectLoop method"""
 
+        self.reserve_all()
+
         method = self.MethodDefinition(**kwargs)
 
         pump_volume = float(method.pump_volume)
@@ -176,14 +197,17 @@ class InjectLoop(MethodBase):
         # Prime loop
         await self.channel.primeloop(volume=1000)
 
+        self.release_all()
+
 class DirectInject(MethodBase):
     """Directly inject from LH to a ROADMAP channel flow cell
     """
 
-    def __init__(self, channel: RoadmapChannelBase) -> None:
-        super().__init__([channel.loop_valve])
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode) -> None:
+        super().__init__([channel.loop_valve, *distribution_mode.valves.keys()])
         self.channel = channel
         self.dead_volume_mode: str = 'LHInject'
+        self.distribution_mode = distribution_mode
 
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
@@ -192,6 +216,8 @@ class DirectInject(MethodBase):
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
+
+        self.reserve_all()
 
         method = self.MethodDefinition(**kwargs)
 
@@ -210,7 +236,7 @@ class DirectInject(MethodBase):
         logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.channel.wait_for_trigger()
         logging.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
-        await self.channel.change_mode('LHPrime')
+        await asyncio.gather(self.channel.change_mode('LHPrime'), self.distribution_mode.activate())
 
         # Wait for trigger to switch to {method.name} mode (LH performs injection)
         logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
@@ -236,6 +262,7 @@ class DirectInject(MethodBase):
 
         # At this point, liquid handler is done, release communications
         gsioc_task.cancel()
+        self.release_all()
 
 class RoadmapChannel(RoadmapChannelBase):
     """Roadmap channel with populated methods
@@ -244,60 +271,45 @@ class RoadmapChannel(RoadmapChannelBase):
     def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump, flow_cell: FlowCell, sample_loop: FlowCell, gsioc: GSIOC, injection_node: Node | None = None, name: str = '') -> None:
         super().__init__(loop_valve, syringe_pump, flow_cell, sample_loop, gsioc, injection_node, name)
 
-        self.methods = {'LoadLoop': LoadLoop(self),
-                        'InjectLoop': InjectLoop(self),
-                        'DirectInject': DirectInject(self)}
-        
-    def is_ready(self, method_name: str) -> bool:
-        """Checks if all devices are unreserved for method
-
-        Args:
-            method_name (str): name of method to check
-
-        Returns:
-            bool: True if all devices are unreserved
-        """
-
-        return self.methods[method_name].is_ready()
+        # add standalone methods
+        self.methods = {'InjectLoop': InjectLoop(self)}
         
 class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBasewithGSIOC):
 
-    def __init__(self, channels: List[RoadmapChannel], distribution_valve: HamiltonValvePositioner, injection_port: InjectionPort, name='') -> None:
-        NestedAssemblyBase.__init__(self, [dev for ch in channels for dev in ch.devices] + [distribution_valve], channels, name)
+    def __init__(self, channels: List[RoadmapChannel], distribution_system: DistributionBase, name='') -> None:
+        NestedAssemblyBase.__init__(self, [], channels + [distribution_system], name)
         AssemblyBasewithGSIOC.__init__(self, self.devices, name)
 
         """TODO:
-            1. distribution valve is generalized to a distribution system
+            1. Generalize methods to have specific upstream and downstream connection points (if necessary)
             2. add change_direction capability to ROADMAP channels
         """
 
-        self.injection_port = injection_port
-        self.distribution_valve = distribution_valve
+        self.injection_port = distribution_system.injection_port
+        self.distribution_system = distribution_system
 
         # Build network
-        self.network = Network([dev for ch in channels for dev in ch.network.devices] + [distribution_valve, injection_port])
+        self.network = Network(self.devices + [self.injection_port])
 
-        self.modes = {'Standby': Mode(valves={distribution_valve: 8})}
+        self.modes = {'Standby': AssemblyMode(modes={distribution_system: distribution_system.modes['8']})}
+        
+        distribution_system.network = self.network
 
-        # update channels and methods with upstream information
+        # update channels with upstream information
         for i, ch in enumerate(channels):
+            # update network for accurate dead volume calculation
             ch.network = self.network
-            ch.injection_node = injection_port.nodes[0]
-            #ch.devices.append(distribution_valve)
-            if 'LoadLoop' in ch.modes.keys():
-                ch.modes['LoadLoop'].valves.update({distribution_valve: 1 + 2 * i})
-            if 'LoadLoop' in ch.methods.keys():
-                ch.methods['LoadLoop'].devices.append(distribution_valve)
-            if 'DirectInject' in ch.modes.keys():
-                ch.modes['DirectInject'].valves.update({distribution_valve: 2 + 2 * i})
-            if 'DirectInject' in ch.methods.keys():
-                ch.methods['DirectInject'].devices.append(distribution_valve)
+            ch.injection_node = self.injection_port.nodes[0]
+
+            # add system-specific methods to the channel
+            ch.methods.update({'LoadLoop': LoadLoop(ch, AssemblyMode(modes={distribution_system: distribution_system.modes[str(1 + 2 * i)]}))})
+            ch.methods.update({'DirectInject': DirectInject(ch, AssemblyMode({distribution_system: distribution_system.modes[str(1 + 2 * i)]}))})
 
         self.channels = channels
 
     async def initialize(self) -> None:
         """Initialize the loop as a unit and the distribution valve separately"""
-        await asyncio.gather(*[ch.initialize() for ch in self.channels], self.distribution_valve.initialize())
+        await asyncio.gather(*[ch.initialize() for ch in self.channels], self.distribution_system.initialize())
 
     def run_channel_method(self, channel: int, method_name: str, method_data: dict) -> None:
         return self.channels[channel].run_method(method_name, **method_data)
@@ -365,7 +377,7 @@ if __name__=='__main__':
             channel_1 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='channel_1')
             channel_2 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='channel_2')
             channel_3 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='channel_3')
-
+            distribution_system = DistributionSingleValve(dvp, ip, 'distribution_system')
 
             # connect LH injection port to distribution port valve 0
             connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 124 + 20)
@@ -388,7 +400,7 @@ if __name__=='__main__':
             # connect cell outlet to loop valve port 5
             connect_nodes(mvp.valve.nodes[5], fc.outlet_node, 0.0)
 
-            qcmd_system = RoadmapChannelAssembly([channel_0, channel_1, channel_2, channel_3], dvp, ip, name='MultiChannel System')
+            qcmd_system = RoadmapChannelAssembly([channel_0, channel_1, channel_2, channel_3], distribution_system=distribution_system, name='MultiChannel System')
             app = qcmd_system.create_web_app(template='roadmap.html')
             runner = await run_socket_app(app, 'localhost', 5003)
             print(json.dumps(await qcmd_system.get_info()))
