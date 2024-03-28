@@ -102,10 +102,16 @@ class Mode:
     """Define assembly configuration. Contains a dictionary of valves of the current
         assembly to move. Also defines final node for dead volume tracing"""
     
-    def __init__(self, valves: Dict[HamiltonValvePositioner, int], final_node: Node | None = None) -> None:
+    def __init__(self, valves: Dict[HamiltonValvePositioner, int] = {}, final_node: Node | None = None) -> None:
 
         self.valves = valves
         self.final_node = final_node
+
+    async def activate(self) -> None:
+        """Moves valves to positions defined in configuration dictionary
+        """
+
+        await asyncio.gather(*(valve.run_until_idle(valve.move_valve(position)) for valve, position in self.valves.items()))
 
 class AssemblyBase(WebNodeBase):
     """Assembly of Hamilton LH devices
@@ -289,6 +295,17 @@ class AssemblyBase(WebNodeBase):
                     'assemblies': {}})
         
         return d
+
+class AssemblyMode(Mode):
+    """Assembly-level mode, used for changing the modes of sub-assemblies. Combines mode valve configurations with valve configurations.
+        Modes override conflicts with existing valves (no attempt at conflict resolution)
+    """
+
+    def __init__(self, modes: Dict[AssemblyBase, Mode] = {}, valves: Dict[HamiltonValvePositioner, int] = {}, final_node: Node | None = None) -> None:
+        super().__init__(valves, final_node)
+
+        for mode in modes.values():
+            self.valves.update(mode.valves)
 
 class AssemblyBasewithGSIOC(AssemblyBase):
     """Assembly with support for GSIOC commands
