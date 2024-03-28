@@ -31,6 +31,20 @@ class MethodBase:
 
         devices_reserved = any(dev.reserved for dev in self.devices)
         return (not devices_reserved)
+    
+    def reserve_all(self) -> None:
+        """Reserves all devices used in method
+        """
+
+        for dev in self.devices:
+            dev.reserved = True
+
+    def release_all(self) -> None:
+        """Releases all devices
+        """
+
+        for dev in self.devices:
+            dev.reserved = False
 
     @dataclass
     class MethodDefinition:
