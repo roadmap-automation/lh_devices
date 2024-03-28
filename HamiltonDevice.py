@@ -569,7 +569,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
     async def update_status(self) -> None:
         """
-        Polls the status of the device using 'Q'
+        Polls the status of the device using '?' for syringe position and 'Q' for busy status
         """
 
         error = await self.get_syringe_position()
@@ -577,6 +577,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         # TODO: Handle error
         if error:
             logging.error(f'{self}: Error in update_status: {error}')
+
+        await super().update_status()
 
     async def get_syringe_position(self) -> int:
         """Reads absolute position of syringe
