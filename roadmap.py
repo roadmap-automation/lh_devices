@@ -290,7 +290,6 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBasewithGSIOC):
 
         # Build network
         self.network = Network(self.devices + [self.injection_port])
-
         self.modes = {'Standby': AssemblyMode(modes={distribution_system: distribution_system.modes['8']})}
         
         distribution_system.network = self.network
@@ -303,7 +302,7 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBasewithGSIOC):
 
             # add system-specific methods to the channel
             ch.methods.update({'LoadLoop': LoadLoop(ch, AssemblyMode(modes={distribution_system: distribution_system.modes[str(1 + 2 * i)]}))})
-            ch.methods.update({'DirectInject': DirectInject(ch, AssemblyMode({distribution_system: distribution_system.modes[str(1 + 2 * i)]}))})
+            ch.methods.update({'DirectInject': DirectInject(ch, AssemblyMode({distribution_system: distribution_system.modes[str(2 + 2 * i)]}))})
 
         self.channels = channels
 
@@ -357,7 +356,7 @@ if __name__=='__main__':
 
     logging.basicConfig(format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S',
-                    level=logging.INFO)
+                    level=logging.DEBUG)
 
     if True:
         async def main():
@@ -373,11 +372,11 @@ if __name__=='__main__':
             fc = FlowCell(139, 'flow_cell')
             sampleloop = FlowCell(5060., 'sample_loop')
 
-            channel_0 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='channel_0')
-            channel_1 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='channel_1')
-            channel_2 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='channel_2')
-            channel_3 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='channel_3')
-            distribution_system = DistributionSingleValve(dvp, ip, 'distribution_system')
+            channel_0 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 0')
+            channel_1 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 1')
+            channel_2 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 2')
+            channel_3 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 3')
+            distribution_system = DistributionSingleValve(dvp, ip, 'Distribution System')
 
             # connect LH injection port to distribution port valve 0
             connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 124 + 20)
