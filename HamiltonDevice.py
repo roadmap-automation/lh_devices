@@ -406,7 +406,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         super().__init__(serial_instance, address, valve, name)
 
         # Syringe poll delay
-        self.syringe_poll_delay = 0.5
+        self.syringe_poll_delay = 0.2
 
         # Syringe volume in uL
         self.syringe_volume = syringe_volume
