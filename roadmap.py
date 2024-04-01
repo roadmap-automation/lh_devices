@@ -331,7 +331,7 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBasewithGSIOC):
             return web.Response(text='busy', status=200)
         
         @routes.get('/GetTaskData')
-        async def handle_task(request: web.Request) -> web.Response:
+        async def get_task(request: web.Request) -> web.Response:
             # TODO: turn task into a dataclass; parsing will change
             task = request.json()
             task_id = task['id']
@@ -356,60 +356,72 @@ if __name__=='__main__':
 
     logging.basicConfig(format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S',
-                    level=logging.DEBUG)
+                    level=logging.INFO)
 
     if True:
         async def main():
             gsioc = GSIOC(62, 'COM13', 19200)
             ser = HamiltonSerial(port='COM7', baudrate=38400)
             #ser = HamiltonSerial(port='COM3', baudrate=38400)
-            dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='distribution_valve_positioner')
-            mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
-            sp = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000., False, name='syringe_pump')
-            sp.max_dispense_flow_rate = 5 * 1000 / 60
-            sp.max_aspirate_flow_rate = 15 * 1000 / 60
+            dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Valve')
+            mvp0 = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve0'), name='Loop Valve 0')
+            sp0 = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve0'), 5000., False, name='Syringe Pump 0')
+            mvp1 = HamiltonValvePositioner(ser, '4', LoopFlowValve(6, name='loop_valve1'), name='Loop Valve 1')
+            sp1 = HamiltonSyringePump(ser, '3', SyringeLValve(4, name='syringe_LValve1'), 5000., False, name='Syringe Pump 1')
+            for sp in [sp0, sp1]:
+                sp.max_dispense_flow_rate = 5 * 1000 / 60
+                sp.max_aspirate_flow_rate = 15 * 1000 / 60
             ip = InjectionPort('LH_injection_port')
-            fc = FlowCell(139, 'flow_cell')
-            sampleloop = FlowCell(5060., 'sample_loop')
+            fc0 = FlowCell(139, 'flow_cell0')
+            fc1 = FlowCell(139, 'flow_cell1')
+            sampleloop0 = FlowCell(5060., 'sample_loop0')
+            sampleloop1 = FlowCell(5060., 'sample_loop1')
 
-            channel_0 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 0')
-            channel_1 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 1')
-            channel_2 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 2')
-            channel_3 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 3')
+            channel_0 = RoadmapChannel(mvp0, sp0, fc0, sampleloop0, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 0')
+            channel_1 = RoadmapChannel(mvp1, sp1, fc1, sampleloop1, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 1')
+            #channel_2 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 2')
+            #channel_3 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 3')
             distribution_system = DistributionSingleValve(dvp, ip, 'Distribution System')
 
             # connect LH injection port to distribution port valve 0
             connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 124 + 20)
 
             # connect distribution valve port 1 to syringe pump valve node 2 (top)
-            connect_nodes(dvp.valve.nodes[1], sp.valve.nodes[2], 73 + 20)
+            connect_nodes(dvp.valve.nodes[1], sp0.valve.nodes[2], 73 + 20)
+            connect_nodes(dvp.valve.nodes[3], sp1.valve.nodes[2], 74 + 20)
 
             # connect distribution valve port 2 to loop valve node 3 (top right)
-            connect_nodes(dvp.valve.nodes[2], mvp.valve.nodes[3], 82 + 20)
+            connect_nodes(dvp.valve.nodes[2], mvp0.valve.nodes[3], 82 + 20)
+            connect_nodes(dvp.valve.nodes[4], mvp1.valve.nodes[3], 83 + 20)
 
             # connect syringe pump valve port 3 to sample loop
-            connect_nodes(sp.valve.nodes[3], sampleloop.inlet_node, 0.0)
+            connect_nodes(sp0.valve.nodes[3], sampleloop0.inlet_node, 0.0)
+            connect_nodes(sp1.valve.nodes[3], sampleloop1.inlet_node, 0.0)
 
             # connect sample loop to loop valve port 1
-            connect_nodes(mvp.valve.nodes[1], sampleloop.outlet_node, 0.0)
+            connect_nodes(mvp0.valve.nodes[1], sampleloop0.outlet_node, 0.0)
+            connect_nodes(mvp1.valve.nodes[1], sampleloop1.outlet_node, 0.0)
 
             # connect cell inlet to loop valve port 2
-            connect_nodes(mvp.valve.nodes[2], fc.inlet_node, 0.0)
+            connect_nodes(mvp0.valve.nodes[2], fc0.inlet_node, 0.0)
+            connect_nodes(mvp1.valve.nodes[2], fc1.inlet_node, 0.0)
 
             # connect cell outlet to loop valve port 5
-            connect_nodes(mvp.valve.nodes[5], fc.outlet_node, 0.0)
+            connect_nodes(mvp0.valve.nodes[5], fc0.outlet_node, 0.0)
+            connect_nodes(mvp1.valve.nodes[5], fc1.outlet_node, 0.0)
 
-            qcmd_system = RoadmapChannelAssembly([channel_0, channel_1, channel_2, channel_3], distribution_system=distribution_system, name='MultiChannel System')
+            qcmd_system = RoadmapChannelAssembly([channel_0, channel_1], distribution_system=distribution_system, name='MultiChannel System')
             app = qcmd_system.create_web_app(template='roadmap.html')
             runner = await run_socket_app(app, 'localhost', 5003)
-            print(json.dumps(await qcmd_system.get_info()))
+            #print(json.dumps(await qcmd_system.get_info()))
             #lh = SimLiquidHandler(qcmd_channel)
 
             try:
                 #qcmd_system.distribution_valve.valve.move(2)
                 await qcmd_system.initialize()
-                await asyncio.sleep(2)
-                await channel_0.change_mode('PumpPrimeLoop')
+                #await asyncio.sleep(2)
+                #await channel_0.change_mode('PumpPrimeLoop')
+                #await sp1.aspirate(2500, sp1.max_aspirate_flow_rate)
                 #await qcmd_channel.primeloop(2)
                 #await qcmd_system.change_mode('LoopInject')
                 #await qcmd_channel.change_mode('LoadLoop')
