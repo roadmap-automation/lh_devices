@@ -239,7 +239,7 @@
             return newprogressbar
         }
 
-        window.onload = function() {
+        function refresh_all() {
             fetch(window.location.href + 'state')
                 .then(function (response) {
                     return response.json();
@@ -248,11 +248,20 @@
                     var newdiv = create_assembly_div(info['id'])
                     gen_assembly_tree(info, newdiv)
                     newdiv.addClass("top-frame")
-                    newdiv.children(".assembly_name").addClass("top_assembly_name_text")
+                    newdiv.children(".assembly_name").attr("id", "top_assembly_name").addClass("top_assembly_name_text")
                     newdiv.children(".sub_assemblies").find(".assembly_name").addClass("assembly_name_text")
-                    $("#top_assembly").append(newdiv)
+                    $("#top_assembly").empty().append(newdiv)
                 });
             }
+
+        socket.on("connect", () => {
+            refresh_all()
+            $("#top_assembly_name").removeClass("titletext-disconnected")
+        });
+
+        socket.on("disconnect", () => {
+            $("#top_assembly_name").addClass("titletext-disconnected")
+        })
 
     </script>
 
