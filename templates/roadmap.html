@@ -50,15 +50,19 @@
                 for (const [device_id, device_name] of Object.entries(info['devices'])) {
                     // Create device divs
                     create_device(device_id, parent_div)
+
+                    // Register another listener on the device to update the parent div
+                    socket.on(device_id, function () {
+                        update_assembly_state(info['id'])
+                    })
                 }
                 // Register update function (only once)
                 let exist = socket.hasListeners(info['id'])
                 if (!exist) {
                     socket.on(info['id'], function () {
-                        update(info['id'])
+                        update_assembly_state(info['id'])
                     })
                 }
-
                 // Update with current mode
                 update(info['id'])
             }
@@ -100,19 +104,44 @@
             return newdiv
         }
 
+        function set_border(thisdiv, data) {
+            if (data["idle"] == true) {
+                thisdiv.addClass("idle").removeClass("busy")
+            }
+            else {
+                thisdiv.addClass("busy").removeClass("idle")
+            }
+            if (data["reserved"] == true) {
+                thisdiv.addClass("reserved").removeClass("free")
+            }
+            else {
+                thisdiv.addClass("free").removeClass("reserved")
+            }
+        }
+
+        function update_assembly_state(id) {
+            fetch(window.location.href + id + "/state")
+                .then(function (response) {
+                        return response.json();
+                    }).then(function (data) {
+                        console.log(data)
+                        $('.' + id).each(function (index) {
+                            set_border($(this), data['state'])
+                        })
+                    })
+        }
+
         function update(id) {
             fetch(window.location.href + id + "/state")
                 .then(function (response) {
                     return response.json();
                 }).then(function (data) {
                     // if a device
-                    if (data['type'] == 'device') {
-                        // select all objects with class corresponding to object's id
-                        $('.' + id).each(function (index) {
+                    $('.' + id).each(function (index) {
+                        if (data['type'] == 'device') {
+                            // select all objects with class corresponding to object's id
                             $(this).children(".device_name").empty().append(data['name']);
                             $(this).children(".device_id").empty().append(new $("<a>").attr("href", data['id'] + "/").text(data['id']));
-                            /*$(this).children(".device_config").empty().append(JSON.stringify(data['config']));
-                            $(this).children(".device_state").empty().append(JSON.stringify(data['state']));*/
                             statediv = $(this).children(".device_state")
                             statediv.empty()
                             if ('valve' in data['state']) {
@@ -124,16 +153,16 @@
                             }
                             statediv.append($('<hr>'))
                             update_controls($(this).children(".device_controls"), id, data['controls'])
-                        });
-                    }
-                    else if (data['type'] == 'assembly') {
-                        $('.' + id).each( function(index) {
+                        }
+                        else if (data['type'] == 'assembly') {
                             $(this).children(".assembly_name").empty().append(data['name']);
                             $(this).children(".assembly_id").empty().append(new $("<a>").attr("href", data['id'] + "/").text(data['id']));
                             update_modes($(this).children(".assembly_modes"), id, data['modes'], data['current_mode'])
                             update_controls($(this).children(".assembly_controls"), id, data['controls'])
-                        });
-                    }
+                        }
+                        set_border($(this), data['state'])
+                    });
+
                 });
             }
 
@@ -364,7 +393,7 @@
     .devicebox {
         background-color: lightsteelblue;
         border-radius: 10px;
-        border: 2px solid steelblue;
+        border-color: steelblue;
         margin: 5px;
         padding: 10px;
         /*color: purple*/
@@ -372,10 +401,22 @@
     .assembly {
         /*max-height: 30vh;*/
         /*height:100%;*/
-        border: 2px solid green;
+        border-color: green;
         border-radius: 10px;
-        background-color: rgb(209, 250, 230);
+        background-color: rgb(133, 139, 136);
         padding: 10px
+    }
+    .busy {
+        border-style:dashed
+    }
+    .idle {
+        border-style:solid
+    }
+    .reserved {
+        border-width:thick
+    }
+    .free {
+        border-width:medium
     }
     .grid-container {
         box-sizing: border-box;
@@ -390,7 +431,7 @@
     }
     .top-frame {
         border-radius: 10px;
-        border: 2px solid rgb(107, 70, 180);
+        border-color: rgb(107, 70, 180);
         background-color: rgb(220, 206, 248);
         margin: 0px;
         padding: 10px;

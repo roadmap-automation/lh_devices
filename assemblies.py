@@ -297,7 +297,9 @@ class AssemblyBase(WebNodeBase):
                     'modes': [mode for mode in self.modes],
                     'current_mode': self.current_mode,
                     'assemblies': {},
-                    'controls': {}})
+                    'controls': {},
+                    'state': {'idle': self.idle,
+                              'reserved': self.reserved}})
         
         return d
 
