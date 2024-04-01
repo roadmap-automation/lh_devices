@@ -285,15 +285,13 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBasewithGSIOC):
             2. add change_direction capability to ROADMAP channels
         """
 
-        self.injection_port = distribution_system.injection_port
-        self.distribution_system = distribution_system
-
         # Build network
+        self.injection_port = distribution_system.injection_port
         self.network = Network(self.devices + [self.injection_port])
-        self.modes = {'Standby': AssemblyMode(modes={distribution_system: distribution_system.modes['8']})}
-        
-        distribution_system.network = self.network
 
+        self.modes = {'Standby': AssemblyMode(modes={distribution_system: distribution_system.modes['8']})}
+
+        distribution_system.network = self.network
         # update channels with upstream information
         for i, ch in enumerate(channels):
             # update network for accurate dead volume calculation
@@ -301,10 +299,12 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBasewithGSIOC):
             ch.injection_node = self.injection_port.nodes[0]
 
             # add system-specific methods to the channel
-            ch.methods.update({'LoadLoop': LoadLoop(ch, AssemblyMode(modes={distribution_system: distribution_system.modes[str(1 + 2 * i)]}))})
-            ch.methods.update({'DirectInject': DirectInject(ch, AssemblyMode({distribution_system: distribution_system.modes[str(2 + 2 * i)]}))})
+            ch.methods.update({'LoadLoop': LoadLoop(ch, distribution_mode=distribution_system.modes[str(1 + 2 * i)]),
+                               'DirectInject': DirectInject(ch, distribution_mode=distribution_system.modes[str(2 + 2 * i)])
+                               })
 
         self.channels = channels
+        self.distribution_system = distribution_system
 
     async def initialize(self) -> None:
         """Initialize the loop as a unit and the distribution valve separately"""
@@ -419,6 +419,7 @@ if __name__=='__main__':
             try:
                 #qcmd_system.distribution_valve.valve.move(2)
                 await qcmd_system.initialize()
+                await sp0.query('J1R')
                 #await asyncio.sleep(2)
                 #await channel_0.change_mode('PumpPrimeLoop')
                 #await sp1.aspirate(2500, sp1.max_aspirate_flow_rate)
