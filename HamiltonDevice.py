@@ -105,7 +105,7 @@ class HamiltonBase(WebNodeBase):
         """Initialize device only if not already initialized
         """
 
-        if not self.is_initialized():
+        if not await self.is_initialized():
             await self.run_until_idle(self.initialize_device())
 
     async def initialize_device(self) -> None:
