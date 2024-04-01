@@ -296,7 +296,8 @@ class AssemblyBase(WebNodeBase):
                     'devices': {device.id: device.name for device in self.devices},
                     'modes': [mode for mode in self.modes],
                     'current_mode': self.current_mode,
-                    'assemblies': {}})
+                    'assemblies': {},
+                    'controls': {}})
         
         return d
 

@@ -74,6 +74,7 @@
             newdiv.append(new $('<div>').addClass("assembly_name"))
             newdiv.append(new $('<div>').addClass("assembly_id"))
             newdiv.append(new $('<div>').addClass("assembly_modes"))
+            newdiv.append(new $('<div>').addClass("assembly_controls"))
             assembliesdiv = new $('<div>')
                 .addClass('sub_assemblies')
                 .addClass("grid-container")
@@ -122,21 +123,21 @@
                                 statediv.append(progressbar(data['state']['syringe']['position'] / data['state']['syringe']['max_position'] * 100))
                             }
                             statediv.append($('<hr>'))
-                            update_controls($(this), id, data['controls'])
+                            update_controls($(this).children(".device_controls"), id, data['controls'])
                         });
                     }
                     else if (data['type'] == 'assembly') {
                         $('.' + id).each( function(index) {
                             $(this).children(".assembly_name").empty().append(data['name']);
                             $(this).children(".assembly_id").empty().append(new $("<a>").attr("href", data['id'] + "/").text(data['id']));
-                            update_modes($(this), id, data['modes'], data['current_mode'])
+                            update_modes($(this).children(".assembly_modes"), id, data['modes'], data['current_mode'])
+                            update_controls($(this).children(".assembly_controls"), id, data['controls'])
                         });
                     }
                 });
             }
 
-        function update_modes(currentdiv, id, modes, current_mode) {
-            modediv = currentdiv.children(".assembly_modes")
+        function update_modes(modediv, id, modes, current_mode) {
             modediv.empty().append("Select mode: ")
             var newselect = $('<select>')
                                     .addClass("mode_select")
@@ -156,8 +157,7 @@
             modediv.append(newselect)
         }
 
-        function update_controls(currentdiv, device_id, controls) {
-            devicediv = currentdiv.children(".device_controls")
+        function update_controls(devicediv, device_id, controls) {
             devicediv.empty()
             for (const [cid, cdata] of Object.entries(controls)) {
                 //console.log(cid, cdata)
@@ -202,6 +202,23 @@
                     newtextbutton.on("click", function () {
                         issue_command(device_id, cid, {'volume': newtext.val()})
                     })
+                }
+                else if (ctype=='number') {
+                    var newctrl = $('<div>')
+                                    .addClass(cid)
+                                    .addClass(ctype)
+                                    .appendTo(devicediv);
+                    
+                    var inputcontainer = $('<div>').addClass("textbox_controls").appendTo(newctrl)
+                    $('<div>').text(cdata['text']).appendTo(inputcontainer)                    
+                    let newtext = $('<input type=number>')
+                                    .addClass('input_number')
+                                    .attr("min", 1)
+                                    .val(1).appendTo(inputcontainer)
+                    let newtextbutton = $('<button>').addClass('textbutton').text('Go').appendTo(inputcontainer)                    
+                    newtextbutton.on("click", function () {
+                        issue_command(device_id, cid, {'n_prime': newtext.val()})
+                    })
                     //newctrl.append(newtextbutton)
 
                 }
@@ -210,7 +227,6 @@
         }
 
         function progressbar(pct) {
-            console.log(pct)
             var newprogressbar = $('<div>').addClass("progress_bar").addClass("device_row")
             $('<div>').addClass("device_column").text("Syringe position: ").appendTo(newprogressbar)
             var newframe = $('<div>').addClass("progress_bar_frame").addClass("device_column")
@@ -311,6 +327,9 @@
         background-color: green !important;
     }
     .input_text {
+        min-width: 0;
+    }
+    .input_number {
         min-width: 0;
     }
     .textbox_controls {
