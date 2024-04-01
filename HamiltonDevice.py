@@ -405,6 +405,9 @@ class HamiltonSyringePump(HamiltonValvePositioner):
                  ) -> None:
         super().__init__(serial_instance, address, valve, name)
 
+        # Syringe poll delay
+        self.syringe_poll_delay = 0.5
+
         # Syringe volume in uL
         self.syringe_volume = syringe_volume
 
@@ -425,7 +428,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
     async def initialize(self) -> None:
         await super().initialize()
         await self.run_until_idle(self.set_high_resolution(self._high_resolution))
-        await self.run_until_idle(self.get_syringe_position())
+        await self.run_until_idle(self.update_syringe_status())
 
     async def is_initialized(self) -> bool:
         """Query device to get initialization state
@@ -567,20 +570,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         return round(desired_volume * (self._full_stroke() / 2) / self.syringe_volume)
 
-    async def update_status(self) -> None:
-        """
-        Polls the status of the device using '?' for syringe position and 'Q' for busy status
-        """
-
-        error = await self.get_syringe_position()
-
-        # TODO: Handle error
-        if error:
-            logging.error(f'{self}: Error in update_status: {error}')
-
-        await super().update_status()
-
-    async def get_syringe_position(self) -> int:
+    async def update_syringe_status(self) -> int:
         """Reads absolute position of syringe
 
         Returns:
@@ -591,8 +581,37 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         
         self.syringe_position = int(response)
 
-        return error
+        if error:
+            logging.error(f'{self}: Error in update_status: {error}')
 
+        return error
+    
+    async def poll_syringe_until_idle(self) -> None:
+        """Polls device until idle
+
+        Returns:
+            str: error string
+        """
+
+        timer = PollTimer(self.syringe_poll_delay, self.address_code)
+
+        while (not self.idle):
+            # run update_status and start the poll_delay timer
+            await asyncio.gather(self.update_syringe_status(), timer.cycle(), self.trigger_update())
+
+            # wait until poll_delay timer has ended before asking for new status.
+            await timer.wait_until_set()
+
+    async def run_syringe_until_idle(self, cmd: asyncio.Future) -> None:
+        """
+        Sends from serial connection and waits until idle
+        """
+
+        self.idle = False
+        await cmd
+        await self.poll_syringe_until_idle()
+        await self.trigger_update()
+    
     async def aspirate(self, volume: float, flow_rate: float) -> None:
         """Aspirate (Pick-up)
 
@@ -601,7 +620,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             flow_rate (float): flow rate in uL / s
         """
 
-        await self.get_syringe_position()
+        await self.update_syringe_status()
         syringe_position = self.syringe_position
         stroke_length = self._stroke_length(volume)
         max_position = self._full_stroke() / 2
@@ -628,7 +647,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             flow_rate (float): flow rate in uL / s
         """
 
-        await self.get_syringe_position()
+        await self.update_syringe_status()
         syringe_position = self.syringe_position
         stroke_length = self._stroke_length(volume)
         logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
@@ -674,7 +693,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         full_stroke = self._full_stroke() // 2
 
         # update current syringe position (usually zero)
-        await self.get_syringe_position()
+        await self.update_syringe_status()
         syringe_position = self.syringe_position
         current_position = copy.copy(syringe_position)
         logging.debug(f'{self.name}: smart dispense, syringe at {current_position}')
@@ -685,7 +704,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             # switch valve and dispense
             logging.debug(f'{self.name}: smart dispense dispensing {total_steps} at V {V_dispense}')
             await self.move_valve(self.valve.dispense_position)
-            await self.run_until_idle(self.move_absolute(current_position - total_steps, V_dispense))
+            await self.run_syringe_until_idle(self.move_absolute(current_position - total_steps, V_dispense))
         else:
             # number of full_volume loops plus remainder
             stroke_steps = [full_stroke] * (total_steps // full_stroke) + [total_steps % full_stroke]
@@ -694,11 +713,11 @@ class HamiltonSyringePump(HamiltonValvePositioner):
                     logging.debug(f'{self.name}: smart dispense aspirating {stroke - current_position} at V {V_aspirate}')
                     # switch valve and aspirate
                     await self.move_valve(self.valve.aspirate_position)
-                    await self.run_until_idle(self.move_absolute(stroke - current_position, V_aspirate))
+                    await self.run_syringe_until_idle(self.move_absolute(stroke - current_position, V_aspirate))
                     # switch valve and dispense
                     logging.debug(f'{self.name}: smart dispense dispensing all at V {V_dispense}')
                     await self.move_valve(self.valve.dispense_position)
-                    await self.run_until_idle(self.move_absolute(0, V_dispense))
+                    await self.run_syringe_until_idle(self.move_absolute(0, V_dispense))
                     # set current position to zero
                     current_position = 0
 
