@@ -97,6 +97,21 @@ class RoadmapChannelBase(AssemblyBasewithGSIOC):
 
         return self.methods[method_name].is_ready()
 
+    async def get_info(self) -> Dict:
+        d = await super().get_info()
+
+        d['controls'] = d['controls'] | {'prime_loop': {'type': 'number',
+                                                'text': 'Prime loop repeats: '}}
+        
+        return d
+    
+    async def event_handler(self, command: str, data: Dict) -> None:
+
+        if command == 'prime_loop':
+            return await self.primeloop(int(data['n_prime']))
+        else:
+            return await super().event_handler(command, data)
+
 class LoadLoop(MethodBase):
     """Loads the loop of one ROADMAP channel
     """
