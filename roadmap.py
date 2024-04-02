@@ -63,7 +63,19 @@ class RoadmapChannelBase(AssemblyBasewithGSIOC):
 
     def get_dead_volume(self, mode: str | None = None) -> float:
         return super().get_dead_volume(self.injection_node, mode)
-    
+
+    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
+
+        # overwrites base class handling of dead volume
+        if data.data == 'V':
+            dead_volume = await self.dead_volume.get()
+            #logging.info(f'Sending dead volume {dead_volume}')
+            response = f'{dead_volume:0.0f}'
+        else:
+            response = await super().handle_gsioc(data)
+        
+        return response
+
     def run_method(self, method_name: str, method_kwargs: dict) -> None:
 
         if not self.methods[method_name].is_ready():
