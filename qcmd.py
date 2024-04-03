@@ -9,6 +9,7 @@ from components import InjectionPort, FlowCell, Node
 from gsioc import GSIOC, GSIOCMessage
 from assemblies import AssemblyBasewithGSIOC, Network, connect_nodes, Mode, NestedAssemblyBase
 from liquid_handler import SimLiquidHandler
+from bubblesensor import SyringePumpwithBubbleSensor
 from webview import run_socket_app
 
 class Timer:
@@ -112,7 +113,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         dispense takes care of aspirate/dispense"""
 
     def __init__(self, loop_valve: HamiltonValvePositioner,
-                       syringe_pump: HamiltonSyringePump,
+                       syringe_pump: SyringePumpwithBubbleSensor,
                        flow_cell: FlowCell,
                        sample_loop: FlowCell,
                        injection_node: Node | None = None,
@@ -139,6 +140,9 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
         # Dead volume queue
         self.dead_volume: asyncio.Queue = asyncio.Queue(1)
+
+        # Bubble sensor volume offset
+        self.bubble_sensor_offset = 100
 
         # Measurement modes
         self.modes = {'Standby': Mode({loop_valve: 0,
@@ -336,6 +340,9 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         # Clear liquid handler event if it isn't already cleared
         self.release_liquid_handler.clear()
 
+        # power the bubble sensor
+        await self.syringe_pump.set_digital_output(1, True)
+
         # Set dead volume and wait for method to ask for it (might need brief wait in the calling
         # method to make sure this updates in time)
         dead_volume = self.get_dead_volume(self.injection_node, 'LoadLoop')
@@ -367,17 +374,11 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             logging.info(f'{self.name}.LoopInjectwithBubble: Switching to PumpPrimeLoop mode')
             await self.change_mode('PumpPrimeLoop')
 
-            # smart dispense the volume required to move plug quickly through loop
-            plug_volume = self.sample_loop.get_volume() - pump_volume
+            # smart dispense the volume required to move plug quickly through loop, interrupting if sensor 1 goes low
             logging.info(f'{self.name}.LoopInjectwithBubble: Moving plug through loop until bubble detected, total injection volume {self.sample_loop.get_volume() - (pump_volume)} uL')
-            await self.change_mode('PumpAspirate')
-            await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.aspirate(self.sample_loop.get_volume() - pump_volume, self.syringe_pump.max_aspirate_flow_rate))
-            stroke_length = self.syringe_pump._stroke_length(plug_volume)
-            await self.change_mode('PumpPrimeLoop')
-            await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.query(f'i5V{self.syringe_pump._speed_code(self.syringe_pump.max_dispense_flow_rate)}D{stroke_length}R'))
-            await self.syringe_pump.smart_dispense
-            # dispense air gap + bubble offset = 50 uL
-            await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.dispense(air_gap + 100, self.syringe_pump.max_dispense_flow_rate))
+            await self.syringe_pump.smart_dispense(self.sample_loop.get_volume() - pump_volume, self.syringe_pump.max_dispense_flow_rate, 5)
+            # dispense air gap + bubble offset without interruption
+            await self.syringe_pump.smart_dispense(air_gap + self.bubble_sensor_offset, self.syringe_pump.max_dispense_flow_rate)
 
             # waits until any current measurements are complete. Note that this could be done with
             # "async with measurement_lock" but then QCMDRecord would have to grab the lock as soon as it
@@ -388,11 +389,8 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
             # change to inject mode
             logging.info(f'{self.name}.LoopInjectwithBubble: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
-            await self.change_mode('PumpAspirate')
-            await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.aspirate(pump_volume, self.syringe_pump.max_aspirate_flow_rate))
-            stroke_length = self.syringe_pump._stroke_length(pump_volume)
             await self.change_mode('PumpInject')
-            await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.query(f'i5V{self.syringe_pump._speed_code(pump_flow_rate)}D{stroke_length}R'))
+            await self.syringe_pump.smart_dispense(pump_volume, pump_flow_rate, 5)
 
             # start QCMD timer
             logging.info(f'{self.name}.LoopInjectwithBubble: Starting QCMD timer for {sleep_time + record_time} seconds')
@@ -400,10 +398,12 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             # spawn new measurement task that will release measurement lock when complete
             self.run_method(self.record(tag_name, record_time, sleep_time))
 
-            # Prime loop
+            # Flush loop with any excess volume in the pump
             await self.change_mode('PumpPrimeLoop')
             await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.home())
-            #await self.primeloop(volume=1000)
+
+            # Prime loop
+            await self.primeloop(volume=1000)
 
     async def LHInject(self,
                          tag_name: str = '',
@@ -652,7 +652,7 @@ async def qcmd_distribution():
     #ser = HamiltonSerial(port='COM3', baudrate=38400)
     dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Valve')
     mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='Loop Valve')
-    sp = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000., False, name='Syringe Pump')
+    sp = SyringePumpwithBubbleSensor(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000., False, name='Syringe Pump')
     sp.max_dispense_flow_rate = 5 * 1000 / 60
     sp.max_aspirate_flow_rate = 15 * 1000 / 60
     ip = InjectionPort('LH_injection_port')
