@@ -636,7 +636,6 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         self.idle = False
         await cmd
         await self.poll_syringe_until_idle()
-        await self.trigger_update()
     
     async def aspirate(self, volume: float, flow_rate: float) -> None:
         """Aspirate (Pick-up)
