@@ -61,9 +61,40 @@ class RoadmapChannelBase(AssemblyBasewithGSIOC):
                                       final_node=loop_valve.valve.nodes[3])
                     }
 
+    async def initialize(self) -> None:
+        """Overwrites base initialization to ensure valves and pumps are in appropriate mode for homing syringe"""
+
+        # initialize loop valve
+        await self.loop_valve.initialize()
+
+        # move to a position where loop goes to waste
+        await self.loop_valve.move_valve(self.modes['PumpPrimeLoop'].valves[self.loop_valve])
+
+        # initialize syringe pump. If plunger not homed, this will push solution into the loop
+        await self.syringe_pump.initialize()
+
+        # If syringe pump was already initialized, plunger may not be homed. Force it to home.
+        #await self.change_mode('PumpPrimeLoop')
+        #await self.syringe_pump.home()
+
+        # change to standby mode
+        await self.change_mode('Standby')
+
     def get_dead_volume(self, mode: str | None = None) -> float:
         return super().get_dead_volume(self.injection_node, mode)
-    
+
+    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
+
+        # overwrites base class handling of dead volume
+        if data.data == 'V':
+            dead_volume = await self.dead_volume.get()
+            #logging.info(f'Sending dead volume {dead_volume}')
+            response = f'{dead_volume:0.0f}'
+        else:
+            response = await super().handle_gsioc(data)
+        
+        return response
+
     def run_method(self, method_name: str, method_kwargs: dict) -> None:
 
         if not self.methods[method_name].is_ready():

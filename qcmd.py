@@ -67,7 +67,7 @@ class QCMDRecorder(Timer):
                 async with self.session.post('/QCMD/', json=post_data, timeout=10) as resp:
                     response_json = await resp.json()
                     logging.info(f'{self.session._base_url}/QCMD/ <= {response_json}')
-            except (ConnectionRefusedError, ClientConnectorError):
+            except (ConnectionRefusedError, ClientConnectionError):
                 logging.error(f'request to {self.session._base_url}/QCMD/ failed: connection refused')
 
 class QCMDRecorderDevice(AssemblyBasewithGSIOC):
