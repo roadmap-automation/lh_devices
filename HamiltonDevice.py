@@ -772,7 +772,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
                     logging.debug(f'{self.name}: smart dispense aspirating {stroke - current_position} at V {V_aspirate}')
                     # switch valve and aspirate
                     await self.run_until_idle(self.move_valve(self.valve.aspirate_position))
-                    await self.run_syringe_until_idle(self.move_absolute(stroke - current_position, V_aspirate))
+                    await self.run_syringe_until_idle(self.move_absolute(stroke, V_aspirate))
                     # switch valve and dispense
                     logging.debug(f'{self.name}: smart dispense dispensing all at V {V_dispense}')
                     await self.run_until_idle(self.move_valve(self.valve.dispense_position))

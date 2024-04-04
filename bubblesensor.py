@@ -150,19 +150,22 @@ class SyringePumpwithBubbleSensor(HamiltonSyringePump):
                     logging.debug(f'{self.name}: smart dispense aspirating {stroke - current_position} at V {V_aspirate}')
                     # switch valve and aspirate
                     await self.run_until_idle(self.move_valve(self.valve.aspirate_position))
-                    await self.run_syringe_until_idle(self.move_absolute(stroke - current_position, V_aspirate))
+                    await self.run_syringe_until_idle(self.move_absolute(stroke, V_aspirate))
+                    position_after_aspirate = copy.copy(self.syringe_position)
+
                     # switch valve and dispense; run_syringe_until_idle updates self.syringe_position
                     logging.debug(f'{self.name}: smart dispense dispensing all at V {V_dispense}')
                     await self.run_until_idle(self.move_valve(self.valve.dispense_position))
                     await self.run_syringe_until_idle(self.move_absolute(0, V_dispense, interrupt_index))
-
-                    if self.syringe_position == 0:
+                    position_change = position_after_aspirate - self.syringe_position
+                    total_steps_dispensed += position_change
+                    
+                    if (stroke == position_change):
                         # update current position and go to next step
                         current_position = copy.copy(self.syringe_position)
-                        total_steps_dispensed += stroke
                     else:
                         # stop! do not do continued strokes because the interrupt was triggered
-                        total_steps_dispensed = current_position - self.syringe_position
+                        break
 
         return self._volume_from_stroke_length(total_steps_dispensed)
 
