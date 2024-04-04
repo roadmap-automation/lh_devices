@@ -21,6 +21,22 @@ class SyringePumpwithBubbleSensor(HamiltonSyringePump):
     def __init__(self, serial_instance: HamiltonSerial, address: str, valve: SyringeValveBase, syringe_volume: float = 5000, high_resolution=False, name=None) -> None:
         super().__init__(serial_instance, address, valve, syringe_volume, high_resolution, name)
 
+    async def get_digital_input(self, digital_input: int) -> bool:
+        """Gets value of a digital input.
+
+        Args:
+            digital_input (int): Index (either 1 or 2)
+
+        Returns:
+            bool: return value
+        """
+
+        query_code = 12 + digital_input
+
+        response, error = await self.query(f"?{query_code}")
+
+        return bool(int(response))
+
     async def set_digital_output(self, digital_output: int, value: bool) -> None:
         """Activates digital output corresponding to its index. Reads current digital output state and
             makes the appropriate adjustment
@@ -29,7 +45,7 @@ class SyringePumpwithBubbleSensor(HamiltonSyringePump):
             sensor_index (int): Digital output that drives the bubble sensor
         """
 
-        state = await self.get_digital_outputs()
+        state = list(await self.get_digital_outputs())
         state[digital_output] = value
 
         await self.set_digital_outputs(state)
@@ -53,9 +69,9 @@ class SyringePumpwithBubbleSensor(HamiltonSyringePump):
         """
 
         response, error = await self.query(f'?37000')
-        binary_string = format(response, '03b')
+        binary_string = format(int(response), '03b')
 
-        return (bool(digit) for digit in binary_string)
+        return tuple([bool(digit) for digit in binary_string])
     
     # TODO: Make a better base class for move_absolute and smart_dispense so the code is not copied here
 
@@ -76,14 +92,18 @@ class SyringePumpwithBubbleSensor(HamiltonSyringePump):
         if error:
             logging.error(f'{self}: Syringe move error {error} for move to position {position} with V {V_rate}')
 
-    async def smart_dispense(self, volume: float, dispense_flow_rate: float, interrupt_index: int | None = None) -> None:
+    async def smart_dispense(self, volume: float, dispense_flow_rate: float, interrupt_index: int | None = None) -> float:
         """Smart dispense, including both aspiration at max flow rate, dispensing at specified
-            flow rate, and the ability to handle a volume that is larger than the syringe volume
+            flow rate, and the ability to handle a volume that is larger than the syringe volume.
+            Allows interruptions via bubble sensors and returns total volume actually dispensed
             
         Args:
             volume (float): volume in uL
             flow_rate (float): flow rate in uL / s
-            interrupt_index (int | None, optional): See move_absolute. Defaults to None."""
+            interrupt_index (int | None, optional): See move_absolute. Defaults to None.
+            
+        Returns:
+            float: volume actually dispensed in uL"""
 
         # check that aspiration and dispense positions are defined
         if (not hasattr(self.valve, 'aspirate_position')) | (not hasattr(self.valve, 'dispense_position')):
@@ -115,11 +135,13 @@ class SyringePumpwithBubbleSensor(HamiltonSyringePump):
 
         # calculate number of aspirate/dispense operations and volume per operation
         # if there is already enough volume in the syringe, just do a single dispense
+        total_steps_dispensed = 0
         if current_position >= total_steps:
             # switch valve and dispense
             logging.debug(f'{self.name}: smart dispense dispensing {total_steps} at V {V_dispense}')
             await self.run_until_idle(self.move_valve(self.valve.dispense_position))
             await self.run_syringe_until_idle(self.move_absolute(current_position - total_steps, V_dispense, interrupt_index))
+            total_steps_dispensed += current_position - self.syringe_position
         else:
             # number of full_volume loops plus remainder
             stroke_steps = [full_stroke] * (total_steps // full_stroke) + [total_steps % full_stroke]
@@ -137,8 +159,10 @@ class SyringePumpwithBubbleSensor(HamiltonSyringePump):
                     if self.syringe_position == 0:
                         # update current position and go to next step
                         current_position = copy.copy(self.syringe_position)
+                        total_steps_dispensed += stroke
                     else:
                         # stop! do not do continued strokes because the interrupt was triggered
-                        break
+                        total_steps_dispensed = current_position - self.syringe_position
 
+        return self._volume_from_stroke_length(total_steps_dispensed)
 
