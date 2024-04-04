@@ -142,7 +142,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         self.dead_volume: asyncio.Queue = asyncio.Queue(1)
 
         # Bubble sensor volume offset
-        self.bubble_sensor_offset = 100
+        self.bubble_sensor_offset = 90
 
         # Measurement modes
         self.modes = {'Standby': Mode({loop_valve: 0,
@@ -340,9 +340,6 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         # Clear liquid handler event if it isn't already cleared
         self.release_liquid_handler.clear()
 
-        # power the bubble sensor
-        await self.syringe_pump.set_digital_output(1, True)
-
         # Set dead volume and wait for method to ask for it (might need brief wait in the calling
         # method to make sure this updates in time)
         dead_volume = self.get_dead_volume(self.injection_node, 'LoadLoop')
@@ -353,6 +350,9 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
         # locks the channel so any additional calling processes have to wait
         async with self.channel_lock:
+
+            # power the bubble sensor
+            await self.syringe_pump.set_digital_output(1, True)
 
             # switch to standby mode
             logging.info(f'{self.name}.LoopInjectwithBubble: Switching to Standby mode')            
@@ -375,10 +375,26 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             await self.change_mode('PumpPrimeLoop')
 
             # smart dispense the volume required to move plug quickly through loop, interrupting if sensor 1 goes low
-            logging.info(f'{self.name}.LoopInjectwithBubble: Moving plug through loop until bubble detected, total injection volume {self.sample_loop.get_volume() - (pump_volume)} uL')
-            await self.syringe_pump.smart_dispense(self.sample_loop.get_volume() - pump_volume, self.syringe_pump.max_dispense_flow_rate, 5)
+            logging.info(f'{self.name}.LoopInjectwithBubble: Moving plug through loop until air gap detected, total injection volume {self.sample_loop.get_volume() - (pump_volume)} uL')
+            actual_volume = await self.syringe_pump.smart_dispense(self.sample_loop.get_volume() - pump_volume, self.syringe_pump.max_dispense_flow_rate, 5)
+            logging.info(f'{self.name}.LoopInjectwithBubble: Actually injected {actual_volume} uL')
+
+            async def traverse_air_gap(nominal_air_gap: float, flow_rate: float = self.syringe_pump.max_dispense_flow_rate, volume_step: float = 10) -> float:
+                
+                total_air_gap_volume = 0
+                total_air_gap_volume += await self.syringe_pump.smart_dispense(nominal_air_gap, flow_rate)
+                while not (await self.syringe_pump.get_digital_input(1)):
+                    total_air_gap_volume += await self.syringe_pump.smart_dispense(volume_step, flow_rate)
+                
+                return total_air_gap_volume
+
             # dispense air gap + bubble offset without interruption
-            await self.syringe_pump.smart_dispense(air_gap + self.bubble_sensor_offset, self.syringe_pump.max_dispense_flow_rate)
+            #await self.syringe_pump.smart_dispense(air_gap + self.bubble_sensor_offset, self.syringe_pump.max_dispense_flow_rate)
+            logging.info(f'{self.name}.LoopInjectwithBubble: Traversing air gap...')
+            total_air_gap_volume = await traverse_air_gap(air_gap, self.syringe_pump.max_dispense_flow_rate)
+            logging.info(f'{self.name}.LoopInjectwithBubble: Total air gap volume: {total_air_gap_volume} uL')
+            actual_volume = await self.syringe_pump.smart_dispense(self.bubble_sensor_offset + 30, self.syringe_pump.max_dispense_flow_rate)
+            logging.info(f'{self.name}.LoopInjectwithBubble: Bubble sensor offset dispensed: {actual_volume} uL')
 
             # waits until any current measurements are complete. Note that this could be done with
             # "async with measurement_lock" but then QCMDRecord would have to grab the lock as soon as it
@@ -390,7 +406,12 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             # change to inject mode
             logging.info(f'{self.name}.LoopInjectwithBubble: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
             await self.change_mode('PumpInject')
-            await self.syringe_pump.smart_dispense(pump_volume, pump_flow_rate, 5)
+            actual_volume = await self.syringe_pump.smart_dispense(pump_volume, pump_flow_rate, 5)
+            # TODO: Replace 20 with a bubble_sensor_offset buffer value (+ for initial injection, - for this one)
+            extra_volume = min(pump_volume - actual_volume, self.bubble_sensor_offset - 20)
+            if extra_volume > 0:
+                await self.syringe_pump.smart_dispense(extra_volume, pump_flow_rate)
+            logging.info(f'{self.name}.LoopInjectwithBubble: Injected {actual_volume} uL at flow rate {pump_flow_rate} uL / s, plus extra_volume {extra_volume}')
 
             # start QCMD timer
             logging.info(f'{self.name}.LoopInjectwithBubble: Starting QCMD timer for {sleep_time + record_time} seconds')
@@ -480,7 +501,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
             # Prime loop
             #await self.primeloop()
-
+    
 class QCMDSystem(NestedAssemblyBase, AssemblyBasewithGSIOC):
     """QCMD System comprising one QCMD loop and one distribution valve
         (unnecessarily complex but testbed for ROADMAP multichannel assembly)"""
@@ -691,11 +712,8 @@ async def qcmd_distribution():
     try:
         #qcmd_system.distribution_valve.valve.move(2)
         await qcmd_system.initialize()
-        print(await sp.query('?37000'))
-        await sp.run_until_idle(sp.query('J1R'))
-        print(await sp.query('?37000'))
-        await sp.run_until_idle(sp.query('J0R'))
-        print(await sp.query('?37000'))
+        await sp.set_digital_output(1, True)
+        await sp.set_digital_output(2, True)
         #await asyncio.sleep(2)
         #await qcmd_channel.change_mode('PumpPrimeLoop')
 
