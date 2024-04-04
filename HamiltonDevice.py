@@ -215,9 +215,29 @@ class HamiltonBase(WebNodeBase):
                 'state': {'initialized': self.initialized,
                           'idle': self.idle,
                           'reserved': self.reserved},
-                'controls': {}})
+                'controls': {'reset': {'type': 'button',
+                                     'text': 'Reset'}}})
         
         return d
+
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        await super().event_handler(command, data)
+
+        if command == 'reset':
+            await self.run_until_idle(self.reset())
+
+    async def reset(self) -> None:
+        """Resets the device
+        """
+
+        response, error = await self.query('h30003R')
 
 class HamiltonValvePositioner(HamiltonBase):
     """Hamilton MVP4 device
@@ -595,6 +615,18 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         return round(desired_volume * (self._full_stroke() / 2) / self.syringe_volume)
 
+    def _volume_from_stroke_length(self, strokes: int) -> float:
+        """Calculates volume from a stroke length (inverts _stroke_length)
+
+        Args:
+            strokes (int): number of motor steps
+
+        Returns:
+            float: volume corresponding to stroke length
+        """
+
+        return strokes * (self.syringe_volume / (self._full_stroke() / 2))
+
     async def update_syringe_status(self) -> int:
         """Reads absolute position of syringe
 
@@ -627,6 +659,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
             # wait until poll_delay timer has ended before asking for new status.
             await timer.wait_until_set()
+
+        await self.trigger_update()
 
     async def run_syringe_until_idle(self, cmd: asyncio.Future) -> None:
         """
