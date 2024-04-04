@@ -108,10 +108,10 @@ class SyringePumpwithBubbleSensor(HamiltonSyringePump):
         # check that aspiration and dispense positions are defined
         if (not hasattr(self.valve, 'aspirate_position')) | (not hasattr(self.valve, 'dispense_position')):
             logging.error(f'{self.name}: valve must have aspirate_position and dispense_position defined to use smart_dispense')
-            return
+            return 0
         if (self.valve.aspirate_position is None) | (self.valve.dispense_position is None):
             logging.error(f'{self.name}: aspirate_position and dispense_position must be set to use smart_dispense')
-            return
+            return 0
         
         # convert speeds to V factors
         V_aspirate = self._speed_code(self.max_aspirate_flow_rate)
@@ -122,7 +122,7 @@ class SyringePumpwithBubbleSensor(HamiltonSyringePump):
         logging.debug(f'{self.name}: smart dispense requested {total_steps} steps')
         if total_steps <= 0:
             logging.warning(f'{self.name}: volume is not positive, smart_dispense terminating')
-            return
+            return 0
 
         # calculate max number of steps
         full_stroke = self._full_stroke() // 2
