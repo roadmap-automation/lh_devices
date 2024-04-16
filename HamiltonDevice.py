@@ -440,6 +440,9 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         # min and max V
         self.minV, self.maxV = 2, 10000
 
+        # save syringe speed code
+        self._speed = 2
+
         # allow custom max flow rate
         self.max_aspirate_flow_rate = self._max_flow_rate()
         self.max_dispense_flow_rate = self._max_flow_rate()
@@ -627,7 +630,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         return strokes * (self.syringe_volume / (self._full_stroke() / 2))
 
-    async def update_syringe_status(self) -> int:
+    async def update_syringe_status(self) -> str:
         """Reads absolute position of syringe
 
         Returns:
@@ -643,7 +646,40 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         await self.update_status()
 
         return error
+
     
+    async def get_speed(self) -> str:
+        """Reads current speed code of syringe
+        
+        Returns:
+            int: speed code of syringe in steps/second"""
+
+        response, error = await self.query('?2')
+
+        self._speed = int(response)
+        
+        if error:
+            logging.error(f'{self}: Error in get_speed: {error}')
+
+        return error
+
+
+    async def set_speed(self, flow_rate: float) -> str:
+        """Sets syringe speed to a specified flow rate
+
+        Args:
+            flow_rate (float): flow rate in uL / s
+        """
+
+        V = self._speed_code(flow_rate)
+        logging.debug(f'Speed: {V}')
+        response, error = await self.query(f'V{V}R')
+
+        if error:
+            logging.error(f'{self}: Syringe move error {error}')
+
+        return error
+
     async def poll_syringe_until_idle(self) -> None:
         """Polls device until idle
 
@@ -691,10 +727,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             # TODO: this is a hack to clear the response queue...need to fix this
             #await self.update_status()
         else:
-            V = self._speed_code(flow_rate)
-            logging.debug(f'Speed: {V}')
-
-            response, error = await self.query(f'V{V}P{stroke_length}R')
+            await self.run_until_idle(self.set_speed(flow_rate))
+            response, error = await self.query(f'P{stroke_length}R')
             if error:
                 logging.error(f'{self}: Syringe move error {error}')
 
@@ -715,9 +749,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             logging.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and minimum position 0')
             #await self.update_status()
         else:
-            V = self._speed_code(flow_rate)
-
-            response, error = await self.query(f'V{V}D{stroke_length}R')
+            await self.run_until_idle(self.set_speed(flow_rate))
+            response, error = await self.query(f'D{stroke_length}R')
             if error:
                 logging.error(f'{self}: Syringe move error {error}')
 
@@ -738,7 +771,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             return
         
         # convert speeds to V factors
-        V_aspirate = self._speed_code(self.max_aspirate_flow_rate)
+        aspirate_flow_rate = self.max_aspirate_flow_rate
+        V_aspirate = self._speed_code(aspirate_flow_rate)
         V_dispense = self._speed_code(dispense_flow_rate)
 
         # calculate total volume in steps
@@ -763,6 +797,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             # switch valve and dispense
             logging.debug(f'{self.name}: smart dispense dispensing {total_steps} at V {V_dispense}')
             await self.run_until_idle(self.move_valve(self.valve.dispense_position))
+            await self.run_until_idle(self.set_speed(dispense_flow_rate))
             await self.run_syringe_until_idle(self.move_absolute(current_position - total_steps, V_dispense))
         else:
             # number of full_volume loops plus remainder
@@ -772,24 +807,24 @@ class HamiltonSyringePump(HamiltonValvePositioner):
                     logging.debug(f'{self.name}: smart dispense aspirating {stroke - current_position} at V {V_aspirate}')
                     # switch valve and aspirate
                     await self.run_until_idle(self.move_valve(self.valve.aspirate_position))
-                    await self.run_syringe_until_idle(self.move_absolute(stroke, V_aspirate))
+                    await self.run_until_idle(self.set_speed(aspirate_flow_rate))
+                    await self.run_syringe_until_idle(self.move_absolute(stroke))
                     # switch valve and dispense
                     logging.debug(f'{self.name}: smart dispense dispensing all at V {V_dispense}')
                     await self.run_until_idle(self.move_valve(self.valve.dispense_position))
-                    await self.run_syringe_until_idle(self.move_absolute(0, V_dispense))
+                    await self.run_until_idle(self.set_speed(dispense_flow_rate))
+                    await self.run_syringe_until_idle(self.move_absolute(0))
                     # set current position to zero
                     current_position = 0
 
-    async def move_absolute(self, position: int, V_rate: int) -> None:
-        """Low-level method for moving the syringe to an absolute position using
-            the V speed code
+    async def move_absolute(self, position: int) -> None:
+        """Low-level method for moving the syringe to an absolute position
 
         Args:
             position (int): syringe position in steps
-            V_rate (int): movement rate
         """
 
-        response, error = await self.query(f'V{V_rate}A{position}R')
+        response, error = await self.query(f'A{position}R')
         if error:
             logging.error(f'{self}: Syringe move error {error} for move to position {position} with V {V_rate}')
 
@@ -797,8 +832,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         """Homes syringe using maximum flow rate
         """
 
-        V = self._speed_code(self.max_dispense_flow_rate)
-        await self.move_absolute(0, V)
+        await self.set_speed(self.max_dispense_flow_rate)
+        await self.move_absolute(0)
 
 if __name__ == '__main__':
 
