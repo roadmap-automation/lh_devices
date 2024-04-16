@@ -476,6 +476,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         add_state = {'syringe': {                                
                                 'high_resolution': self._high_resolution,
                                 'position': self.syringe_position,
+                                'speed': f'{self._flow_rate(self._speed) * 60 / 1000:0.3f}',
                                 'max_position': self._full_stroke() / 2
         }}
         info['state']= info['state'] | add_state
@@ -484,6 +485,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
                                      'text': 'Home Syringe'},
                     'load_syringe': {'type': 'button',
                                      'text': 'Move to load syringe position'},
+                    'set_speed': {'type': 'textbox',
+                                  'text': 'Syringe speed (mL / min)'},
                     'aspirate': {'type': 'textbox',
                                  'text': 'Aspirate volume (mL): '},
                     'dispense': {'type': 'textbox',
@@ -510,18 +513,21 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         elif command == 'load_syringe':
             # moves the syringe to the load position (half full stroke).
             # NOTE: Does not move any valves, so valves must be in safe position
-            await self.run_syringe_until_idle(self.move_absolute(int(self._full_stroke() / 2 / 2), int(self.max_aspirate_flow_rate)))
+            await self.run_syringe_until_idle(self.move_absolute(int(self._full_stroke() / 2 / 2)))
         elif command == 'aspirate':
             # aspirates given volume
             # NOTE: Does not move any valves, so valves must be in safe position
-            await self.run_syringe_until_idle(self.aspirate(float(data['volume']) * 1000, self.max_aspirate_flow_rate))
+            await self.run_syringe_until_idle(self.aspirate(float(data['value']) * 1000, self._flow_rate(self._speed)))
         elif command == 'dispense':
             # dispenses given volume
             # NOTE: Does not move any valves, so valves must be in safe position
-            await self.run_syringe_until_idle(self.dispense(float(data['volume']) * 1000, self.max_dispense_flow_rate))
+            await self.run_syringe_until_idle(self.dispense(float(data['value']) * 1000, self._flow_rate(self._speed)))
         elif command == 'smart_dispense':
             # smart dispenses given volume
-            await self.smart_dispense(float(data['volume']) * 1000, self.max_dispense_flow_rate)
+            await self.smart_dispense(float(data['value']) * 1000, self._flow_rate(self._speed))
+        elif command == 'set_speed':
+            # set the speed
+            await self.run_until_idle(self.set_speed(float(data['value']) * 1000 / 60))
 
     async def get_syringe_status(self) -> str:
         """Gets full status string of device
@@ -674,6 +680,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         V = self._speed_code(flow_rate)
         logging.debug(f'Speed: {V}')
         response, error = await self.query(f'V{V}R')
+        await self.get_speed()
 
         if error:
             logging.error(f'{self}: Syringe move error {error}')
