@@ -150,6 +150,8 @@
                             }
                             if ('syringe' in data['state']) {
                                 statediv.append(progressbar(data['state']['syringe']['position'] / data['state']['syringe']['max_position'] * 100))
+                                syringespeedcontainer = $('<div>').text('Syringe speed (mL /min): ').appendTo(statediv)
+                                $('<text>').addClass("syringe_speed").text(data['state']['syringe']['speed']).appendTo(syringespeedcontainer)
                             }
                             statediv.append($('<hr>'))
                             update_controls($(this).children(".device_controls"), id, data['controls'])
@@ -229,7 +231,7 @@
                     let newtext = $('<input type=text>').addClass('input_text').appendTo(inputcontainer)
                     let newtextbutton = $('<button>').addClass('textbutton').text('Go').appendTo(inputcontainer)                    
                     newtextbutton.on("click", function () {
-                        issue_command(device_id, cid, {'volume': newtext.val()})
+                        issue_command(device_id, cid, {'value': newtext.val()})
                     })
                 }
                 else if (ctype=='number') {

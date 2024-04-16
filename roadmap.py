@@ -407,7 +407,7 @@ if __name__=='__main__':
     if True:
         async def main():
             gsioc = GSIOC(62, 'COM13', 19200)
-            ser = HamiltonSerial(port='COM7', baudrate=38400)
+            ser = HamiltonSerial(port='COM9', baudrate=38400)
             #ser = HamiltonSerial(port='COM3', baudrate=38400)
             dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Valve')
             mvp0 = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve0'), name='Loop Valve 0')
