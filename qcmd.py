@@ -771,13 +771,13 @@ async def qcmd_distribution():
     qcmd_channel = QCMDLoop(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], name='QCMD Channel')
 
     # connect LH injection port to distribution port valve 0
-    connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 124 + 20)
+    connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 124 + 50)
 
     # connect distribution valve port 1 to syringe pump valve node 2 (top)
     connect_nodes(dvp.valve.nodes[1], sp.valve.nodes[2], 73 + 20)
 
     # connect distribution valve port 2 to loop valve node 3 (top right)
-    connect_nodes(dvp.valve.nodes[2], mvp.valve.nodes[3], 82 + 20)
+    connect_nodes(dvp.valve.nodes[2], mvp.valve.nodes[3], 90 + 50)
 
     # connect syringe pump valve port 3 to sample loop
     connect_nodes(sp.valve.nodes[3], sampleloop.inlet_node, 0.0)
