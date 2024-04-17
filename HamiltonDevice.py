@@ -74,6 +74,7 @@ class HamiltonBase(WebNodeBase):
         self.idle = True
         self.initialized = False
         self.reserved = False   # like a lock; allows reserving the device before running a method
+        self.digital_outputs: Tuple[bool, bool, bool] = (False, False, False)
         self.busy_code = '@'
         self.idle_code = '`'
         self.poll_delay = 0.1   # Hamilton-recommended 100 ms delay when polling
@@ -213,10 +214,11 @@ class HamiltonBase(WebNodeBase):
             sensor_index (int): Digital output that drives the bubble sensor
         """
 
-        state = list(await self.get_digital_outputs())
+        await self.get_digital_outputs()
+        state = list(self.digital_outputs)
         state[digital_output] = value
 
-        await self.set_digital_outputs(state)
+        await self.set_digital_outputs(tuple(state))
 
     async def set_digital_outputs(self, digital_outputs: Tuple[bool, bool, bool]) -> None:
         """Sets the three digital outputs, e.g. (True, False, False)
@@ -228,6 +230,7 @@ class HamiltonBase(WebNodeBase):
         binary_string = ''.join(map(str, map(int, digital_outputs)))
 
         response, error = await self.query(f'J{int(binary_string, 2)}R')
+        self.digital_outputs = digital_outputs
 
     async def get_digital_outputs(self) -> Tuple[bool, bool, bool]:
         """Gets digital output values
@@ -239,7 +242,10 @@ class HamiltonBase(WebNodeBase):
         response, error = await self.query(f'?37000')
         binary_string = format(int(response), '03b')
 
-        return tuple([bool(digit) for digit in binary_string])
+        digital_outputs = tuple([bool(digit) for digit in binary_string])
+        self.digital_outputs = digital_outputs
+
+        return digital_outputs
 
     def create_web_app(self, template='roadmap.html') -> web.Application:
         """Creates a web application for this specific device
@@ -266,7 +272,8 @@ class HamiltonBase(WebNodeBase):
                            'address': self.address},
                 'state': {'initialized': self.initialized,
                           'idle': self.idle,
-                          'reserved': self.reserved},
+                          'reserved': self.reserved,
+                          'digital_outputs': self.digital_outputs},
                 'controls': {'reset': {'type': 'button',
                                      'text': 'Reset'}}})
         
