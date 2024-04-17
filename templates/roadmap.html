@@ -154,6 +154,25 @@
                                 $('<text>').addClass("syringe_speed").text(data['state']['syringe']['speed']).appendTo(syringespeedcontainer)
                             }
                             statediv.append($('<hr>'))
+                            do_container = $('<div>').text('Digital outputs: ').appendTo(statediv)
+                           for (let i = 0; i < data['state']['digital_outputs'].length; i++) {
+                                let newctrl = $('<button>')
+                                    .on('click', function () {
+                                        value = false
+                                        $(this).toggleClass("digital_high digital_low")
+                                        if ($(this).hasClass("digital_high")) {
+                                            value = true
+                                        }
+                                        issue_command(device_id, "set_digital_output", {'number': i, 'value': value})
+                                    })
+                                    .appendTo(devicediv);
+                                    if (data['state']['digital_outputs'][i]) {
+                                        newctrl.addClass("digital_high");
+                                    }
+                                    else {
+                                        newctrl.addClass("digital_low");
+                                    }
+                                }
                             update_controls($(this).children(".device_controls"), id, data['controls'])
                         }
                         else if (data['type'] == 'assembly') {
@@ -451,6 +470,17 @@
         border-radius: 5px;
         min-width: 20%;
         font-stretch: narrower;
+    }
+    .digital_button {
+        border-radius: 5px;
+        width: 10px;
+        height: 10px;
+    }
+    .digital_high {
+        background-color: rgb(71, 130, 71)
+    }
+    .digital_low {
+        background-color: rgb(180, 92, 92)
     }
     .btn-disabled {
         background-color: gray !important;
