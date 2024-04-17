@@ -188,7 +188,59 @@ class HamiltonBase(WebNodeBase):
             self.idle = True
 
         return response.split(c, 1)[1], error
-    
+
+    async def get_digital_input(self, digital_input: int) -> bool:
+        """Gets value of a digital input.
+
+        Args:
+            digital_input (int): Index (either 1 or 2)
+
+        Returns:
+            bool: return value
+        """
+
+        query_code = 12 + digital_input
+
+        response, error = await self.query(f"?{query_code}")
+
+        return bool(int(response))
+
+    async def set_digital_output(self, digital_output: int, value: bool) -> None:
+        """Activates digital output corresponding to its index. Reads current digital output state and
+            makes the appropriate adjustment
+
+        Args:
+            sensor_index (int): Digital output that drives the bubble sensor
+        """
+
+        state = list(await self.get_digital_outputs())
+        state[digital_output] = value
+
+        await self.set_digital_outputs(state)
+
+    async def set_digital_outputs(self, digital_outputs: Tuple[bool, bool, bool]) -> None:
+        """Sets the three digital outputs, e.g. (True, False, False)
+
+        Returns:
+            Tuple[bool, bool, bool]: Tuple of the three digital output values
+        """
+
+        binary_string = ''.join(map(str, map(int, digital_outputs)))
+
+        response, error = await self.query(f'J{int(binary_string, 2)}R')
+
+    async def get_digital_outputs(self) -> Tuple[bool, bool, bool]:
+        """Gets digital output values
+
+        Returns:
+            List[bool]: List of the three digital outputs
+        """
+
+        response, error = await self.query(f'?37000')
+        binary_string = format(int(response), '03b')
+
+        return tuple([bool(digit) for digit in binary_string])
+
     def create_web_app(self, template='roadmap.html') -> web.Application:
         """Creates a web application for this specific device
 

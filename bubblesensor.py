@@ -53,58 +53,6 @@ class SyringePumpwithBubbleSensor(HamiltonSyringePump):
 
         return time.time() - start_time
 
-    async def get_digital_input(self, digital_input: int) -> bool:
-        """Gets value of a digital input.
-
-        Args:
-            digital_input (int): Index (either 1 or 2)
-
-        Returns:
-            bool: return value
-        """
-
-        query_code = 12 + digital_input
-
-        response, error = await self.query(f"?{query_code}")
-
-        return bool(int(response))
-
-    async def set_digital_output(self, digital_output: int, value: bool) -> None:
-        """Activates digital output corresponding to its index. Reads current digital output state and
-            makes the appropriate adjustment
-
-        Args:
-            sensor_index (int): Digital output that drives the bubble sensor
-        """
-
-        state = list(await self.get_digital_outputs())
-        state[digital_output] = value
-
-        await self.set_digital_outputs(state)
-
-    async def set_digital_outputs(self, digital_outputs: Tuple[bool, bool, bool]) -> None:
-        """Sets the three digital outputs, e.g. (True, False, False)
-
-        Returns:
-            Tuple[bool, bool, bool]: Tuple of the three digital output values
-        """
-
-        binary_string = ''.join(map(str, map(int, digital_outputs)))
-
-        response, error = await self.query(f'J{int(binary_string, 2)}R')
-
-    async def get_digital_outputs(self) -> Tuple[bool, bool, bool]:
-        """Gets digital output values
-
-        Returns:
-            List[bool]: List of the three digital outputs
-        """
-
-        response, error = await self.query(f'?37000')
-        binary_string = format(int(response), '03b')
-
-        return tuple([bool(digit) for digit in binary_string])
-    
     # TODO: Make a better base class for move_absolute and smart_dispense so the code is not copied here
 
     async def move_absolute(self, position: int, V_rate: int, interrupt_index: int | None = None) -> None:
