@@ -813,13 +813,18 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             if error:
                 logging.error(f'{self}: Syringe move error {error}')
 
-    async def smart_dispense(self, volume: float, dispense_flow_rate: float) -> None:
+    async def smart_dispense(self, volume: float, dispense_flow_rate: float, interrupt_index: int | None = None) -> None:
         """Smart dispense, including both aspiration at max flow rate, dispensing at specified
             flow rate, and the ability to handle a volume that is larger than the syringe volume
             
         Args:
             volume (float): volume in uL
-            flow_rate (float): flow rate in uL / s"""
+            flow_rate (float): flow rate in uL / s
+            interrupt_index (int | None, optional): See move_absolute. Defaults to None.
+            
+        Returns:
+            float: volume actually dispensed in uL
+            """
 
         # check that aspiration and dispense positions are defined
         if (not hasattr(self.valve, 'aspirate_position')) | (not hasattr(self.valve, 'dispense_position')):
@@ -852,12 +857,14 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         # calculate number of aspirate/dispense operations and volume per operation
         # if there is already enough volume in the syringe, just do a single dispense
+        total_steps_dispensed = 0
         if current_position >= total_steps:
             # switch valve and dispense
             logging.debug(f'{self.name}: smart dispense dispensing {total_steps} at V {V_dispense}')
             await self.run_until_idle(self.move_valve(self.valve.dispense_position))
             await self.run_until_idle(self.set_speed(dispense_flow_rate))
-            await self.run_syringe_until_idle(self.move_absolute(current_position - total_steps, V_dispense))
+            await self.run_syringe_until_idle(self.move_absolute(current_position - total_steps, interrupt_index))
+            total_steps_dispensed += current_position - self.syringe_position
         else:
             # number of full_volume loops plus remainder
             stroke_steps = [full_stroke] * (total_steps // full_stroke) + [total_steps % full_stroke]
@@ -868,24 +875,40 @@ class HamiltonSyringePump(HamiltonValvePositioner):
                     await self.run_until_idle(self.move_valve(self.valve.aspirate_position))
                     await self.run_until_idle(self.set_speed(aspirate_flow_rate))
                     await self.run_syringe_until_idle(self.move_absolute(stroke))
-                    # switch valve and dispense
+                    position_after_aspirate = copy.copy(self.syringe_position)
+
+                    # switch valve and dispense; run_syringe_until_idle updates self.syringe_position
                     logging.debug(f'{self.name}: smart dispense dispensing all at V {V_dispense}')
                     await self.run_until_idle(self.move_valve(self.valve.dispense_position))
                     await self.run_until_idle(self.set_speed(dispense_flow_rate))
-                    await self.run_syringe_until_idle(self.move_absolute(0))
-                    # set current position to zero
-                    current_position = 0
+                    await self.run_syringe_until_idle(self.move_absolute(0, interrupt_index))
+                    position_change = position_after_aspirate - self.syringe_position
+                    total_steps_dispensed += position_change
 
-    async def move_absolute(self, position: int) -> None:
+                    if (stroke == position_change):
+                        # update current position and go to next step
+                        current_position = copy.copy(self.syringe_position)
+                    else:
+                        # stop! do not do continued strokes because the interrupt was triggered
+                        break
+
+        return self._volume_from_stroke_length(total_steps_dispensed)
+
+    async def move_absolute(self, position: int, interrupt_index: int | None = None) -> None:
         """Low-level method for moving the syringe to an absolute position
 
         Args:
             position (int): syringe position in steps
+            interrupt_index (int | None, optional): index of condition to interrupt syringe movement.
+                See Hamilton PSD manual for codes. Defaults to None.
+
         """
 
-        response, error = await self.query(f'A{position}R')
+        interrupt_string = '' if interrupt_index is None else f'i{interrupt_index}'
+
+        response, error = await self.query(interrupt_string + f'A{position}R')
         if error:
-            logging.error(f'{self}: Syringe move error {error} for move to position {position} with V {V_rate}')
+            logging.error(f'{self}: Syringe move error {error} for move to position {position} with V {self._speed}')
 
     async def home(self) -> None:
         """Homes syringe using maximum flow rate
