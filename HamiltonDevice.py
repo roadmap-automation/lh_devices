@@ -108,6 +108,8 @@ class HamiltonBase(WebNodeBase):
 
         if not await self.is_initialized():
             await self.run_until_idle(self.initialize_device())
+        
+        await self.run_until_idle(self.set_digital_outputs((False, False, False)))
 
     async def initialize_device(self) -> None:
         pass
@@ -214,7 +216,6 @@ class HamiltonBase(WebNodeBase):
             sensor_index (int): Digital output that drives the bubble sensor
         """
 
-        await self.get_digital_outputs()
         state = list(self.digital_outputs)
         state[digital_output] = value
 
@@ -227,7 +228,7 @@ class HamiltonBase(WebNodeBase):
             Tuple[bool, bool, bool]: Tuple of the three digital output values
         """
 
-        binary_string = ''.join(map(str, map(int, digital_outputs)))
+        binary_string = ''.join(map(str, map(int, digital_outputs[::-1])))
 
         response, error = await self.query(f'J{int(binary_string, 2)}R')
         self.digital_outputs = digital_outputs
@@ -291,6 +292,8 @@ class HamiltonBase(WebNodeBase):
 
         if command == 'reset':
             await self.run_until_idle(self.reset())
+        elif command == 'set_digital_output':
+            await self.run_until_idle(self.set_digital_output(int(data['number']), bool(data['value'])))
 
     async def reset(self) -> None:
         """Resets the device
