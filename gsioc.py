@@ -72,46 +72,55 @@ class GSIOC(aioserial.AioSerial):
         """
 
         logging.info('Starting GSIOC listener... Ctrl+C to exit.')
-        self.interrupt = False
 
-        # infinite loop to wait for a command
-        while not self.interrupt:
+        if not self.is_open:
+            self.open()
 
-            logging.debug('Waiting for connection...')
+        # infinite loop to wait for a command. Break by cancelling the task
+        try:
+            while True:
 
-            await self.wait_for_connection()
+                logging.debug('Waiting for connection...')
 
-            if self.connected: # address received
-                logging.debug('Connection established, waiting for command')
-                # waits for a command
-                cmd = await self.wait_for_command()
+                await self.wait_for_connection()
 
-                if cmd:
+                if self.connected: # address received
+                    logging.debug('Connection established, waiting for command')
+                    # waits for a command
+                    cmd = await self.wait_for_command()
 
-                    logging.debug(f'{self.port} (GSIOC) <= {cmd}')
+                    if cmd:
 
-                    # process ID request immediately
-                    if cmd == '%':
-                        await self.send(self.gsioc_name)
-                    
-                    else:
-                        # parses received command into a GSIOCMessage
-                        data = await self.parse_command(cmd)
+                        logging.debug(f'{self.port} (GSIOC) <= {cmd}')
 
-                        # put message in listener queue
-                        await self.message_queue.put(data)
+                        # process ID request immediately
+                        if cmd == '%':
+                            await self.send(self.gsioc_name)
+                        
+                        else:
+                            # parses received command into a GSIOCMessage
+                            data = await self.parse_command(cmd)
 
-                        if data.messagetype == GSIOCCommandType.IMMEDIATE:
-                            logging.debug('Waiting for response to immediate command')
-                            response: str = await self.response_queue.get()
-                            await self.send(response)
+                            # put message in listener queue
+                            await self.message_queue.put(data)
 
-            logging.debug('Connection reset...')
+                            if data.messagetype == GSIOCCommandType.IMMEDIATE:
+                                logging.debug('Waiting for response to immediate command')
+                                response: str = await self.response_queue.get()
+                                await self.send(response)
 
-        # close serial port before exiting when interrupt is received
-        logging.info('Sending break and closing GSIOC connection...')
-        await self.write1(chr(10))
-        self.close()
+                logging.debug('Connection reset...')
+        except asyncio.CancelledError:
+            logging.info('Sending break and closing GSIOC connection...')
+            logging.info('Sending break and closing GSIOC connection...')
+            await self.write1(chr(10))
+
+        finally:
+
+            # close serial port before exiting when interrupt is received
+            self.message_queue.empty()
+            self.response_queue.empty()
+            self.close()
 
     async def wait_for_connection(self):
         """
