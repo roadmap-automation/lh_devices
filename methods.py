@@ -67,10 +67,12 @@ class MethodBasewithGSIOC(MethodBase):
         self.waiting: asyncio.Event = asyncio.Event()
         self.trigger: asyncio.Event = asyncio.Event()
 
+
+
         # container for gsioc tasks 
         self._gsioc_tasks: List[asyncio.Task] = []
 
-    async def connect_gsioc(self) -> None:
+    def connect_gsioc(self) -> None:
         """Start GSIOC listener and connect."""
 
         # TODO: This opens and closes the serial port a lot. Might be better to just start the GSIOC listener and then connect to it through monitor_gsioc
@@ -91,7 +93,7 @@ class MethodBasewithGSIOC(MethodBase):
         except asyncio.CancelledError:
             logging.debug("Stopping GSIOC monitor...")
 
-    async def disconnect_gsioc(self) -> None:
+    def disconnect_gsioc(self) -> None:
         """Stop listening to GSIOC
         """
 
@@ -137,4 +139,23 @@ class MethodBasewithGSIOC(MethodBase):
         else:
             response = 'error: unknown command'
 
+        return response
+    
+class MethodBaseDeadVolume(MethodBasewithGSIOC):
+
+    def __init__(self, gsioc: GSIOC, devices: List[HamiltonBase] = []) -> None:
+        super().__init__(gsioc, devices)
+
+        self.dead_volume: asyncio.Queue = asyncio.Queue(1)
+
+    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
+
+        # overwrites base class handling of dead volume
+        if data.data == 'V':
+            dead_volume = await self.dead_volume.get()
+            #logging.info(f'Sending dead volume {dead_volume}')
+            response = f'{dead_volume:0.0f}'
+        else:
+            response = await super().handle_gsioc(data)
+        
         return response

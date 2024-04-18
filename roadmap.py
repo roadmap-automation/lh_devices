@@ -12,7 +12,7 @@ from gsioc import GSIOC, GSIOCMessage
 from components import InjectionPort, FlowCell
 from assemblies import AssemblyBase, AssemblyBasewithGSIOC, Network, NestedAssemblyBase, Mode, AssemblyMode
 from connections import connect_nodes, Node
-from methods import MethodBase, MethodBasewithGSIOC
+from methods import MethodBase, MethodBaseDeadVolume
 
 class RoadmapChannelBase(AssemblyBasewithGSIOC):
 
@@ -36,9 +36,6 @@ class RoadmapChannelBase(AssemblyBasewithGSIOC):
 
         # Define node connections for dead volume estimations
         self.network = Network(self.devices + [self.flow_cell, self.sample_loop])
-
-        # Dead volume queue
-        self.dead_volume: asyncio.Queue = asyncio.Queue(1)
 
         # Measurement modes
         self.modes = {'Standby': Mode({loop_valve: 0,
@@ -143,7 +140,7 @@ class RoadmapChannelBase(AssemblyBasewithGSIOC):
         else:
             return await super().event_handler(command, data)
 
-class LoadLoop(MethodBasewithGSIOC):
+class LoadLoop(MethodBaseDeadVolume):
     """Loads the loop of one ROADMAP channel
     """
 
@@ -154,7 +151,7 @@ class LoadLoop(MethodBasewithGSIOC):
         self.distribution_mode = distribution_mode
 
     @dataclass
-    class MethodDefinition(MethodBasewithGSIOC.MethodDefinition):
+    class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
         name: str = "LoadLoop"
         pump_volume: str | float = 0, # uL
@@ -178,12 +175,12 @@ class LoadLoop(MethodBasewithGSIOC):
         dead_volume = self.channel.get_dead_volume(self.channel.injection_node, self.dead_volume_mode)
 
         # blocks if there's already something in the dead volume queue
-        await self.channel.dead_volume.put(dead_volume)
+        await self.dead_volume.put(dead_volume)
         logging.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
 
         # Wait for trigger to switch to LoadLoop mode
         logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
-        await self.channel.wait_for_trigger()
+        await self.wait_for_trigger()
         logging.info(f'{self.channel.name}.{method.name}: Switching to LoadLoop mode')
 
         # Move all valves
@@ -191,7 +188,7 @@ class LoadLoop(MethodBasewithGSIOC):
 
         # Wait for trigger to switch to PumpAspirate mode
         logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
-        await self.channel.wait_for_trigger()
+        await self.wait_for_trigger()
 
         # At this point, liquid handler is done, release communications
         self.disconnect_gsioc()
@@ -245,7 +242,7 @@ class InjectLoop(MethodBase):
 
         self.release_all()
 
-class DirectInject(MethodBasewithGSIOC):
+class DirectInject(MethodBaseDeadVolume):
     """Directly inject from LH to a ROADMAP channel flow cell
     """
 
@@ -256,7 +253,7 @@ class DirectInject(MethodBasewithGSIOC):
         self.distribution_mode = distribution_mode
 
     @dataclass
-    class MethodDefinition(MethodBasewithGSIOC.MethodDefinition):
+    class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
         name: str = "DirectInject"
 
@@ -275,7 +272,7 @@ class DirectInject(MethodBasewithGSIOC):
         dead_volume = self.channel.get_dead_volume(self.channel.injection_node, self.dead_volume_mode)
 
         # blocks if there's already something in the dead volume queue
-        await self.channel.dead_volume.put(dead_volume)
+        await self.dead_volume.put(dead_volume)
         logging.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
 
         # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
@@ -466,7 +463,8 @@ if __name__=='__main__':
             try:
                 #qcmd_system.distribution_valve.valve.move(2)
                 await qcmd_system.initialize()
-#                await sp0.run_until_idle(sp0.set_digital_output(0, True))
+                await sp0.run_until_idle(sp0.set_digital_output(0, True))
+                await sp0.run_until_idle(sp0.set_digital_output(1, True))
                 #await sp0.query('J1R')
 #                await asyncio.sleep(2)
 #                await sp0.run_until_idle(sp0.set_digital_output(0, False))
