@@ -1,13 +1,11 @@
+import asyncio
+import json
 import logging
 from typing import List
 from dataclasses import dataclass, field
 
-
-from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
-from gsioc import GSIOC
-from components import InjectionPort, FlowCell, ComponentBase
-from assemblies import AssemblyBase, AssemblyBasewithGSIOC, Network
-from connections import connect_nodes
+from HamiltonDevice import HamiltonBase
+from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 
 class MethodBase:
     """Base class for defining a method for LH serial devices. Contains information about:
@@ -58,3 +56,85 @@ class MethodBase:
 
         pass
 
+class MethodBasewithGSIOC(MethodBase):
+
+    def __init__(self, gsioc: GSIOC, devices: List[HamiltonBase] = []) -> None:
+        super().__init__(devices)
+
+        self.gsioc = gsioc
+
+        # enables triggering
+        self.waiting: asyncio.Event = asyncio.Event()
+        self.trigger: asyncio.Event = asyncio.Event()
+
+        # container for gsioc tasks 
+        self._gsioc_tasks: List[asyncio.Task] = []
+
+    async def connect_gsioc(self) -> None:
+        """Start GSIOC listener and connect."""
+
+        # TODO: This opens and closes the serial port a lot. Might be better to just start the GSIOC listener and then connect to it through monitor_gsioc
+        self._gsioc_tasks = [asyncio.create_task(self.gsioc.listen()), asyncio.create_task(self.monitor_gsioc())]
+
+    async def monitor_gsioc(self) -> None:
+        """Monitor GSIOC communications. Note that only one device should be
+            listening to a GSIOC device at a time.
+        """
+
+        try:
+            while True:
+                data: GSIOCMessage = await self.gsioc.message_queue.get()
+
+                response = await self.handle_gsioc(data)
+                if data.messagetype == GSIOCCommandType.IMMEDIATE:
+                    await self.gsioc.response_queue.put(response)
+        except asyncio.CancelledError:
+            logging.debug("Stopping GSIOC monitor...")
+
+    async def disconnect_gsioc(self) -> None:
+        """Stop listening to GSIOC
+        """
+
+        for task in self._gsioc_tasks:
+            task.cancel()
+
+    async def wait_for_trigger(self) -> None:
+        """Uses waiting and trigger events to signal that assembly is waiting for a trigger signal
+            and then release upon receiving the trigger signal"""
+        
+        self.waiting.set()
+        await self.trigger.wait()
+        self.waiting.clear()
+        self.trigger.clear()
+
+    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
+        """Handles GSIOC messages. Put actions into gsioc_command_queue for async processing.
+
+        Args:
+            data (GSIOCMessage): GSIOC Message to be parsed / handled
+
+        Returns:
+            str: response (only for GSIOC immediate commands, else None)
+        """
+        
+        response = None
+
+        if data.data == 'Q':
+            # busy query
+            if self.waiting.is_set():
+                response = 'waiting'
+            elif all(dev.idle for dev in self.devices):
+                response = 'idle'
+            else:
+                response = 'busy'
+
+        # set trigger
+        elif data.data == 'T':
+            self.waiting.clear()
+            self.trigger.set()
+            response = 'ok'
+
+        else:
+            response = 'error: unknown command'
+
+        return response
