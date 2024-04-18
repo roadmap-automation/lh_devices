@@ -155,17 +155,18 @@
                             }
                             statediv.append($('<hr>'))
                             do_container = $('<div>').text('Digital outputs: ').appendTo(statediv)
-                           for (let i = 0; i < data['state']['digital_outputs'].length; i++) {
+                            for (let i = 0; i < data['state']['digital_outputs'].length; i++) {
                                 let newctrl = $('<button>')
+                                    .addClass("digital_button")
                                     .on('click', function () {
                                         value = false
                                         $(this).toggleClass("digital_high digital_low")
                                         if ($(this).hasClass("digital_high")) {
                                             value = true
                                         }
-                                        issue_command(device_id, "set_digital_output", {'number': i, 'value': value})
+                                        issue_command(id, "set_digital_output", {'number': i, 'value': value})
                                     })
-                                    .appendTo(devicediv);
+                                    .appendTo(do_container);
                                     if (data['state']['digital_outputs'][i]) {
                                         newctrl.addClass("digital_high");
                                     }
@@ -472,9 +473,9 @@
         font-stretch: narrower;
     }
     .digital_button {
-        border-radius: 5px;
-        width: 10px;
-        height: 10px;
+        border-radius: 0.6em;
+        width: 1.2em;
+        height: 1.2em;
     }
     .digital_high {
         background-color: rgb(71, 130, 71)
