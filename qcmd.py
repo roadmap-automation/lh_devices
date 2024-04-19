@@ -5,6 +5,7 @@ from aiohttp.web import Application
 import asyncio
 import logging
 import json
+from uuid import uuid4
 from urllib.parse import urlsplit
 from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial
 from valve import LoopFlowValve, SyringeLValve, DistributionValve
@@ -14,7 +15,7 @@ from gsioc import GSIOC, GSIOCMessage
 from assemblies import AssemblyBasewithGSIOC, AssemblyBase, InjectionChannelBase, Network, connect_nodes, Mode, NestedAssemblyBase, AssemblyMode
 from liquid_handler import SimLiquidHandler
 from bubblesensor import SyringePumpwithBubbleSensor
-from webview import run_socket_app
+from webview import run_socket_app, WebNodeBase
 from methods import MethodBaseDeadVolume
 
 class Timer:
@@ -106,12 +107,153 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
         # wait the full time
         await self.recorder.record(tag_name, record_time, sleep_time)
 
-class QCMDMultiChannelRecorderDevice(QCMDRecorderDevice):
+class QCMDMeasurementInterface:
+
+    """QCMD-specific measurement interface. At end of timing interval, sends HTTP request to QCMD to get data."""
+
+    def __init__(self, http_address: str = 'http://localhost:5011/QCMD/0/', name='QCMDRecorder') -> None:
+        self.name = name
+        url_parts = urlsplit(http_address)
+        self.session = ClientSession(f'{url_parts.scheme}://{url_parts.netloc}')
+        self.url_path = url_parts.path
+
+    async def record(self, record_time: float = 0.0, sleep_time: float = 0.0) -> dict:
+        """Executes timer and sends record command to QCMD. Call by sending
+            {"method": "record", {**kwargs}} over GSIOC.
+        """
+
+        record_time = float(record_time)
+        sleep_time = float(sleep_time)
+
+        # calculate total wait time
+        wait_time = record_time + sleep_time
+
+        # wait the full time
+        await asyncio.sleep(wait_time)
+
+        # send data request to QCMD interface
+        post_data = {'command': 'get_data_slice',
+                    'value': {'delta_t': record_time}}
+
+        logging.info(f'{self.session._base_url}{self.url_path} => {post_data}')
+
+        # send an http request to QCMD server
+        try:
+            async with self.session.post(self.url_path, json=post_data, timeout=10) as resp:
+                response_json = await resp.json()
+                logging.info(f'{self.session._base_url}{self.url_path} <= {response_json}')
+                return response_json
+        except (ConnectionRefusedError, ClientConnectionError):
+            logging.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
+
+class QCMDMeasurementChannel(QCMDMeasurementInterface, WebNodeBase):
+    
+    def __init__(self, http_address: str, name='QCMDRecorder') -> None:
+        WebNodeBase.__init__(self)
+        QCMDMeasurementInterface.__init__(self, http_address, name)
+        
+        self.id = str(uuid4())
+        self.idle = True
+        self.reserved = False
+
+        self.methods = {'QCMDRecord': self.QCMDRecord}
+        self.result: dict | None = None
+
+    async def QCMDRecord(self, record_time: float = 0.0, sleep_time: float = 0.0):
+        """Recording 
+
+        Args:
+            record_time (float, optional): Time to record. Defaults to 0.0.
+            sleep_time (float, optional): Time to sleep before recording. Defaults to 0.0.
+        """
+
+        self.reserve()
+        self.idle = False
+        await self.trigger_update()
+
+        self.result = await self.record(record_time, sleep_time)
+
+        self.release()
+        self.idle = True
+        await self.trigger_update()
+
+    def reserve(self):
+        """Reserve channel"""
+        self.reserved = True
+
+    def release(self):
+        """Release channel"""
+        self.reserved = False
+
+    async def get_info(self) -> dict:
+        d = await super().get_info()
+        d.update({'type': 'device',
+                  'state': {'idle': self.idle,
+                            'reserved': self.reserved},
+                  'controls': {}})
+        
+        return d
+
+class QCMDMultiChannelMeasurementDevice(AssemblyBase):
     """QCMD recording device simultaneously recording on multiple QCMD instruments"""
 
-    def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, n_channels: int = 1, name='QCMDRecorderDevice') -> None:
-        super().__init__(qcmd_address, qcmd_port, name)
+    def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, n_channels: int = 1, name='MultiChannel QCMD Measurement Device') -> None:
 
+        self.channels = [QCMDMeasurementChannel(f'http://{qcmd_address}:{qcmd_port}/QCMD/{i}/', name=f'QCMD Measurement Channel {i}') for i in range(n_channels)]
+
+        super().__init__([], name)
+
+    def create_web_app(self, template='roadmap.html') -> Application:
+        app = super().create_web_app(template=template)
+        routes = web.RouteTableDef()
+
+        @routes.post('/SubmitTask')
+        async def handle_task(request: web.Request) -> web.Response:
+            # TODO: turn task into a dataclass; parsing will change
+            task = await request.json()
+            channel: int = task['channel']
+            if channel < len(self.channels):
+                method_name: str = task['method_name']
+                method_data: dict = task['method_data']
+                if not self.channels[channel].reserved:
+                    self.run_method(self.channels[channel].methods[method_name](**method_data))
+                   
+                    return web.Response(text='accepted', status=200)
+                
+                return web.Response(text='busy', status=200)
+            
+            return web.Response(text=f'error: channel {channel} does not exist', status=400)
+        
+        @routes.get('/GetTaskData')
+        async def get_task(request: web.Request) -> web.Response:
+            # TODO: turn task into a dataclass; parsing will change
+            task = await request.json()
+            channel: int = task['channel']
+            if channel < len(self.channels):
+                return web.Response(text=json.dumps(self.channels[channel].result), status=200)
+        
+            return web.Response(text=f'error: channel {channel} does not exist', status=400)
+        
+        app.add_routes(routes)
+
+        for i, channel in enumerate(self.channels):
+            app.add_subapp(f'/{i}/', channel.create_web_app(template))
+            app.add_subapp(f'/{channel.id}/', channel.create_web_app(template))
+
+        return app
+
+    async def get_info(self) -> dict:
+        """Gets object state as dictionary
+
+        Returns:
+            dict: object state
+        """
+
+        d = await super().get_info()
+
+        d.update({'devices': {channel.id: channel.name for channel in self.channels}})
+
+        return d
 
 class QCMDDistributionChannel(InjectionChannelBase):
     """Channel for a simple QCMD array"""
@@ -1036,6 +1178,20 @@ async def qcmd_single_distribution():
         asyncio.gather(
                        runner.cleanup())
 
+async def qcmd_multichannel_measure():
+
+    measurement_system = QCMDMultiChannelMeasurementDevice('localhost', 5011, 2)
+
+    app = measurement_system.create_web_app(template='roadmap.html')
+    runner = await run_socket_app(app, 'localhost', 5003)
+    print(json.dumps(await measurement_system.get_info()))
+    try:
+        await asyncio.Event().wait()
+    finally:
+        logging.info('Cleaning up...')
+        asyncio.gather(
+                       runner.cleanup())
+
 async def main():
     gsioc = GSIOC(62, 'COM13', 19200)
     qcmd_recorder = QCMDRecorderDevice('localhost', 5011)
@@ -1080,5 +1236,5 @@ if __name__=='__main__':
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
                             level=logging.INFO)
-        asyncio.run(qcmd_single_distribution(), debug=True)
+        asyncio.run(qcmd_multichannel_measure(), debug=True)
         #asyncio.run(sptest())
