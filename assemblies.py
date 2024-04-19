@@ -9,6 +9,7 @@ from typing import List, Tuple, Dict, Coroutine
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from connections import Port, Node, connect_nodes
+from methods import MethodBase
 from components import ComponentBase
 from webview import sio, WebNodeBase
 
@@ -446,41 +447,40 @@ class NestedAssemblyBase(AssemblyBase):
         d.update({'assemblies': {assembly.id: assembly.name for assembly in self.assemblies}})
         return d
 
-class AssemblyTest(AssemblyBase):
+class InjectionChannelBase(AssemblyBase):
 
-    def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump, name='') -> None:
-        super().__init__(devices=[loop_valve, syringe_pump], name=name)
+    def __init__(self, devices: List[HamiltonBase],
+                       injection_node: Node | None = None,
+                       name: str = '') -> None:
+        
+        # Devices
+        self.injection_node = injection_node
+        super().__init__(devices, name=name)
+        self.methods: Dict[str, MethodBase] = {}
 
-        connect_nodes(syringe_pump.valve.nodes[1], loop_valve.valve.nodes[0], 101)
-        connect_nodes(syringe_pump.valve.nodes[2], loop_valve.valve.nodes[1], 102)
+        # Define node connections for dead volume estimations
+        self.network = Network(self.devices)
 
-        self.modes = {'LoopInject': 
-                    {loop_valve: 2,
-                     syringe_pump: 2,
-                     'dead_volume_nodes': [syringe_pump.valve.nodes[0], loop_valve.valve.nodes[0]]},
-                 'LHInject':
-                    {loop_valve: 1,
-                     syringe_pump: 1,
-                     'dead_volume_nodes': [syringe_pump.valve.nodes[2], loop_valve.valve.nodes[1]]}
-                 }
+        # Measurement modes
 
+    def get_dead_volume(self, mode: str | None = None) -> float:
+        return super().get_dead_volume(self.injection_node, mode)
 
-class RoadmapChannel(AssemblyBase):
-    """Assembly of MVP and PSD devices creating one ROADMAP channel
-    """
+    def run_method(self, method_name: str, method_kwargs: dict) -> None:
 
-    def __init__(self, loop_valve: HamiltonValvePositioner, cell_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump, name='') -> None:
-        connect_nodes(loop_valve.valve.nodes[0], cell_valve.valve.nodes[1], dead_volume=100)
-        # make any additional connections here; network initialization will then know about all the connections
-        super().__init__([loop_valve, cell_valve, syringe_pump], name=name)
+        if not self.methods[method_name].is_ready():
+            logging.error(f'{self.name}: not all devices in {method_name} are available')
+        else:
+            super().run_method(self.methods[method_name].run(**method_kwargs))
 
-# TODO: Think about serialization / deserialization or loading from a config file. Should be
-#           straightforward to reconstruct the network, if not the comm information
+    def is_ready(self, method_name: str) -> bool:
+        """Checks if all devices are unreserved for method
 
-# TODO: Make Modes a dataclass with "movement" and "dead_volume_nodes" properties. Needs to use
-#        device names or internal names instead of direct device references if dataclass.
+        Args:
+            method_name (str): name of method to check
 
-# TODO: Make a method class (?) / decorator (?) 
+        Returns:
+            bool: True if all devices are unreserved
+        """
 
-# TODO: Decide whether to require the entire method string from the LH (passed through eventually)
-#        or make a more integrated system
+        return self.methods[method_name].is_ready()

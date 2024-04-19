@@ -10,11 +10,11 @@ from distribution import DistributionBase, DistributionSingleValve
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from gsioc import GSIOC, GSIOCMessage
 from components import InjectionPort, FlowCell
-from assemblies import AssemblyBase, AssemblyBasewithGSIOC, Network, NestedAssemblyBase, Mode, AssemblyMode
+from assemblies import AssemblyBase, InjectionChannelBase, Network, NestedAssemblyBase, Mode, AssemblyMode
 from connections import connect_nodes, Node
 from methods import MethodBase, MethodBaseDeadVolume
 
-class RoadmapChannelBase(AssemblyBase):
+class RoadmapChannelBase(InjectionChannelBase):
 
     def __init__(self, loop_valve: HamiltonValvePositioner,
                        syringe_pump: HamiltonSyringePump,
@@ -28,9 +28,7 @@ class RoadmapChannelBase(AssemblyBase):
         self.syringe_pump = syringe_pump
         self.flow_cell = flow_cell
         self.sample_loop = sample_loop
-        self.injection_node = injection_node
-        super().__init__([loop_valve, syringe_pump], name=name)
-        self.methods: Dict[str, MethodBase] = {}
+        super().__init__([loop_valve, syringe_pump], injection_node=injection_node, name=name)
 
         # Define node connections for dead volume estimations
         self.network = Network(self.devices + [self.flow_cell, self.sample_loop])
@@ -75,16 +73,6 @@ class RoadmapChannelBase(AssemblyBase):
         # change to standby mode
         await self.change_mode('Standby')
 
-    def get_dead_volume(self, mode: str | None = None) -> float:
-        return super().get_dead_volume(self.injection_node, mode)
-
-    def run_method(self, method_name: str, method_kwargs: dict) -> None:
-
-        if not self.methods[method_name].is_ready():
-            logging.error(f'{self.name}: not all devices in {method_name} are available')
-        else:
-            super().run_method(self.methods[method_name].run(**method_kwargs))
-
     async def primeloop(self,
                         n_prime: int = 1, # number of repeats
                         volume: float | None = None # prime volume. Uses sample loop volume if None.
@@ -98,18 +86,6 @@ class RoadmapChannelBase(AssemblyBase):
 
         for _ in range(n_prime):
             await self.syringe_pump.smart_dispense(volume, self.syringe_pump.max_aspirate_flow_rate)
-
-    def is_ready(self, method_name: str) -> bool:
-        """Checks if all devices are unreserved for method
-
-        Args:
-            method_name (str): name of method to check
-
-        Returns:
-            bool: True if all devices are unreserved
-        """
-
-        return self.methods[method_name].is_ready()
 
     async def get_info(self) -> Dict:
         d = await super().get_info()
@@ -297,8 +273,8 @@ class RoadmapChannel(RoadmapChannelBase):
     """Roadmap channel with populated methods
     """
 
-    def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump, flow_cell: FlowCell, sample_loop: FlowCell, gsioc: GSIOC, injection_node: Node | None = None, name: str = '') -> None:
-        super().__init__(loop_valve, syringe_pump, flow_cell, sample_loop, gsioc, injection_node, name)
+    def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump, flow_cell: FlowCell, sample_loop: FlowCell, injection_node: Node | None = None, name: str = '') -> None:
+        super().__init__(loop_valve, syringe_pump, flow_cell, sample_loop, injection_node, name)
 
         # add standalone methods
         self.methods = {'InjectLoop': InjectLoop(self)}
@@ -407,8 +383,8 @@ if __name__=='__main__':
             sampleloop0 = FlowCell(5060., 'sample_loop0')
             sampleloop1 = FlowCell(5060., 'sample_loop1')
 
-            channel_0 = RoadmapChannel(mvp0, sp0, fc0, sampleloop0, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 0')
-            channel_1 = RoadmapChannel(mvp1, sp1, fc1, sampleloop1, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 1')
+            channel_0 = RoadmapChannel(mvp0, sp0, fc0, sampleloop0, injection_node=ip.nodes[0], name='Channel 0')
+            channel_1 = RoadmapChannel(mvp1, sp1, fc1, sampleloop1, injection_node=ip.nodes[0], name='Channel 1')
             #channel_2 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 2')
             #channel_3 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 3')
             distribution_system = DistributionSingleValve(dvp, ip, 'Distribution System')
