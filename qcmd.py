@@ -5,8 +5,8 @@ from aiohttp.web import Application
 import asyncio
 import logging
 import json
-
-from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial
+from urllib.parse import urlsplit
+from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial
 from valve import LoopFlowValve, SyringeLValve, DistributionValve
 from components import InjectionPort, FlowCell, Node
 from distribution import DistributionBase, DistributionSingleValve
@@ -44,9 +44,11 @@ class Timer:
 class QCMDRecorder(Timer):
     """QCMD-specific timer. At end of timing interval, sends HTTP request to QCMD to record tag."""
 
-    def __init__(self, http_address: str = 'http://localhost:5011', name='QCMDRecorder') -> None:
+    def __init__(self, http_address: str = 'http://localhost:5011/QCMD/0/', name='QCMDRecorder') -> None:
         super().__init__(name)
-        self.session = ClientSession(http_address)
+        url_parts = urlsplit(http_address)
+        self.session = ClientSession(f'{url_parts.scheme}://{url_parts.netloc}')
+        self.url_path = url_parts.path
 
     async def record(self, tag_name: str = '', record_time: float = 0.0, sleep_time: float = 0.0) -> None:
         """Executes timer and sends record command to QCMD. Call by sending
@@ -66,15 +68,15 @@ class QCMDRecorder(Timer):
                         'value': {'tag': tag_name,
                                 'delta_t': record_time}}
 
-            logging.info(f'{self.session._base_url}/QCMD/ => {post_data}')
+            logging.info(f'{self.session._base_url}{self.url_path} => {post_data}')
 
             # send an http request to QCMD server
             try:
-                async with self.session.post('/QCMD/', json=post_data, timeout=10) as resp:
+                async with self.session.post(self.url_path, json=post_data, timeout=10) as resp:
                     response_json = await resp.json()
-                    logging.info(f'{self.session._base_url}/QCMD/ <= {response_json}')
+                    logging.info(f'{self.session._base_url}{self.url_path} <= {response_json}')
             except (ConnectionRefusedError, ClientConnectionError):
-                logging.error(f'request to {self.session._base_url}/QCMD/ failed: connection refused')
+                logging.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
 
 class QCMDRecorderDevice(AssemblyBasewithGSIOC):
     """QCMD recording device."""
