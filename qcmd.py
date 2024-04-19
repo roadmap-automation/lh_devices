@@ -1,16 +1,21 @@
+from dataclasses import dataclass
 from typing import Any, Coroutine, List
 from aiohttp import ClientSession, web, ClientConnectionError
+from aiohttp.web import Application
 import asyncio
 import logging
 import json
-from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial
+
+from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial
 from valve import LoopFlowValve, SyringeLValve, DistributionValve
 from components import InjectionPort, FlowCell, Node
+from distribution import DistributionBase, DistributionSingleValve
 from gsioc import GSIOC, GSIOCMessage
-from assemblies import AssemblyBasewithGSIOC, Network, connect_nodes, Mode, NestedAssemblyBase
+from assemblies import AssemblyBasewithGSIOC, AssemblyBase, InjectionChannelBase, Network, connect_nodes, Mode, NestedAssemblyBase, AssemblyMode
 from liquid_handler import SimLiquidHandler
 from bubblesensor import SyringePumpwithBubbleSensor
 from webview import run_socket_app
+from methods import MethodBaseDeadVolume
 
 class Timer:
     """Basic timer. Essentially serves as a sleep but only allows one instance to run."""
@@ -104,7 +109,155 @@ class QCMDMultiChannelRecorderDevice(QCMDRecorderDevice):
 
     def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, n_channels: int = 1, name='QCMDRecorderDevice') -> None:
         super().__init__(qcmd_address, qcmd_port, name)
+
+
+class QCMDDistributionChannel(InjectionChannelBase):
+    """Channel for a simple QCMD array"""
+
+    def __init__(self, flow_cell: FlowCell, injection_node: Node | None = None, name: str = '') -> None:
+        self.flow_cell = flow_cell
+        super().__init__([], injection_node, name)
+
+        self.network = Network([self.flow_cell])
+
+class QCMDDirectInject(MethodBaseDeadVolume):
+    """Directly inject from LH to a QCMD instrument through a distribution valve
+    """
+
+    def __init__(self, channel: QCMDDistributionChannel, gsioc: GSIOC) -> None:
+        super().__init__(gsioc, [])
+        self.channel = channel
+        self.dead_volume_mode: str = 'Waste'
+
+    @dataclass
+    class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
+        name: str = "DirectInject"
+
+    async def run(self, **kwargs):
+        """LoadLoop method, synchronized via GSIOC to liquid handler"""
+
+        self.reserve_all()
+
+        method = self.MethodDefinition(**kwargs)
+
+        # Connect to GSIOC communications
+        self.connect_gsioc()
+
+        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
+        # method to make sure this updates in time)
+        dead_volume = self.channel.get_dead_volume(self.channel.injection_node, self.dead_volume_mode)
+
+        # blocks if there's already something in the dead volume queue
+        await self.dead_volume.put(dead_volume)
+        logging.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
+
+        # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
+        await self.wait_for_trigger()
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
+        await self.channel.change_mode('Waste')
+
+        # Wait for trigger to switch to {method.name} mode (LH performs injection)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
+        await self.wait_for_trigger()
+
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Inject mode')
+        await self.channel.change_mode('Inject')
+
+        # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
+        await self.wait_for_trigger()
+
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
+        await self.channel.change_mode('Waste')
+
+        # Wait for trigger to switch to Standby mode (this may not be necessary)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
+        await self.wait_for_trigger()
+
+        # switch to standby mode
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        await self.channel.change_mode('Standby')
+
+        # At this point, liquid handler is done, release communications
+        self.disconnect_gsioc()
+        self.release_all()
+
+class QCMDDistributionAssembly(NestedAssemblyBase, AssemblyBase):
+    """Assembly of QCMD channels with a distribution system, no injection system"""
+
+    def __init__(self, channels: List[QCMDDistributionChannel], distribution_system: DistributionSingleValve, gsioc: GSIOC, name='') -> None:
+        NestedAssemblyBase.__init__(self, [], channels + [distribution_system], name)
+        AssemblyBase.__init__(self, self.devices, name)
+
+        # Build network
+        self.injection_port = distribution_system.injection_port
+        self.network = Network(self.devices + [self.injection_port])
+
+        self.modes = {'Standby': AssemblyMode(modes={distribution_system: distribution_system.modes['8']})}
+
+        distribution_system.network = self.network
+        # update channels with upstream information
+        for i, ch in enumerate(channels):
+            # update network for accurate dead volume calculation
+            ch.network = self.network
+            ch.injection_node = self.injection_port.nodes[0]
+
+            # add system-specific methods to the channel
+            ch.methods.update({
+                               'DirectInject': QCMDDirectInject(ch, gsioc)
+                               })
+            
+            ch.modes['Inject'] = distribution_system.modes[str(3 + i)]
+            ch.modes['Waste'] = distribution_system.modes['7']
+            ch.modes['Standby'] = distribution_system.modes['8']
+
+        self.channels = channels
+        self.distribution_system = distribution_system
+
+    async def initialize(self) -> None:
+        """Initialize the loop as a unit and the distribution valve separately"""
+        await asyncio.gather(*[ch.initialize() for ch in self.channels], self.distribution_system.initialize())
+        await self.trigger_update()
+
+    def run_channel_method(self, channel: int, method_name: str, method_data: dict) -> None:
+        return self.channels[channel].run_method(method_name, **method_data)
+    
+    def create_web_app(self, template='roadmap.html') -> Application:
+        app = super().create_web_app(template=template)
+        routes = web.RouteTableDef()
+
+        @routes.post('/SubmitTask')
+        async def handle_task(request: web.Request) -> web.Response:
+            # TODO: turn task into a dataclass; parsing will change
+            task = request.json()
+            channel: int = task['channel']
+            method_name: str = task['method_name']
+            method_data: dict = task['method_data']
+            if self.channels[channel].is_ready(method_name):
+                self.run_channel_method(channel, method_name, method_data)
+                return web.Response(text='accepted', status=200)
+            
+            return web.Response(text='busy', status=200)
+        
+        @routes.get('/GetTaskData')
+        async def get_task(request: web.Request) -> web.Response:
+            # TODO: turn task into a dataclass; parsing will change
+            task = request.json()
+            task_id = task['id']
+
+            # TODO: actually return task data
+            # TODO: Determine what task data we want to save. Logging? success? Any returned errors?
+            return web.Response(text=json.dumps({'id': task_id}), status=200)
+        
+        app.add_routes(routes)
+
+        for i, channel in enumerate(self.channels):
+            app.add_subapp(f'/{i}/', channel.create_web_app())
+
+        return app
+
 
 class QCMDLoop(AssemblyBasewithGSIOC):
 
@@ -827,6 +980,60 @@ async def qcmd_distribution():
         asyncio.gather(qcmd_channel.recorder.session.close(),
                        runner.cleanup())
 
+async def qcmd_single_distribution():
+    gsioc = GSIOC(62, 'COM13', 19200)
+    ser = HamiltonSerial(port='COM9', baudrate=38400)
+    #ser = HamiltonSerial(port='COM3', baudrate=38400)
+    dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Valve')
+    ip = InjectionPort('LH_injection_port')
+    fc0 = FlowCell(139, 'flow_cell')
+    fc1 = FlowCell(139, 'flow_cell')
+
+    ch0 = QCMDDistributionChannel(fc0, injection_node=ip.nodes[0], name='QCMD Channel 0')
+    ch1 = QCMDDistributionChannel(fc0, injection_node=ip.nodes[0], name='QCMD Channel 1')
+    distribution_system = DistributionSingleValve(dvp, ip, 'Distribution System')
+
+    # connect LH injection port to distribution port valve 0
+    connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 124 + 50)
+
+    # connect distribution valve port 3 to channel 0 flow cell
+    connect_nodes(dvp.valve.nodes[3], fc0.inlet_node, 73 + 20)
+
+    # connect distribution valve port 3 to channel 0 flow cell
+    connect_nodes(dvp.valve.nodes[4], fc1.inlet_node, 83 + 20)
+
+    qcmd_system = QCMDDistributionAssembly([ch0, ch1], distribution_system, gsioc, name='QCMD MultiChannel System')
+    app = qcmd_system.create_web_app(template='roadmap.html')
+    runner = await run_socket_app(app, 'localhost', 5003)
+    print(json.dumps(await qcmd_system.get_info()))
+    #lh = SimLiquidHandler(qcmd_channel)
+
+    try:
+        #qcmd_system.distribution_valve.valve.move(2)
+        await qcmd_system.initialize()
+        #await asyncio.sleep(2)
+        #await qcmd_channel.change_mode('PumpPrimeLoop')
+
+        #await qcmd_channel.primeloop(2)
+        #await qcmd_system.change_mode('LoopInject')
+        #await qcmd_channel.change_mode('LoadLoop')
+        #await asyncio.sleep(2)
+        #await qcmd_system.change_mode('LoopInject')
+        #await asyncio.sleep(2)
+        #await qcmd_system.change_mode('Standby')
+
+        #await qcmd_channel.change_mode('PumpPrimeLoop')
+        #await mvp.initialize()
+        #await mvp.run_until_idle(mvp.move_valve(1))
+        #await sp.initialize()
+        #await sp.run_until_idle(sp.move_absolute(0, sp._speed_code(sp.max_dispense_flow_rate)))
+
+        await asyncio.Event().wait()
+    finally:
+        logging.info('Cleaning up...')
+        asyncio.gather(
+                       runner.cleanup())
+
 async def main():
     gsioc = GSIOC(62, 'COM13', 19200)
     qcmd_recorder = QCMDRecorderDevice('localhost', 5011)
@@ -871,5 +1078,5 @@ if __name__=='__main__':
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
                             level=logging.INFO)
-        asyncio.run(qcmd_distribution(), debug=True)
+        asyncio.run(qcmd_single_distribution(), debug=True)
         #asyncio.run(sptest())
