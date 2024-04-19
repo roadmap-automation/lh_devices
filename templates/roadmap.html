@@ -154,24 +154,26 @@
                                 $('<text>').addClass("syringe_speed").text(data['state']['syringe']['speed']).appendTo(syringespeedcontainer)
                             }
                             statediv.append($('<hr>'))
-                            do_container = $('<div>').text('Digital outputs: ').appendTo(statediv)
-                            for (let i = 0; i < data['state']['digital_outputs'].length; i++) {
-                                let newctrl = $('<button>')
-                                    .addClass("digital_button")
-                                    .on('click', function () {
-                                        value = false
-                                        $(this).toggleClass("digital_high digital_low")
-                                        if ($(this).hasClass("digital_high")) {
-                                            value = true
+                            if ('digital_outputs' in data['state']) {
+                                do_container = $('<div>').text('Digital outputs: ').appendTo(statediv)
+                                for (let i = 0; i < data['state']['digital_outputs'].length; i++) {
+                                    let newctrl = $('<button>')
+                                        .addClass("digital_button")
+                                        .on('click', function () {
+                                            value = false
+                                            $(this).toggleClass("digital_high digital_low")
+                                            if ($(this).hasClass("digital_high")) {
+                                                value = true
+                                            }
+                                            issue_command(id, "set_digital_output", {'number': i, 'value': value})
+                                        })
+                                        .appendTo(do_container);
+                                        if (data['state']['digital_outputs'][i]) {
+                                            newctrl.addClass("digital_high");
                                         }
-                                        issue_command(id, "set_digital_output", {'number': i, 'value': value})
-                                    })
-                                    .appendTo(do_container);
-                                    if (data['state']['digital_outputs'][i]) {
-                                        newctrl.addClass("digital_high");
-                                    }
-                                    else {
-                                        newctrl.addClass("digital_low");
+                                        else {
+                                            newctrl.addClass("digital_low");
+                                        }
                                     }
                                 }
                             update_controls($(this).children(".device_controls"), id, data['controls'])
@@ -189,23 +191,25 @@
             }
 
         function update_modes(modediv, id, modes, current_mode) {
-            modediv.empty().append("Select mode: ")
-            var newselect = $('<select>')
-                                    .addClass("mode_select")
-            $("<option>").text("").appendTo(newselect)
-            for (const mode of modes) {
-                $("<option>").text(mode).appendTo(newselect)
-            }
-            if (modes.includes(current_mode)) {
-                newselect.val(current_mode)
-            }
-            newselect.on("change", function () {
-                var val = newselect.val()
-                if (val != "") {
-                    issue_command(id, "change_mode", val)
+            if (modes.length) {
+                modediv.empty().append("Select mode: ")
+                var newselect = $('<select>')
+                                        .addClass("mode_select")
+                $("<option>").text("").appendTo(newselect)
+                for (const mode of modes) {
+                    $("<option>").text(mode).appendTo(newselect)
                 }
-            })
-            modediv.append(newselect)
+                if (modes.includes(current_mode)) {
+                    newselect.val(current_mode)
+                }
+                newselect.on("change", function () {
+                    var val = newselect.val()
+                    if (val != "") {
+                        issue_command(id, "change_mode", val)
+                    }
+                })
+                modediv.append(newselect)
+            }
         }
 
         function update_controls(devicediv, device_id, controls) {
