@@ -14,13 +14,12 @@ from assemblies import AssemblyBase, AssemblyBasewithGSIOC, Network, NestedAssem
 from connections import connect_nodes, Node
 from methods import MethodBase, MethodBaseDeadVolume
 
-class RoadmapChannelBase(AssemblyBasewithGSIOC):
+class RoadmapChannelBase(AssemblyBase):
 
     def __init__(self, loop_valve: HamiltonValvePositioner,
                        syringe_pump: HamiltonSyringePump,
                        flow_cell: FlowCell,
                        sample_loop: FlowCell,
-                       gsioc: GSIOC | None = None,
                        injection_node: Node | None = None,
                        name: str = '') -> None:
         
@@ -30,7 +29,6 @@ class RoadmapChannelBase(AssemblyBasewithGSIOC):
         self.flow_cell = flow_cell
         self.sample_loop = sample_loop
         self.injection_node = injection_node
-        self.gsioc = gsioc
         super().__init__([loop_valve, syringe_pump], name=name)
         self.methods: Dict[str, MethodBase] = {}
 
@@ -79,18 +77,6 @@ class RoadmapChannelBase(AssemblyBasewithGSIOC):
 
     def get_dead_volume(self, mode: str | None = None) -> float:
         return super().get_dead_volume(self.injection_node, mode)
-
-    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
-
-        # overwrites base class handling of dead volume
-        if data.data == 'V':
-            dead_volume = await self.dead_volume.get()
-            #logging.info(f'Sending dead volume {dead_volume}')
-            response = f'{dead_volume:0.0f}'
-        else:
-            response = await super().handle_gsioc(data)
-        
-        return response
 
     def run_method(self, method_name: str, method_kwargs: dict) -> None:
 
