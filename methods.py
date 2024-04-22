@@ -91,6 +91,8 @@ class MethodBasewithGSIOC(MethodBase):
                         await self.gsioc.response_queue.put(response)
             except asyncio.CancelledError:
                 logging.debug("Stopping GSIOC monitor...")
+            except Exception:
+                raise
 
     def disconnect_gsioc(self) -> None:
         """Stop listening to GSIOC
