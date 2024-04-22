@@ -224,6 +224,11 @@ class QCMDMultiChannelMeasurementDevice(AssemblyBase):
             
             return web.Response(text=f'error: channel {channel} does not exist', status=400)
         
+        @routes.get('/GetStatus')
+        async def get_status(request: web.Request) -> web.Response:
+            
+            return web.Response(text=json.dumps({'status': [ch.reserved for ch in self.channels]}), status=200)
+
         @routes.get('/GetTaskData')
         async def get_task(request: web.Request) -> web.Response:
             # TODO: turn task into a dataclass; parsing will change
