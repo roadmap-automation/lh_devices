@@ -274,7 +274,7 @@ class QCMDDirectInject(MethodBaseDeadVolume):
     """
 
     def __init__(self, channel: QCMDDistributionChannel, gsioc: GSIOC) -> None:
-        super().__init__(gsioc, [])
+        super().__init__(gsioc, channel.devices)
         self.channel = channel
         self.dead_volume_mode: str = 'Waste'
 
@@ -290,12 +290,16 @@ class QCMDDirectInject(MethodBaseDeadVolume):
 
         method = self.MethodDefinition(**kwargs)
 
-        # Connect to GSIOC communications
+        # Connect to GSIOC communications and wait for trigger
+        logging.info(f'{self.channel.name}.{method.name}: Connecting to GSIOC')
         self.connect_gsioc()
+
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
+        await self.wait_for_trigger()
 
         # Set dead volume and wait for method to ask for it (might need brief wait in the calling
         # method to make sure this updates in time)
-        dead_volume = self.channel.get_dead_volume(self.channel.injection_node, self.dead_volume_mode)
+        dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
@@ -357,7 +361,7 @@ class QCMDDistributionAssembly(NestedAssemblyBase, AssemblyBase):
             ch.methods.update({
                                'DirectInject': QCMDDirectInject(ch, gsioc)
                                })
-            
+            ch.methods['DirectInject'].devices += distribution_system.devices
             ch.modes['Inject'] = distribution_system.modes[str(3 + i)]
             ch.modes['Waste'] = distribution_system.modes['7']
             ch.modes['Standby'] = distribution_system.modes['8']
@@ -371,7 +375,7 @@ class QCMDDistributionAssembly(NestedAssemblyBase, AssemblyBase):
         await self.trigger_update()
 
     def run_channel_method(self, channel: int, method_name: str, method_data: dict) -> None:
-        return self.channels[channel].run_method(method_name, **method_data)
+        return self.channels[channel].run_method(method_name, method_data)
     
     def create_web_app(self, template='roadmap.html') -> Application:
         app = super().create_web_app(template=template)
@@ -380,7 +384,7 @@ class QCMDDistributionAssembly(NestedAssemblyBase, AssemblyBase):
         @routes.post('/SubmitTask')
         async def handle_task(request: web.Request) -> web.Response:
             # TODO: turn task into a dataclass; parsing will change
-            task = request.json()
+            task = await request.json()
             channel: int = task['channel']
             method_name: str = task['method_name']
             method_data: dict = task['method_data']
@@ -393,7 +397,7 @@ class QCMDDistributionAssembly(NestedAssemblyBase, AssemblyBase):
         @routes.get('/GetTaskData')
         async def get_task(request: web.Request) -> web.Response:
             # TODO: turn task into a dataclass; parsing will change
-            task = request.json()
+            task = await request.json()
             task_id = task['id']
 
             # TODO: actually return task data
@@ -1177,7 +1181,7 @@ async def qcmd_single_distribution():
         #await sp.initialize()
         #await sp.run_until_idle(sp.move_absolute(0, sp._speed_code(sp.max_dispense_flow_rate)))
 
-        await asyncio.Event().wait()
+        await gsioc.listen()
     finally:
         logging.info('Cleaning up...')
         asyncio.gather(
@@ -1241,5 +1245,5 @@ if __name__=='__main__':
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
                             level=logging.INFO)
-        asyncio.run(qcmd_multichannel_measure(), debug=True)
+        asyncio.run(qcmd_single_distribution(), debug=True)
         #asyncio.run(sptest())
