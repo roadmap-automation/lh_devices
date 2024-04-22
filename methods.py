@@ -67,8 +67,6 @@ class MethodBasewithGSIOC(MethodBase):
         self.waiting: asyncio.Event = asyncio.Event()
         self.trigger: asyncio.Event = asyncio.Event()
 
-
-
         # container for gsioc tasks 
         self._gsioc_tasks: List[asyncio.Task] = []
 
@@ -76,22 +74,23 @@ class MethodBasewithGSIOC(MethodBase):
         """Start GSIOC listener and connect."""
 
         # TODO: This opens and closes the serial port a lot. Might be better to just start the GSIOC listener and then connect to it through monitor_gsioc
-        self._gsioc_tasks = [asyncio.create_task(self.gsioc.listen()), asyncio.create_task(self.monitor_gsioc())]
+        self._gsioc_tasks = [asyncio.create_task(self.monitor_gsioc())]
 
     async def monitor_gsioc(self) -> None:
         """Monitor GSIOC communications. Note that only one device should be
             listening to a GSIOC device at a time.
         """
 
-        try:
-            while True:
-                data: GSIOCMessage = await self.gsioc.message_queue.get()
+        async with self.gsioc.client_lock:
+            try:
+                while True:
+                    data: GSIOCMessage = await self.gsioc.message_queue.get()
 
-                response = await self.handle_gsioc(data)
-                if data.messagetype == GSIOCCommandType.IMMEDIATE:
-                    await self.gsioc.response_queue.put(response)
-        except asyncio.CancelledError:
-            logging.debug("Stopping GSIOC monitor...")
+                    response = await self.handle_gsioc(data)
+                    if data.messagetype == GSIOCCommandType.IMMEDIATE:
+                        await self.gsioc.response_queue.put(response)
+            except asyncio.CancelledError:
+                logging.debug("Stopping GSIOC monitor...")
 
     def disconnect_gsioc(self) -> None:
         """Stop listening to GSIOC

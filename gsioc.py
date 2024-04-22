@@ -59,12 +59,10 @@ class GSIOC(aioserial.AioSerial):
         self.address = gsioc_address    # between 1 and 63
         self.interrupt: bool = False
         self.connected: bool = False
+        self.client_lock: asyncio.Lock = asyncio.Lock()
         self.gsioc_name = gsioc_name
         self.message_queue: asyncio.Queue = asyncio.Queue(1)
         self.response_queue: asyncio.Queue = asyncio.Queue(1)
-
-    # TODO: register listeners so can only have one listener (or at
-    #   least only one responder) per GSIOC device.
 
     async def listen(self) -> None:
         """
@@ -101,12 +99,17 @@ class GSIOC(aioserial.AioSerial):
                             # parses received command into a GSIOCMessage
                             data = await self.parse_command(cmd)
 
-                            # put message in listener queue
-                            await self.message_queue.put(data)
+                            # put message in listener queue if a client is connected; otherwise, send an error for immediate commands
+                            if self.client_lock.locked():
+                                await self.message_queue.put(data)
 
                             if data.messagetype == GSIOCCommandType.IMMEDIATE:
-                                logging.debug('Waiting for response to immediate command')
-                                response: str = await self.response_queue.get()
+                                if self.client_lock.locked():
+                                    logging.debug('Waiting for response to immediate command')
+                                    response: str = await self.response_queue.get()
+                                else:
+                                    response: str = f'GSIOC error: no client connected on address {self.address}'
+
                                 await self.send(response)
 
                 logging.debug('Connection reset...')
