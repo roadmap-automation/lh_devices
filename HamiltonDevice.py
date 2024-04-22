@@ -243,7 +243,7 @@ class HamiltonBase(WebNodeBase):
         response, error = await self.query(f'?37000')
         binary_string = format(int(response), '03b')
 
-        digital_outputs = tuple([bool(digit) for digit in binary_string])
+        digital_outputs = tuple([bool(digit) for digit in binary_string[::-1]])
         self.digital_outputs = digital_outputs
 
         return digital_outputs
