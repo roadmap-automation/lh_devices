@@ -4,10 +4,54 @@ import copy
 import time
 
 from typing import Tuple, List
+from uuid import uuid4
 
 from HamiltonComm import HamiltonSerial
-from HamiltonDevice import HamiltonSyringePump, PollTimer
+from HamiltonDevice import HamiltonBase, HamiltonSyringePump, PollTimer
 from valve import ValveBase, SyringeValveBase
+
+class BubbleSensorBase:
+    """Base class for bubble sensor
+    """
+
+    def __init__(self, id: str | None = None, name: str = '') -> None:
+        self.id = id if id is not None else str(uuid4())
+        self.name = name
+
+    async def initialize(self) -> None:
+        """Initializes the bubble sensor (e.g. powers it on, connects to it)
+        """
+
+        raise NotImplementedError
+
+    async def read(self) -> bool:
+        """Reads the bubble sensor and returns its value
+
+        Returns:
+            bool: bubble sensor value
+        """
+
+        raise NotImplementedError
+    
+class SMDSensoronHamiltonDevice(BubbleSensorBase):
+
+    def __init__(self, device: HamiltonBase, digital_input: int, power_digital_output: int, id: str | None = None, name: str = '') -> None:
+        super().__init__(id, name)
+        self.device = device
+        self.digital_input = digital_input
+        self.power_digital_output = power_digital_output
+
+    async def initialize(self) -> None:
+        return await self.device.run_until_idle(self.device.set_digital_output(self.power_digital_output, True))
+
+    async def read(self) -> bool:
+        """Read bubble sensor
+
+        Returns:
+            bool: true if liquid in line; false if air
+        """
+
+        return await self.device.get_digital_input(self.digital_input)
 
 class SyringePumpwithBubbleSensor(HamiltonSyringePump):
     """Syringe pump with one or more bubble sensors driven by digital outputs and addressing digital inputs of the same index.
