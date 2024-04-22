@@ -336,12 +336,13 @@ class AssemblyBasewithGSIOC(AssemblyBase):
             listening to a GSIOC device at a time.
         """
 
-        while True:
-            data: GSIOCMessage = await gsioc.message_queue.get()
+        async with gsioc.client_lock:
+            while True:
+                data: GSIOCMessage = await gsioc.message_queue.get()
 
-            response = await self.handle_gsioc(data)
-            if data.messagetype == GSIOCCommandType.IMMEDIATE:
-                await gsioc.response_queue.put(response)
+                response = await self.handle_gsioc(data)
+                if data.messagetype == GSIOCCommandType.IMMEDIATE:
+                    await gsioc.response_queue.put(response)
 
     async def wait_for_trigger(self) -> None:
         """Uses waiting and trigger events to signal that assembly is waiting for a trigger signal
