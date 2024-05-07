@@ -50,6 +50,15 @@ class SmoothFlowSyringePump(HamiltonSyringePump):
 
         return 192000 if self._high_resolution else 24000
     
+    def _get_max_position(self) -> int:
+        """Calculates the maximum position in half steps
+
+        Returns:
+            int: max position in half steps
+        """
+
+        return self._full_stroke()
+        
     def _speed_code(self, desired_flow_rate: float) -> int:
         """Calculates speed code (parameter u, see SF PSD/4 manual Appendix H) based on desired
             flow rate and syringe parameters
@@ -82,31 +91,7 @@ class SmoothFlowSyringePump(HamiltonSyringePump):
             float: flow rate in uL / s
         """
 
-        return float(V / 60. * self.syringe_volume) / 192000.
-
-    def _stroke_length(self, desired_volume: float) -> int:
-        """Calculates stroke length in steps
-
-        Args:
-            desired_volume (float): aspirate or dispense volume in uL
-
-        Returns:
-            int: stroke length in number of motor steps
-        """
-
-        return round(desired_volume * self._full_stroke() / self.syringe_volume)
-
-    def _volume_from_stroke_length(self, strokes: int) -> float:
-        """Calculates volume from a stroke length (inverts _stroke_length)
-
-        Args:
-            strokes (int): number of motor steps
-
-        Returns:
-            float: volume corresponding to stroke length
-        """
-
-        return strokes * (self.syringe_volume / (self._full_stroke()))
+        return super()._flow_rate(V) / 60.
 
     async def set_speed(self, flow_rate: float) -> str:
         """Sets syringe speed to a specified flow rate
