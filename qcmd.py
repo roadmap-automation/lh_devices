@@ -84,7 +84,7 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
 
     def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, name='QCMDRecorderDevice') -> None:
         super().__init__([], name)
-        self.recorder = QCMDRecorder(f'http://{qcmd_address}:{qcmd_port}', f'{self.name}.QCMDRecorder')
+        self.recorder = QCMDRecorder(f'http://{qcmd_address}:{qcmd_port}/QCMD/', f'{self.name}.QCMDRecorder')
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
         """Handles GSIOC message but deals with Q more robustly than the base method"""
@@ -210,6 +210,7 @@ class QCMDMultiChannelMeasurementDevice(AssemblyBase):
         @routes.post('/SubmitTask')
         async def handle_task(request: web.Request) -> web.Response:
             # TODO: turn task into a dataclass; parsing will change
+            # testing: curl -X POST http://localhost:5003/SubmitTask -d "{\"channel\": 0, \"method_name\": \"DirectInjectBubbleSensor\", \"method_data\": {}}"
             task = await request.json()
             channel: int = task['channel']
             if channel < len(self.channels):
@@ -1238,12 +1239,12 @@ async def qcmd_single_distribution():
     ser = HamiltonSerial(port='COM9', baudrate=38400)
     #ser = HamiltonSerial(port='COM3', baudrate=38400)
     dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Valve')
-    sp = SyringePumpwithBubbleSensor(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000., False, name='Syringe Pump')
+    #sp = SyringePumpwithBubbleSensor(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000., False, name='Syringe Pump')
     ip = InjectionPort('LH_injection_port')
     fc0 = FlowCell(139, 'flow_cell')
     fc1 = FlowCell(139, 'flow_cell')
-    inlet_bubble_sensor = SMDSensoronHamiltonDevice(sp, 1, 0)
-    outlet_bubble_sensor = SMDSensoronHamiltonDevice(sp, 2, 1)
+    inlet_bubble_sensor = SMDSensoronHamiltonDevice(dvp, 2, 1)
+    outlet_bubble_sensor = SMDSensoronHamiltonDevice(dvp, 1, 0)
 
     ch0 = QCMDDistributionChannel(fc0, injection_node=ip.nodes[0], name='QCMD Channel 0')
     ch1 = QCMDDistributionChannel(fc0, injection_node=ip.nodes[0], name='QCMD Channel 1')
@@ -1265,26 +1266,12 @@ async def qcmd_single_distribution():
     #lh = SimLiquidHandler(qcmd_channel)
 
     try:
-        #qcmd_system.distribution_valve.valve.move(2)
         await qcmd_system.initialize()
-        #await asyncio.sleep(2)
-        #await qcmd_channel.change_mode('PumpPrimeLoop')
-
-        #await qcmd_channel.primeloop(2)
-        #await qcmd_system.change_mode('LoopInject')
-        #await qcmd_channel.change_mode('LoadLoop')
-        #await asyncio.sleep(2)
-        #await qcmd_system.change_mode('LoopInject')
-        #await asyncio.sleep(2)
-        #await qcmd_system.change_mode('Standby')
-
-        #await qcmd_channel.change_mode('PumpPrimeLoop')
-        #await mvp.initialize()
-        #await mvp.run_until_idle(mvp.move_valve(1))
-        #await sp.initialize()
-        #await sp.run_until_idle(sp.move_absolute(0, sp._speed_code(sp.max_dispense_flow_rate)))
-
         await gsioc.listen()
+
+        # testing: curl -X POST http://localhost:5003/SubmitTask -d "{\"channel\": 0, \"method_name\": \"DirectInjectBubbleSensor\", \"method_data\": {}}"
+    except asyncio.CancelledError:
+        pass
     finally:
         logging.info('Cleaning up...')
         asyncio.gather(
@@ -1347,6 +1334,6 @@ if __name__=='__main__':
         logging.basicConfig(
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
-                            level=logging.DEBUG)
-        asyncio.run(qcmd_single_distribution(), debug=True)
+                            level=logging.INFO)
+        asyncio.run(qcmd_distribution(), debug=True)
         #asyncio.run(sptest())
