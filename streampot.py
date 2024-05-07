@@ -91,7 +91,7 @@ class SmoothFlowSyringePump(HamiltonSyringePump):
             float: flow rate in uL / s
         """
 
-        return super()._flow_rate(V) / 60.
+        return float(V * self.syringe_volume) / 192000. / 60.
 
     async def set_speed(self, flow_rate: float) -> str:
         """Sets syringe speed to a specified flow rate
