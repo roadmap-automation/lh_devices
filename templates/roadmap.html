@@ -149,7 +149,7 @@
                                 $('<text>').addClass("valve_position").text(data['state']['valve']['valve_position']).appendTo(valvestatecontainer)
                             }
                             if ('syringe' in data['state']) {
-                                statediv.append(progressbar(data['state']['syringe']['position'] / data['state']['syringe']['max_position'] * 100))
+                                statediv.append(progressbar(data['state']['syringe']['position'] / data['state']['syringe']['max_position'] * 100, data['state']['syringe']['syringe_volume']))
                                 syringespeedcontainer = $('<div>').text('Syringe speed (mL /min): ').appendTo(statediv)
                                 $('<text>').addClass("syringe_speed").text(data['state']['syringe']['speed']).appendTo(syringespeedcontainer)
                             }
@@ -281,7 +281,7 @@
             }
         }
 
-        function progressbar(pct) {
+        function progressbar(pct, volume) {
             var newprogressbar = $('<div>').addClass("progress_bar").addClass("device_row")
             $('<div>').addClass("device_column").text("Syringe position: ").appendTo(newprogressbar)
             var newframe = $('<div>').addClass("progress_bar_frame").addClass("device_column")
@@ -290,6 +290,7 @@
                                     .appendTo(newframe)
             
             newprogressbar.append(newframe)
+            $('<div>').addClass("device_column").text(volume + ' mL').appendTo(newprogressbar)
             
             return newprogressbar
         }
@@ -385,10 +386,12 @@
         width: 100%;
         border: 2px solid black;
         background-color: rgba(1, 1, 1, 0.2);
+        margin-right: 5px;
     }
     .progress_bar_fill {
         height: 100%;
         background-color: rgb(171, 95, 95) !important;
+        margin-right: 5px;
     }
     .input_text {
         min-width: 0;
