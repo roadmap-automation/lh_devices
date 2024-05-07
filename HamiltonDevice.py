@@ -539,7 +539,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
                                 'high_resolution': self._high_resolution,
                                 'position': self.syringe_position,
                                 'speed': f'{self._flow_rate(self._speed) * 60 / 1000:0.3f}',
-                                'max_position': self._full_stroke() / 2
+                                'max_position': self._full_stroke() / 2,
+                                'syringe_volume': f'{self.syringe_volume / 1000.:0.3f}'
         }}
         info['state']= info['state'] | add_state
 
