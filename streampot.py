@@ -14,19 +14,121 @@ from scipy.signal import convolve
 from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 
+from connections import Port
+
 plt.set_loglevel('notset')
 
 from HamiltonComm import HamiltonSerial
-from HamiltonDevice import HamiltonSyringePump, PollTimer
-from valve import SyringeLValve, SyringeValveBase
+from HamiltonDevice import HamiltonSyringePump, PollTimer, HamiltonValvePositioner
+from assemblies import AssemblyBase
+from valve import SyringeLValve, SyringeValveBase, DistributionValve
+from webview import run_socket_app
 
 from labjack import ljm
 
+class YValve(DistributionValve):
 
-class SyringePumpRamp(HamiltonSyringePump):
+    def __init__(self, position: int = 0, ports: List[Port] = [], name=None) -> None:
+        super().__init__(2, position, ports, name)
+        self.hamilton_valve_code = 0
 
-    def __init__(self, serial_instance: HamiltonSerial, address: str, valve: SyringeValveBase, syringe_volume: float = 5000, high_resolution=False, name=None) -> None:
-        super().__init__(serial_instance, address, valve, syringe_volume, high_resolution, name)
+class SmoothFlowSyringePump(HamiltonSyringePump):
+
+    def __init__(self, serial_instance: HamiltonSerial, address: str, valve: SyringeValveBase, syringe_volume: float = 5000, name=None) -> None:
+        super().__init__(serial_instance, address, valve, syringe_volume, True, name)
+
+        # note that these are now "u" for the smooth flow pump
+        self.minV, self.maxV = 400, 816000
+        self._speed = 400
+
+    def _full_stroke(self) -> int:
+        """Calculates syringe stroke (# steps for full volume)
+
+        Returns:
+            float: stroke in steps
+        """
+
+        return 192000 if self._high_resolution else 24000
+    
+    def _speed_code(self, desired_flow_rate: float) -> int:
+        """Calculates speed code (parameter u, see SF PSD/4 manual Appendix H) based on desired
+            flow rate and syringe parameters
+
+        Args:
+            desired_flow_rate (float): desired flow rate in uL / s
+
+        Returns:
+            int: u (steps per minute)
+        """
+
+        #calcV = float(desired_flow_rate * 6000) / self.syringe_volume
+
+        if desired_flow_rate < self._min_flow_rate():
+            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to lowest possible value {self._min_flow_rate()}')
+            return self.minV
+        elif desired_flow_rate > self._max_flow_rate():
+            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to highest possible value {self._max_flow_rate()}')
+            return self.maxV
+        else:
+            return round(float(desired_flow_rate * 60 * 192000) / self.syringe_volume)
+
+    def _flow_rate(self, V: int) -> float:
+        """Calculates actual flow rate from speed code parameter (V)
+
+        Args:
+            V (float): speed code in steps / minute ("u" in the smooth flow user manual)
+
+        Returns:
+            float: flow rate in uL / s
+        """
+
+        return float(V / 60. * self.syringe_volume) / 192000.
+
+    def _stroke_length(self, desired_volume: float) -> int:
+        """Calculates stroke length in steps
+
+        Args:
+            desired_volume (float): aspirate or dispense volume in uL
+
+        Returns:
+            int: stroke length in number of motor steps
+        """
+
+        return round(desired_volume * self._full_stroke() / self.syringe_volume)
+
+    def _volume_from_stroke_length(self, strokes: int) -> float:
+        """Calculates volume from a stroke length (inverts _stroke_length)
+
+        Args:
+            strokes (int): number of motor steps
+
+        Returns:
+            float: volume corresponding to stroke length
+        """
+
+        return strokes * (self.syringe_volume / (self._full_stroke()))
+
+    async def set_speed(self, flow_rate: float) -> str:
+        """Sets syringe speed to a specified flow rate
+
+        Args:
+            flow_rate (float): flow rate in uL / s
+        """
+
+        V = self._speed_code(flow_rate)
+        logging.info(f'Speed: {V}')
+        response, error = await self.query(f'u{V}R')
+        await self.get_speed()
+
+        if error:
+            logging.error(f'{self}: Syringe move error {error}')
+
+        return error
+
+class SyringePumpRamp(SmoothFlowSyringePump):
+
+    def __init__(self, serial_instance: HamiltonSerial, address: str, valve: SyringeValveBase, syringe_volume: float = 5000, name=None) -> None:
+        super().__init__(serial_instance, address, valve, syringe_volume, name)
 
     async def ramp_speed(self, volume: float, flow_rates: List[float], delay: float = 0, reverse=True) -> None:
         """Ramp speed using program of flow rates such that same time is spent
@@ -1047,15 +1149,25 @@ async def exchange_with_iv():
 async def sp_test():
 
     ser = HamiltonSerial(port='COM6', baudrate=38400)
-    sp = SyringePumpRamp(ser, '3', SyringeLValve(4, name='syringe_LValve'), 250, False, name='syringe_pump')
-    sp.max_dispense_flow_rate = 5. / 60 * 1000.
-    sp.max_aspirate_flow_rate = 5. / 60 * 1000.
+    sp = SyringePumpRamp(ser, '0', SyringeLValve(4, name='syringe_LValve'), 1000, name='Smooth Flow Syringe Pump')
+    mvp = HamiltonValvePositioner(ser, '1', YValve(name='MVP Y Valve'), name='Switching Y Valve')
+    sp.max_dispense_flow_rate = 4. / 60 * 1000.
+    sp.max_aspirate_flow_rate = 4. / 60 * 1000.
 
-    await sp.run_until_idle(sp.initialize())
+    sp_system = AssemblyBase([sp, mvp], name='Streaming Potential Setup')
+
+    await sp_system.initialize()
+    app = sp_system.create_web_app(template='roadmap.html')
+    runner = await run_socket_app(app, 'localhost', 5003)
     #await sp.run_until_idle(sp.smart_dispense(200, 0.5 / 60 * 1000))
     #await sp.move_valve(3)
-    for _ in range(20):
-        await sp.smart_dispense(sp.syringe_volume, sp.max_aspirate_flow_rate)
+    #for _ in range(20):
+    #    await sp.smart_dispense(sp.syringe_volume, sp.max_aspirate_flow_rate)
+    await asyncio.sleep(1)
+    await sp.run_until_idle(sp.set_speed(sp.max_aspirate_flow_rate))
+    await sp.run_syringe_until_idle(sp.move_absolute(25200))
+
+    await asyncio.Event().wait()
 
     #return
     load = True
@@ -1106,7 +1218,7 @@ if __name__=='__main__':
     logging.basicConfig(
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
-                            level=logging.INFO)
+                            level=logging.DEBUG)
     #mlog = logging.getLogger('matplotlib')
     #mlog.setLevel('WARNING')
     asyncio.run(sp_test(), debug=True)
