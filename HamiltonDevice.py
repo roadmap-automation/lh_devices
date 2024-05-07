@@ -539,7 +539,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
                                 'high_resolution': self._high_resolution,
                                 'position': self.syringe_position,
                                 'speed': f'{self._flow_rate(self._speed) * 60 / 1000:0.3f}',
-                                'max_position': self._full_stroke() / 2,
+                                'max_position': self._get_max_position(),
                                 'syringe_volume': f'{self.syringe_volume / 1000.:0.3f}'
         }}
         info['state']= info['state'] | add_state
@@ -576,7 +576,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         elif command == 'load_syringe':
             # moves the syringe to the load position (half full stroke).
             # NOTE: Does not move any valves, so valves must be in safe position
-            await self.run_syringe_until_idle(self.move_absolute(int(self._full_stroke() / 2 / 2)))
+            await self.run_syringe_until_idle(self.move_absolute(int(self._get_max_position() / 2)))
         elif command == 'aspirate':
             # aspirates given volume
             # NOTE: Does not move any valves, so valves must be in safe position
@@ -624,6 +624,15 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         """
 
         return 48000 if self._high_resolution else 6000
+    
+    def _get_max_position(self) -> int:
+        """Calculates the maximum position in half steps
+
+        Returns:
+            int: max position in half steps
+        """
+
+        return self._full_stroke() / 2
 
     def _min_flow_rate(self) -> int:
         """Calculates minimum flow rate of device
@@ -685,7 +694,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             int: stroke length in number of motor steps
         """
 
-        return round(desired_volume * (self._full_stroke() / 2) / self.syringe_volume)
+        return round(desired_volume * (self._get_max_position()) / self.syringe_volume)
 
     def _volume_from_stroke_length(self, strokes: int) -> float:
         """Calculates volume from a stroke length (inverts _stroke_length)
@@ -697,7 +706,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             float: volume corresponding to stroke length
         """
 
-        return strokes * (self.syringe_volume / (self._full_stroke() / 2))
+        return strokes * (self.syringe_volume / (self._get_max_position()))
 
     async def update_syringe_status(self) -> str:
         """Reads absolute position of syringe
@@ -788,8 +797,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         await self.update_syringe_status()
         syringe_position = self.syringe_position
         stroke_length = self._stroke_length(volume)
-        max_position = self._full_stroke() / 2
-        logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
+        max_position = self._get_max_position()
+        logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._get_max_position()}')
 
         if max_position < (stroke_length + syringe_position):
             logging.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and maximum position {max_position}')
@@ -813,7 +822,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         await self.update_syringe_status()
         syringe_position = self.syringe_position
         stroke_length = self._stroke_length(volume)
-        logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._full_stroke() / 2}')
+        logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._get_max_position()}')
 
         if (syringe_position - stroke_length) < 0:
             logging.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and minimum position 0')
@@ -858,7 +867,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             return
 
         # calculate max number of steps
-        full_stroke = self._full_stroke() // 2
+        full_stroke = self._get_max_position()
 
         # update current syringe position (usually zero)
         await self.update_syringe_status()
