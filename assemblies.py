@@ -9,6 +9,7 @@ from typing import List, Tuple, Dict, Coroutine
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
 from connections import Port, Node, connect_nodes
+from methods import MethodBase
 from components import ComponentBase
 from webview import sio, WebNodeBase
 
@@ -102,10 +103,20 @@ class Mode:
     """Define assembly configuration. Contains a dictionary of valves of the current
         assembly to move. Also defines final node for dead volume tracing"""
     
-    def __init__(self, valves: Dict[HamiltonValvePositioner, int], final_node: Node | None = None) -> None:
+    def __init__(self, valves: Dict[HamiltonValvePositioner, int] = {}, final_node: Node | None = None) -> None:
 
         self.valves = valves
         self.final_node = final_node
+
+    async def activate(self) -> None:
+        """Moves valves to positions defined in configuration dictionary
+        """
+
+        await asyncio.gather(*(valve.run_until_idle(valve.move_valve(position)) for valve, position in self.valves.items()))
+
+    def __repr__(self) -> str:
+
+        return '; '.join(f'{valve.name} -> {position}' for valve, position in self.valves.items())
 
 class AssemblyBase(WebNodeBase):
     """Assembly of Hamilton LH devices
@@ -286,9 +297,23 @@ class AssemblyBase(WebNodeBase):
                     'devices': {device.id: device.name for device in self.devices},
                     'modes': [mode for mode in self.modes],
                     'current_mode': self.current_mode,
-                    'assemblies': {}})
+                    'assemblies': {},
+                    'controls': {},
+                    'state': {'idle': self.idle,
+                              'reserved': self.reserved}})
         
         return d
+
+class AssemblyMode(Mode):
+    """Assembly-level mode, used for changing the modes of sub-assemblies. Combines mode valve configurations with valve configurations.
+        Modes override conflicts with existing valves (no attempt at conflict resolution)
+    """
+
+    def __init__(self, modes: Dict[AssemblyBase, Mode] = {}, valves: Dict[HamiltonValvePositioner, int] = {}, final_node: Node | None = None) -> None:
+        super().__init__(valves, final_node)
+
+        for mode in modes.values():
+            self.valves.update(mode.valves)
 
 class AssemblyBasewithGSIOC(AssemblyBase):
     """Assembly with support for GSIOC commands
@@ -311,12 +336,13 @@ class AssemblyBasewithGSIOC(AssemblyBase):
             listening to a GSIOC device at a time.
         """
 
-        while True:
-            data: GSIOCMessage = await gsioc.message_queue.get()
+        async with gsioc.client_lock:
+            while True:
+                data: GSIOCMessage = await gsioc.message_queue.get()
 
-            response = await self.handle_gsioc(data)
-            if data.messagetype == GSIOCCommandType.IMMEDIATE:
-                await gsioc.response_queue.put(response)
+                response = await self.handle_gsioc(data)
+                if data.messagetype == GSIOCCommandType.IMMEDIATE:
+                    await gsioc.response_queue.put(response)
 
     async def wait_for_trigger(self) -> None:
         """Uses waiting and trigger events to signal that assembly is waiting for a trigger signal
@@ -422,41 +448,40 @@ class NestedAssemblyBase(AssemblyBase):
         d.update({'assemblies': {assembly.id: assembly.name for assembly in self.assemblies}})
         return d
 
-class AssemblyTest(AssemblyBase):
+class InjectionChannelBase(AssemblyBase):
 
-    def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump, name='') -> None:
-        super().__init__(devices=[loop_valve, syringe_pump], name=name)
+    def __init__(self, devices: List[HamiltonBase],
+                       injection_node: Node | None = None,
+                       name: str = '') -> None:
+        
+        # Devices
+        self.injection_node = injection_node
+        super().__init__(devices, name=name)
+        self.methods: Dict[str, MethodBase] = {}
 
-        connect_nodes(syringe_pump.valve.nodes[1], loop_valve.valve.nodes[0], 101)
-        connect_nodes(syringe_pump.valve.nodes[2], loop_valve.valve.nodes[1], 102)
+        # Define node connections for dead volume estimations
+        self.network = Network(self.devices)
 
-        self.modes = {'LoopInject': 
-                    {loop_valve: 2,
-                     syringe_pump: 2,
-                     'dead_volume_nodes': [syringe_pump.valve.nodes[0], loop_valve.valve.nodes[0]]},
-                 'LHInject':
-                    {loop_valve: 1,
-                     syringe_pump: 1,
-                     'dead_volume_nodes': [syringe_pump.valve.nodes[2], loop_valve.valve.nodes[1]]}
-                 }
+        # Measurement modes
 
+    def get_dead_volume(self, mode: str | None = None) -> float:
+        return super().get_dead_volume(self.injection_node, mode)
 
-class RoadmapChannel(AssemblyBase):
-    """Assembly of MVP and PSD devices creating one ROADMAP channel
-    """
+    def run_method(self, method_name: str, method_kwargs: dict) -> None:
 
-    def __init__(self, loop_valve: HamiltonValvePositioner, cell_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump, name='') -> None:
-        connect_nodes(loop_valve.valve.nodes[0], cell_valve.valve.nodes[1], dead_volume=100)
-        # make any additional connections here; network initialization will then know about all the connections
-        super().__init__([loop_valve, cell_valve, syringe_pump], name=name)
+        if not self.methods[method_name].is_ready():
+            logging.error(f'{self.name}: not all devices in {method_name} are available')
+        else:
+            super().run_method(self.methods[method_name].run(**method_kwargs))
 
-# TODO: Think about serialization / deserialization or loading from a config file. Should be
-#           straightforward to reconstruct the network, if not the comm information
+    def is_ready(self, method_name: str) -> bool:
+        """Checks if all devices are unreserved for method
 
-# TODO: Make Modes a dataclass with "movement" and "dead_volume_nodes" properties. Needs to use
-#        device names or internal names instead of direct device references if dataclass.
+        Args:
+            method_name (str): name of method to check
 
-# TODO: Make a method class (?) / decorator (?) 
+        Returns:
+            bool: True if all devices are unreserved
+        """
 
-# TODO: Decide whether to require the entire method string from the LH (passed through eventually)
-#        or make a more integrated system
+        return self.methods[method_name].is_ready()
