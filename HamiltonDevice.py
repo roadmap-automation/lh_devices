@@ -276,7 +276,11 @@ class HamiltonBase(WebNodeBase):
                           'reserved': self.reserved,
                           'digital_outputs': self.digital_outputs},
                 'controls': {'reset': {'type': 'button',
-                                     'text': 'Reset'}}})
+                                     'text': 'Reset'},
+                             'stop': {'type': 'button',
+                                     'text': 'Stop'},
+                             'resume': {'type': 'button',
+                                     'text': 'Resume Next'}}})
         
         return d
 
@@ -292,6 +296,10 @@ class HamiltonBase(WebNodeBase):
 
         if command == 'reset':
             await self.run_until_idle(self.reset())
+        elif command == 'stop':
+            await self.run_until_idle(self.stop())
+        elif command == 'resume':
+            await self.run_until_idle(self.resume())
         elif command == 'set_digital_output':
             await self.run_until_idle(self.set_digital_output(int(data['number']), bool(data['value'])))
 
@@ -300,6 +308,18 @@ class HamiltonBase(WebNodeBase):
         """
 
         response, error = await self.query('h30003R')
+
+    async def stop(self) -> None:
+        """Stops the device (terminates command buffer)
+        """
+
+        response, error = await self.query('T')
+
+    async def resume(self) -> None:
+        """Resumes the device from next unexecuted command
+        """
+
+        response, error = await self.query('R')
 
 class HamiltonValvePositioner(HamiltonBase):
     """Hamilton MVP4 device
