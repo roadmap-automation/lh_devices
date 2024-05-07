@@ -1,15 +1,22 @@
+from dataclasses import dataclass
 from typing import Any, Coroutine, List
 from aiohttp import ClientSession, web, ClientConnectionError
+from aiohttp.web import Application
 import asyncio
 import logging
 import json
+from uuid import uuid4
+from urllib.parse import urlsplit
 from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial
 from valve import LoopFlowValve, SyringeLValve, DistributionValve
 from components import InjectionPort, FlowCell, Node
+from distribution import DistributionBase, DistributionSingleValve
 from gsioc import GSIOC, GSIOCMessage
-from assemblies import AssemblyBasewithGSIOC, Network, connect_nodes, Mode
+from assemblies import AssemblyBasewithGSIOC, AssemblyBase, InjectionChannelBase, Network, connect_nodes, Mode, NestedAssemblyBase, AssemblyMode
 from liquid_handler import SimLiquidHandler
-from webview import run_socket_app
+from bubblesensor import SyringePumpwithBubbleSensor, BubbleSensorBase, SMDSensoronHamiltonDevice
+from webview import run_socket_app, WebNodeBase
+from methods import MethodBaseDeadVolume
 
 class Timer:
     """Basic timer. Essentially serves as a sleep but only allows one instance to run."""
@@ -38,9 +45,11 @@ class Timer:
 class QCMDRecorder(Timer):
     """QCMD-specific timer. At end of timing interval, sends HTTP request to QCMD to record tag."""
 
-    def __init__(self, http_address: str = 'http://localhost:5011', name='QCMDRecorder') -> None:
+    def __init__(self, http_address: str = 'http://localhost:5011/QCMD/0/', name='QCMDRecorder') -> None:
         super().__init__(name)
-        self.session = ClientSession(http_address)
+        url_parts = urlsplit(http_address)
+        self.session = ClientSession(f'{url_parts.scheme}://{url_parts.netloc}')
+        self.url_path = url_parts.path
 
     async def record(self, tag_name: str = '', record_time: float = 0.0, sleep_time: float = 0.0) -> None:
         """Executes timer and sends record command to QCMD. Call by sending
@@ -60,15 +69,15 @@ class QCMDRecorder(Timer):
                         'value': {'tag': tag_name,
                                 'delta_t': record_time}}
 
-            logging.info(f'{self.session._base_url}/QCMD/ => {post_data}')
+            logging.info(f'{self.session._base_url}{self.url_path} => {post_data}')
 
             # send an http request to QCMD server
             try:
-                async with self.session.post('/QCMD/', json=post_data, timeout=10) as resp:
+                async with self.session.post(self.url_path, json=post_data, timeout=10) as resp:
                     response_json = await resp.json()
-                    logging.info(f'{self.session._base_url}/QCMD/ <= {response_json}')
-            except (ConnectionRefusedError, ClientConnectorError):
-                logging.error(f'request to {self.session._base_url}/QCMD/ failed: connection refused')
+                    logging.info(f'{self.session._base_url}{self.url_path} <= {response_json}')
+            except (ConnectionRefusedError, ClientConnectionError):
+                logging.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
 
 class QCMDRecorderDevice(AssemblyBasewithGSIOC):
     """QCMD recording device."""
@@ -98,12 +107,410 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
         # wait the full time
         await self.recorder.record(tag_name, record_time, sleep_time)
 
-class QCMDMultiChannelRecorderDevice(QCMDRecorderDevice):
+class QCMDMeasurementInterface:
+
+    """QCMD-specific measurement interface. At end of timing interval, sends HTTP request to QCMD to get data."""
+
+    def __init__(self, http_address: str = 'http://localhost:5011/QCMD/0/', name='QCMDRecorder') -> None:
+        self.name = name
+        url_parts = urlsplit(http_address)
+        self.session = ClientSession(f'{url_parts.scheme}://{url_parts.netloc}')
+        self.url_path = url_parts.path
+
+    async def record(self, record_time: float = 0.0, sleep_time: float = 0.0) -> dict:
+        """Executes timer and sends record command to QCMD. Call by sending
+            {"method": "record", {**kwargs}} over GSIOC.
+        """
+
+        record_time = float(record_time)
+        sleep_time = float(sleep_time)
+
+        # calculate total wait time
+        wait_time = record_time + sleep_time
+
+        # wait the full time
+        await asyncio.sleep(wait_time)
+
+        # send data request to QCMD interface
+        post_data = {'command': 'get_data_slice',
+                    'value': {'delta_t': record_time}}
+
+        logging.info(f'{self.session._base_url}{self.url_path} => {post_data}')
+
+        # send an http request to QCMD server
+        try:
+            async with self.session.post(self.url_path, json=post_data, timeout=10) as resp:
+                response_json = await resp.json()
+                logging.info(f'{self.session._base_url}{self.url_path} <= {response_json}')
+                return response_json
+        except (ConnectionRefusedError, ClientConnectionError):
+            logging.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
+
+class QCMDMeasurementChannel(QCMDMeasurementInterface, WebNodeBase):
+    
+    def __init__(self, http_address: str, name='QCMDRecorder') -> None:
+        WebNodeBase.__init__(self)
+        QCMDMeasurementInterface.__init__(self, http_address, name)
+        
+        self.id = str(uuid4())
+        self.idle = True
+        self.reserved = False
+
+        self.methods = {'QCMDRecord': self.QCMDRecord}
+        self.result: dict | None = None
+
+    async def QCMDRecord(self, record_time: float = 0.0, sleep_time: float = 0.0):
+        """Recording 
+
+        Args:
+            record_time (float, optional): Time to record. Defaults to 0.0.
+            sleep_time (float, optional): Time to sleep before recording. Defaults to 0.0.
+        """
+
+        self.reserve()
+        self.idle = False
+        await self.trigger_update()
+
+        self.result = await self.record(record_time, sleep_time)
+
+        self.release()
+        self.idle = True
+        await self.trigger_update()
+
+    def reserve(self):
+        """Reserve channel"""
+        self.reserved = True
+
+    def release(self):
+        """Release channel"""
+        self.reserved = False
+
+    async def get_info(self) -> dict:
+        d = await super().get_info()
+        d.update({'type': 'device',
+                  'state': {'idle': self.idle,
+                            'reserved': self.reserved},
+                  'controls': {}})
+        
+        return d
+
+class QCMDMultiChannelMeasurementDevice(AssemblyBase):
     """QCMD recording device simultaneously recording on multiple QCMD instruments"""
 
-    def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, n_channels: int = 1, name='QCMDRecorderDevice') -> None:
-        super().__init__(qcmd_address, qcmd_port, name)
+    def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, n_channels: int = 1, name='MultiChannel QCMD Measurement Device') -> None:
+
+        self.channels = [QCMDMeasurementChannel(f'http://{qcmd_address}:{qcmd_port}/QCMD/{i}/', name=f'QCMD Measurement Channel {i}') for i in range(n_channels)]
+
+        super().__init__([], name)
+
+    def create_web_app(self, template='roadmap.html') -> Application:
+        app = super().create_web_app(template=template)
+        routes = web.RouteTableDef()
+
+        @routes.post('/SubmitTask')
+        async def handle_task(request: web.Request) -> web.Response:
+            # TODO: turn task into a dataclass; parsing will change
+            task = await request.json()
+            channel: int = task['channel']
+            if channel < len(self.channels):
+                method_name: str = task['method_name']
+                method_data: dict = task['method_data']
+                if not self.channels[channel].reserved:
+                    self.run_method(self.channels[channel].methods[method_name](**method_data))
+                   
+                    return web.Response(text='accepted', status=200)
+                
+                return web.Response(text='busy', status=200)
+            
+            return web.Response(text=f'error: channel {channel} does not exist', status=400)
         
+        @routes.get('/GetStatus')
+        async def get_status(request: web.Request) -> web.Response:
+            
+            return web.Response(text=json.dumps({'status': [ch.reserved for ch in self.channels]}), status=200)
+
+        @routes.get('/GetTaskData')
+        async def get_task(request: web.Request) -> web.Response:
+            # TODO: turn task into a dataclass; parsing will change
+            task = await request.json()
+            channel: int = task['channel']
+            if channel < len(self.channels):
+                return web.Response(text=json.dumps(self.channels[channel].result), status=200)
+        
+            return web.Response(text=f'error: channel {channel} does not exist', status=400)
+        
+        app.add_routes(routes)
+
+        for i, channel in enumerate(self.channels):
+            app.add_subapp(f'/{i}/', channel.create_web_app(template))
+            app.add_subapp(f'/{channel.id}/', channel.create_web_app(template))
+
+        return app
+
+    async def get_info(self) -> dict:
+        """Gets object state as dictionary
+
+        Returns:
+            dict: object state
+        """
+
+        d = await super().get_info()
+
+        d.update({'devices': {channel.id: channel.name for channel in self.channels}})
+
+        return d
+
+class QCMDDistributionChannel(InjectionChannelBase):
+    """Channel for a simple QCMD array"""
+
+    def __init__(self, flow_cell: FlowCell, injection_node: Node | None = None, name: str = '') -> None:
+        self.flow_cell = flow_cell
+        super().__init__([], injection_node, name)
+
+        self.network = Network([self.flow_cell])
+
+class QCMDDirectInject(MethodBaseDeadVolume):
+    """Directly inject from LH to a QCMD instrument through a distribution valve
+    """
+
+    def __init__(self, channel: QCMDDistributionChannel, gsioc: GSIOC) -> None:
+        super().__init__(gsioc, channel.devices)
+        self.channel = channel
+        self.dead_volume_mode: str = 'Waste'
+
+    @dataclass
+    class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
+        
+        name: str = "DirectInject"
+
+    async def run(self, **kwargs):
+        """LoadLoop method, synchronized via GSIOC to liquid handler"""
+
+        self.reserve_all()
+
+        method = self.MethodDefinition(**kwargs)
+
+        # Connect to GSIOC communications and wait for trigger
+        logging.info(f'{self.channel.name}.{method.name}: Connecting to GSIOC')
+        self.connect_gsioc()
+
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
+        await self.wait_for_trigger()
+
+        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
+        # method to make sure this updates in time)
+        dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
+
+        # blocks if there's already something in the dead volume queue
+        await self.dead_volume.put(dead_volume)
+        logging.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
+
+        # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
+        await self.wait_for_trigger()
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
+        await self.channel.change_mode('Waste')
+
+        # Wait for trigger to switch to {method.name} mode (LH performs injection)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
+        await self.wait_for_trigger()
+
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Inject mode')
+        await self.channel.change_mode('Inject')
+
+        # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
+        await self.wait_for_trigger()
+
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
+        await self.channel.change_mode('Waste')
+
+        # Wait for trigger to switch to Standby mode (this may not be necessary)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
+        await self.wait_for_trigger()
+
+        # switch to standby mode
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        await self.channel.change_mode('Standby')
+
+        # At this point, liquid handler is done, release communications
+        self.disconnect_gsioc()
+        self.release_all()
+
+class QCMDDirectInjectBubbleSensor(MethodBaseDeadVolume):
+    """Directly inject from LH to a QCMD instrument through a distribution valve
+    """
+
+    def __init__(self, channel: QCMDDistributionChannel, gsioc: GSIOC, inlet_bubble_sensor: BubbleSensorBase, outlet_bubble_sensor: BubbleSensorBase) -> None:
+        super().__init__(gsioc, channel.devices)
+        self.channel = channel
+        self.inlet_bubble_sensor = inlet_bubble_sensor
+        self.outlet_bubble_sensor = outlet_bubble_sensor
+        self.dead_volume_mode: str = 'Waste'
+
+    @dataclass
+    class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
+        
+        name: str = "DirectInject"
+
+    async def run(self, **kwargs):
+        """LoadLoop method, synchronized via GSIOC to liquid handler"""
+
+        self.reserve_all()
+
+        method = self.MethodDefinition(**kwargs)
+
+        # Connect to GSIOC communications and wait for trigger
+        logging.info(f'{self.channel.name}.{method.name}: Connecting to GSIOC')
+        self.connect_gsioc()
+
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
+        await self.wait_for_trigger()
+
+        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
+        # method to make sure this updates in time)
+        dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
+
+        # blocks if there's already something in the dead volume queue
+        await self.dead_volume.put(dead_volume)
+        logging.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
+
+        # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
+        await self.wait_for_trigger()
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
+        await self.channel.change_mode('Waste')
+
+        # Wait for another trigger, which indicates that the LH is going to start asking after the bubble status
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for trigger to traverse air gap')
+        await self.wait_for_trigger()
+        await self.outlet_bubble_sensor.initialize()
+        logging.info(f'{self.channel.name}.{method.name}: Traversing air gap...')
+        
+        # make sure there's always something there to read
+        liquid_in_line = False
+        await self.dead_volume.put(int(liquid_in_line))
+
+        # traverse air gap
+        while not liquid_in_line:
+            liquid_in_line = await self.outlet_bubble_sensor.read()
+            logging.info(f'{self.channel.name}.{method.name}:     Outlet bubble sensor value: {int(liquid_in_line)}')
+            # if end condition reached, remove old queue value and put in current one
+            if liquid_in_line:
+                if self.dead_volume.qsize():
+                    self.dead_volume.get_nowait()
+            await self.dead_volume.put(int(liquid_in_line))
+
+        # Wait for trigger to switch to {method.name} mode (LH performs injection)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
+        await self.wait_for_trigger()
+
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Inject mode')
+        await self.channel.change_mode('Inject')
+
+        # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
+        await self.wait_for_trigger()
+
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
+        await self.channel.change_mode('Waste')
+
+        # Wait for trigger to switch to Standby mode (this may not be necessary)
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
+        await self.wait_for_trigger()
+
+        # switch to standby mode
+        logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        await self.channel.change_mode('Standby')
+
+        # At this point, liquid handler is done, release communications
+        self.disconnect_gsioc()
+        self.release_all()
+
+
+class QCMDDistributionAssembly(NestedAssemblyBase, AssemblyBase):
+    """Assembly of QCMD channels with a distribution system, no injection system"""
+
+    def __init__(self,
+                 channels: List[QCMDDistributionChannel],
+                 distribution_system: DistributionSingleValve,
+                 gsioc: GSIOC,
+                 inlet_bubble_sensor: BubbleSensorBase,
+                 outlet_bubble_sensor: BubbleSensorBase,
+                 name='') -> None:
+        NestedAssemblyBase.__init__(self, [], channels + [distribution_system], name)
+        #AssemblyBase.__init__(self, self.devices, name)
+
+        # Build network
+        self.injection_port = distribution_system.injection_port
+        self.network = Network(self.devices + [self.injection_port])
+
+        self.modes = {'Standby': AssemblyMode(modes={distribution_system: distribution_system.modes['8']})}
+
+        distribution_system.network = self.network
+        # update channels with upstream information
+        for i, ch in enumerate(channels):
+            # update network for accurate dead volume calculation
+            ch.network = self.network
+            ch.injection_node = self.injection_port.nodes[0]
+
+            # add system-specific methods to the channel
+            ch.methods.update({
+                               'DirectInject': QCMDDirectInject(ch, gsioc),
+                               'DirectInjectBubbleSensor': QCMDDirectInjectBubbleSensor(ch, gsioc, inlet_bubble_sensor, outlet_bubble_sensor)
+                               })
+            ch.methods['DirectInject'].devices += distribution_system.devices
+            ch.methods['DirectInjectBubbleSensor'].devices += distribution_system.devices
+            ch.modes['Inject'] = distribution_system.modes[str(3 + i)]
+            ch.modes['Waste'] = distribution_system.modes['7']
+            ch.modes['Standby'] = distribution_system.modes['8']
+
+        self.channels = channels
+        self.distribution_system = distribution_system
+
+    async def initialize(self) -> None:
+        """Initialize the loop as a unit and the distribution valve separately"""
+        await asyncio.gather(*[ch.initialize() for ch in self.channels], self.distribution_system.initialize())
+        await self.trigger_update()
+
+    def run_channel_method(self, channel: int, method_name: str, method_data: dict) -> None:
+        return self.channels[channel].run_method(method_name, method_data)
+    
+    def create_web_app(self, template='roadmap.html') -> Application:
+        app = super().create_web_app(template=template)
+        routes = web.RouteTableDef()
+
+        @routes.post('/SubmitTask')
+        async def handle_task(request: web.Request) -> web.Response:
+            # TODO: turn task into a dataclass; parsing will change
+            task = await request.json()
+            channel: int = task['channel']
+            method_name: str = task['method_name']
+            method_data: dict = task['method_data']
+            if self.channels[channel].is_ready(method_name):
+                self.run_channel_method(channel, method_name, method_data)
+                await self.trigger_update()
+                return web.Response(text='accepted', status=200)
+            
+            return web.Response(text='busy', status=200)
+        
+        @routes.get('/GetTaskData')
+        async def get_task(request: web.Request) -> web.Response:
+            # TODO: turn task into a dataclass; parsing will change
+            task = await request.json()
+            task_id = task['id']
+
+            # TODO: actually return task data
+            # TODO: Determine what task data we want to save. Logging? success? Any returned errors?
+            return web.Response(text=json.dumps({'id': task_id}), status=200)
+        
+        app.add_routes(routes)
+
+        for i, channel in enumerate(self.channels):
+            app.add_subapp(f'/{i}/', channel.create_web_app())
+
+        return app
+
 
 class QCMDLoop(AssemblyBasewithGSIOC):
 
@@ -112,7 +519,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         dispense takes care of aspirate/dispense"""
 
     def __init__(self, loop_valve: HamiltonValvePositioner,
-                       syringe_pump: HamiltonSyringePump,
+                       syringe_pump: SyringePumpwithBubbleSensor,
                        flow_cell: FlowCell,
                        sample_loop: FlowCell,
                        injection_node: Node | None = None,
@@ -139,6 +546,9 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
         # Dead volume queue
         self.dead_volume: asyncio.Queue = asyncio.Queue(1)
+
+        # Bubble sensor volume offset
+        self.bubble_sensor_offset = 90
 
         # Measurement modes
         self.modes = {'Standby': Mode({loop_valve: 0,
@@ -318,6 +728,110 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             # Prime loop
             await self.primeloop(volume=1000)
 
+    async def LoopInjectwithBubble(self,
+                         pump_volume: str | float = 0, # uL
+                         pump_flow_rate: str | float = 1, # mL/min
+                         air_gap: str | float = 0, #uL
+                         tag_name: str = '',
+                         sleep_time: str | float = 0, # seconds
+                         record_time: str | float = 0 # seconds
+                         ) -> None:
+        """LoopInjectwithBubble method, synchronized via GSIOC to liquid handler"""
+
+        pump_volume = float(pump_volume)
+        pump_flow_rate = float(pump_flow_rate) * 1000 / 60 # convert to uL / s
+        sleep_time = float(sleep_time)
+        record_time = float(record_time)
+
+        # Clear liquid handler event if it isn't already cleared
+        self.release_liquid_handler.clear()
+
+        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
+        # method to make sure this updates in time)
+        dead_volume = self.get_dead_volume(self.injection_node, 'LoadLoop')
+
+        # blocks if there's already something in the dead volume queue
+        await self.dead_volume.put(dead_volume)
+        logging.info(f'{self.name}.LoopInjectwithBubble: dead volume set to {dead_volume}')
+
+        # locks the channel so any additional calling processes have to wait
+        async with self.channel_lock:
+
+            # power the bubble sensor
+            await self.syringe_pump.set_digital_output(1, True)
+
+            # switch to standby mode
+            logging.info(f'{self.name}.LoopInjectwithBubble: Switching to Standby mode')            
+            await self.change_mode('Standby')
+
+            # Wait for trigger to switch to LoadLoop mode
+            logging.info(f'{self.name}.LoopInjectwithBubble: Waiting for first trigger')
+            await self.wait_for_trigger()
+            logging.info(f'{self.name}.LoopInjectwithBubble: Switching to LoadLoop mode')
+            await self.change_mode('LoadLoop')
+
+            # Wait for trigger to switch to PumpAspirate mode
+            logging.info(f'{self.name}.LoopInjectwithBubble: Waiting for second trigger')
+            await self.wait_for_trigger()
+
+            # At this point, liquid handler is done
+            self.release_liquid_handler.set()
+
+            logging.info(f'{self.name}.LoopInjectwithBubble: Switching to PumpPrimeLoop mode')
+            await self.change_mode('PumpPrimeLoop')
+
+            # smart dispense the volume required to move plug quickly through loop, interrupting if sensor 1 goes low
+            logging.info(f'{self.name}.LoopInjectwithBubble: Moving plug through loop until air gap detected, total injection volume {self.sample_loop.get_volume() - (pump_volume)} uL')
+            actual_volume = await self.syringe_pump.smart_dispense(self.sample_loop.get_volume() - pump_volume, self.syringe_pump.max_dispense_flow_rate, 5)
+            logging.info(f'{self.name}.LoopInjectwithBubble: Actually injected {actual_volume} uL')
+
+            async def traverse_air_gap(nominal_air_gap: float, flow_rate: float = self.syringe_pump.max_dispense_flow_rate, volume_step: float = 10) -> float:
+                
+                total_air_gap_volume = 0
+                total_air_gap_volume += await self.syringe_pump.smart_dispense(nominal_air_gap, flow_rate)
+                while not (await self.syringe_pump.get_digital_input(1)):
+                    total_air_gap_volume += await self.syringe_pump.smart_dispense(volume_step, flow_rate)
+                
+                return total_air_gap_volume
+
+            # dispense air gap + bubble offset without interruption
+            #await self.syringe_pump.smart_dispense(air_gap + self.bubble_sensor_offset, self.syringe_pump.max_dispense_flow_rate)
+            logging.info(f'{self.name}.LoopInjectwithBubble: Traversing air gap...')
+            total_air_gap_volume = await traverse_air_gap(air_gap, self.syringe_pump.max_dispense_flow_rate)
+            logging.info(f'{self.name}.LoopInjectwithBubble: Total air gap volume: {total_air_gap_volume} uL')
+            actual_volume = await self.syringe_pump.smart_dispense(self.bubble_sensor_offset + 30, self.syringe_pump.max_dispense_flow_rate)
+            logging.info(f'{self.name}.LoopInjectwithBubble: Bubble sensor offset dispensed: {actual_volume} uL')
+
+            # waits until any current measurements are complete. Note that this could be done with
+            # "async with measurement_lock" but then QCMDRecord would have to grab the lock as soon as it
+            # was released, and there may be a race condition with other subroutines.
+            # This function allows QCMDRecord to release the lock when it is done.
+            logging.info(f'{self.name}.LoopInjectwithBubble: Waiting to acquire measurement lock')
+            await self.measurement_lock.acquire()
+
+            # change to inject mode
+            logging.info(f'{self.name}.LoopInjectwithBubble: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
+            await self.change_mode('PumpInject')
+            actual_volume = await self.syringe_pump.smart_dispense(pump_volume, pump_flow_rate, 5)
+            # TODO: Replace 20 with a bubble_sensor_offset buffer value (+ for initial injection, - for this one)
+            extra_volume = min(pump_volume - actual_volume, self.bubble_sensor_offset - 20)
+            if extra_volume > 0:
+                await self.syringe_pump.smart_dispense(extra_volume, pump_flow_rate)
+            logging.info(f'{self.name}.LoopInjectwithBubble: Injected {actual_volume} uL at flow rate {pump_flow_rate} uL / s, plus extra_volume {extra_volume}')
+
+            # start QCMD timer
+            logging.info(f'{self.name}.LoopInjectwithBubble: Starting QCMD timer for {sleep_time + record_time} seconds')
+
+            # spawn new measurement task that will release measurement lock when complete
+            self.run_method(self.record(tag_name, record_time, sleep_time))
+
+            # Flush loop with any excess volume in the pump
+            await self.change_mode('PumpPrimeLoop')
+            await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.home())
+
+            # Prime loop
+            await self.primeloop(volume=1000)
+
     async def LHInject(self,
                          tag_name: str = '',
                          sleep_time: str | float = 0, # seconds
@@ -394,12 +908,101 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             # Prime loop
             #await self.primeloop()
 
-class QCMDSystem(AssemblyBasewithGSIOC):
+    async def LHInjectwithBubble(self,
+                         tag_name: str = '',
+                         sleep_time: str | float = 0, # seconds
+                         record_time: str | float = 0 # seconds
+                         ) -> None:
+        """LH Direct Inject method, synchronized via GSIOC to liquid handler"""
+
+        """TODO:
+                0. Check if we really need this. Problem is that we might want different loading and injection flow rates, and if we detect the air gap and switch the valve
+                    too early, we will hit the cell with the high flow rate.
+                    Better to rely on volumes on the front end (use the bubble sensor to test how well the dead volume calculation works for direct injection).
+                    Use the bubble sensor to make sure the back end air gap doesn't get injected into the cell
+                    (even at the injection flow rate, when the air gap hits the bubble sensor at the inlet we immediately switch to waste).
+                1. In this scheme, all we have to do is switch the valve to waste as soon as the second air gap is detected at the inlet.
+                2. Have to make sure it doesn't hang indefinitely; perhaps gather the H command with a sleep of the expected length (would need injection volume and flow rate as parameters)
+                    and send R when the timer expires. Won't do anything if it's not hung up on the H command.
+                
+        """
+
+        sleep_time = float(sleep_time)
+        record_time = float(record_time)
+
+        # Clear liquid handler event if it isn't already cleared
+        self.release_liquid_handler.clear()
+
+        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
+        # method to make sure this updates in time)
+        dead_volume = self.get_dead_volume(self.injection_node, 'LHInject')
+
+        # blocks if there's already something in the dead volume queue
+        await self.dead_volume.put(dead_volume)
+        logging.info(f'{self.name}.LHInject: dead volume set to {dead_volume}')
+
+        # locks the channel so any additional calling processes have to wait
+        async with self.channel_lock:
+
+             # switch to standby mode
+            logging.info(f'{self.name}.LHInject: Switching to Standby mode')            
+            await self.change_mode('Standby')
+
+            # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
+            logging.info(f'{self.name}.LHInject: Waiting for first trigger')
+            await self.wait_for_trigger()
+            logging.info(f'{self.name}.LHInject: Switching to LHPrime mode')
+            await self.change_mode('LHPrime')
+
+            # waits until any current measurements are complete. Note that this could be done with
+            # "async with measurement_lock" but then QCMDRecord would have to grab the lock as soon as it
+            # was released, and there may be a race condition with other subroutines.
+            # This function allows QCMDRecord to release the lock when it is done.
+            logging.info(f'{self.name}.LHInject: Waiting to acquire measurement lock')
+            await self.measurement_lock.acquire()
+
+            # Wait for trigger to switch to LHInject mode (LH performs injection)
+            logging.info(f'{self.name}.LHInject: Waiting for second trigger')
+            await self.wait_for_trigger()
+
+            logging.info(f'{self.name}.LHInject: Switching to LHInject mode')
+            await self.change_mode('LHInject')
+
+            # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
+            logging.info(f'{self.name}.LHInject: Waiting for third trigger')
+            await self.wait_for_trigger()
+
+            logging.info(f'{self.name}.LHInject: Switching to LHPrime mode')
+            await self.change_mode('LHPrime')
+
+            # start QCMD timer
+            logging.info(f'{self.name}.LHInject: Starting QCMD timer for {sleep_time + record_time} seconds')
+
+            # spawn new measurement task that will release measurement lock when complete
+            self.run_method(self.record(tag_name, record_time, sleep_time))
+
+            # Wait for trigger to switch to Standby mode (this may not be necessary)
+            logging.info(f'{self.name}.LHInject: Waiting for fourth trigger')
+            await self.wait_for_trigger()
+
+            # Clear liquid handler event if it isn't already cleared
+            self.release_liquid_handler.set()
+
+            logging.info(f'{self.name}.LHInject: Switching to Standby mode')            
+            await self.change_mode('Standby')
+
+            #logging.info(f'{self.name}.LHInject: Priming loop')
+
+            # Prime loop
+            #await self.primeloop()
+
+class QCMDSystem(NestedAssemblyBase, AssemblyBasewithGSIOC):
     """QCMD System comprising one QCMD loop and one distribution valve
         (unnecessarily complex but testbed for ROADMAP multichannel assembly)"""
     
     def __init__(self, distribution_valve: HamiltonValvePositioner, qcmd_loop: QCMDLoop, injection_port: InjectionPort, name: str = 'QCMDSystem') -> None:
-        super().__init__(devices=qcmd_loop.devices + [distribution_valve], name=name)
+        NestedAssemblyBase.__init__(self, [distribution_valve], [qcmd_loop], name)
+        AssemblyBasewithGSIOC.__init__(self, self.devices, name)
 
         self.injection_port = injection_port
         self.distribution_valve = distribution_valve
@@ -450,6 +1053,27 @@ class QCMDSystem(AssemblyBasewithGSIOC):
 
             # spawn Loop Injection task
             asyncio.create_task(self.qcmd_loop.LoopInject(**kwargs))
+
+            # wait for liquid handler to be released
+            await self.qcmd_loop.release_liquid_handler.wait()
+            self.qcmd_loop.release_liquid_handler.clear()
+
+            # switch to standby mode
+            await self.change_mode('Standby')
+
+    async def LoopInjectwithBubble(self,
+                         **kwargs
+                         ) -> None:
+        """LoopInject method, synchronized via GSIOC to liquid handler"""
+
+        # start new method if distribution lock is free
+        async with self.distribution_lock:
+
+            # switch to appropriate mode
+            await self.change_mode('LoopInject')
+
+            # spawn Loop Injection task
+            asyncio.create_task(self.qcmd_loop.LoopInjectwithBubble(**kwargs))
 
             # wait for liquid handler to be released
             await self.qcmd_loop.release_liquid_handler.wait()
@@ -539,27 +1163,27 @@ async def qcmd_loop():
 
 async def qcmd_distribution():
     gsioc = GSIOC(62, 'COM13', 19200)
-    ser = HamiltonSerial(port='COM7', baudrate=38400)
+    ser = HamiltonSerial(port='COM9', baudrate=38400)
     #ser = HamiltonSerial(port='COM3', baudrate=38400)
-    dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='distribution_valve_positioner')
-    mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
-    sp = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000., False, name='syringe_pump')
+    dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Valve')
+    mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='Loop Valve')
+    sp = SyringePumpwithBubbleSensor(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000., False, name='Syringe Pump')
     sp.max_dispense_flow_rate = 5 * 1000 / 60
     sp.max_aspirate_flow_rate = 15 * 1000 / 60
     ip = InjectionPort('LH_injection_port')
     fc = FlowCell(139, 'flow_cell')
-    sampleloop = FlowCell(5060., 'sample_loop')
+    sampleloop = FlowCell(4994., 'sample_loop')
 
-    qcmd_channel = QCMDLoop(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], name='qcmd_channel')
+    qcmd_channel = QCMDLoop(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], name='QCMD Channel')
 
     # connect LH injection port to distribution port valve 0
-    connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 124 + 20)
+    connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 124 + 50)
 
     # connect distribution valve port 1 to syringe pump valve node 2 (top)
     connect_nodes(dvp.valve.nodes[1], sp.valve.nodes[2], 73 + 20)
 
     # connect distribution valve port 2 to loop valve node 3 (top right)
-    connect_nodes(dvp.valve.nodes[2], mvp.valve.nodes[3], 82 + 20)
+    connect_nodes(dvp.valve.nodes[2], mvp.valve.nodes[3], 90 + 50)
 
     # connect syringe pump valve port 3 to sample loop
     connect_nodes(sp.valve.nodes[3], sampleloop.inlet_node, 0.0)
@@ -582,8 +1206,11 @@ async def qcmd_distribution():
     try:
         #qcmd_system.distribution_valve.valve.move(2)
         await qcmd_system.initialize()
-        await asyncio.sleep(2)
-        await qcmd_channel.change_mode('PumpPrimeLoop')
+        await sp.set_digital_output(1, True)
+        await sp.set_digital_output(2, True)
+        #await asyncio.sleep(2)
+        #await qcmd_channel.change_mode('PumpPrimeLoop')
+
         #await qcmd_channel.primeloop(2)
         #await qcmd_system.change_mode('LoopInject')
         #await qcmd_channel.change_mode('LoadLoop')
@@ -604,6 +1231,77 @@ async def qcmd_distribution():
     finally:
         logging.info('Cleaning up...')
         asyncio.gather(qcmd_channel.recorder.session.close(),
+                       runner.cleanup())
+
+async def qcmd_single_distribution():
+    gsioc = GSIOC(62, 'COM13', 19200)
+    ser = HamiltonSerial(port='COM9', baudrate=38400)
+    #ser = HamiltonSerial(port='COM3', baudrate=38400)
+    dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Valve')
+    sp = SyringePumpwithBubbleSensor(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000., False, name='Syringe Pump')
+    ip = InjectionPort('LH_injection_port')
+    fc0 = FlowCell(139, 'flow_cell')
+    fc1 = FlowCell(139, 'flow_cell')
+    inlet_bubble_sensor = SMDSensoronHamiltonDevice(sp, 1, 0)
+    outlet_bubble_sensor = SMDSensoronHamiltonDevice(sp, 2, 1)
+
+    ch0 = QCMDDistributionChannel(fc0, injection_node=ip.nodes[0], name='QCMD Channel 0')
+    ch1 = QCMDDistributionChannel(fc0, injection_node=ip.nodes[0], name='QCMD Channel 1')
+    distribution_system = DistributionSingleValve(dvp, ip, 'Distribution System')
+
+    # connect LH injection port to distribution port valve 0
+    connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 124 + 50)
+
+    # connect distribution valve port 3 to channel 0 flow cell
+    connect_nodes(dvp.valve.nodes[3], fc0.inlet_node, 73 + 20)
+
+    # connect distribution valve port 3 to channel 0 flow cell
+    connect_nodes(dvp.valve.nodes[4], fc1.inlet_node, 83 + 20)
+
+    qcmd_system = QCMDDistributionAssembly([ch0, ch1], distribution_system, gsioc, inlet_bubble_sensor, outlet_bubble_sensor, name='QCMD MultiChannel System')
+    app = qcmd_system.create_web_app(template='roadmap.html')
+    runner = await run_socket_app(app, 'localhost', 5003)
+    print(json.dumps(await qcmd_system.get_info()))
+    #lh = SimLiquidHandler(qcmd_channel)
+
+    try:
+        #qcmd_system.distribution_valve.valve.move(2)
+        await qcmd_system.initialize()
+        #await asyncio.sleep(2)
+        #await qcmd_channel.change_mode('PumpPrimeLoop')
+
+        #await qcmd_channel.primeloop(2)
+        #await qcmd_system.change_mode('LoopInject')
+        #await qcmd_channel.change_mode('LoadLoop')
+        #await asyncio.sleep(2)
+        #await qcmd_system.change_mode('LoopInject')
+        #await asyncio.sleep(2)
+        #await qcmd_system.change_mode('Standby')
+
+        #await qcmd_channel.change_mode('PumpPrimeLoop')
+        #await mvp.initialize()
+        #await mvp.run_until_idle(mvp.move_valve(1))
+        #await sp.initialize()
+        #await sp.run_until_idle(sp.move_absolute(0, sp._speed_code(sp.max_dispense_flow_rate)))
+
+        await gsioc.listen()
+    finally:
+        logging.info('Cleaning up...')
+        asyncio.gather(
+                       runner.cleanup())
+
+async def qcmd_multichannel_measure():
+
+    measurement_system = QCMDMultiChannelMeasurementDevice('localhost', 5011, 2)
+
+    app = measurement_system.create_web_app(template='roadmap.html')
+    runner = await run_socket_app(app, 'localhost', 5003)
+    print(json.dumps(await measurement_system.get_info()))
+    try:
+        await asyncio.Event().wait()
+    finally:
+        logging.info('Cleaning up...')
+        asyncio.gather(
                        runner.cleanup())
 
 async def main():
@@ -649,6 +1347,6 @@ if __name__=='__main__':
         logging.basicConfig(
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
-                            level=logging.INFO)
-        asyncio.run(qcmd_distribution(), debug=True)
+                            level=logging.DEBUG)
+        asyncio.run(qcmd_single_distribution(), debug=True)
         #asyncio.run(sptest())
