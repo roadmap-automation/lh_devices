@@ -103,7 +103,7 @@ class SmoothFlowSyringePump(HamiltonSyringePump):
         V = self._speed_code(flow_rate)
         logging.info(f'Speed: {V}')
         response, error = await self.query(f'u{V}R')
-        await self.get_speed()
+        await self.run_async(self.get_speed())
 
         if error:
             logging.error(f'{self}: Syringe move error {error}')
