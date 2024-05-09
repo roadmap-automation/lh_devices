@@ -159,6 +159,16 @@ class HamiltonBase(WebNodeBase):
         await self.poll_until_idle()
         await self.trigger_update()
 
+    async def run_async(self, cmd: asyncio.Future) -> None:
+        """
+        Sends from serial connection but does not update idle status
+        """
+
+        idle_value = copy.copy(self.idle)
+        await cmd
+        await self.trigger_update()
+        self.idle = idle_value
+
     async def update_status(self) -> None:
         """
         Polls the status of the device using 'Q'
@@ -296,6 +306,7 @@ class HamiltonBase(WebNodeBase):
 
         if command == 'reset':
             await self.run_until_idle(self.reset())
+            await self.initialize()
         elif command == 'stop':
             await self.run_until_idle(self.stop())
         elif command == 'resume':
@@ -308,6 +319,7 @@ class HamiltonBase(WebNodeBase):
         """
 
         response, error = await self.query('h30003R')
+        self.initialized = False
 
     async def stop(self) -> None:
         """Stops the device (terminates command buffer)
@@ -609,8 +621,8 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             # smart dispenses given volume
             await self.smart_dispense(float(data['value']) * 1000, self._flow_rate(self._speed))
         elif command == 'set_speed':
-            # set the speed
-            await self.run_until_idle(self.set_speed(float(data['value']) * 1000 / 60))
+            # set the speed. Do not use run_until_idle because on-the-fly changes are permitted
+            await self.run_async(self.set_speed(float(data['value']) * 1000 / 60))
 
     async def get_syringe_status(self) -> str:
         """Gets full status string of device
@@ -772,7 +784,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         V = self._speed_code(flow_rate)
         logging.debug(f'Speed: {V}')
         response, error = await self.query(f'V{V}R')
-        await self.get_speed()
+        await self.run_async(self.get_speed())
 
         if error:
             logging.error(f'{self}: Syringe move error {error}')
