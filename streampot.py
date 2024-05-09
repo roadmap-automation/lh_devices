@@ -1148,11 +1148,11 @@ async def sp_test():
     #await sp.move_valve(3)
     #for _ in range(20):
     #    await sp.smart_dispense(sp.syringe_volume, sp.max_aspirate_flow_rate)
-    await asyncio.sleep(1)
-    await sp.run_until_idle(sp.set_speed(sp.max_aspirate_flow_rate))
-    await sp.run_syringe_until_idle(sp.move_absolute(25200))
 
-    await asyncio.Event().wait()
+    try:
+        await asyncio.Event().wait()
+    finally:
+        await runner.cleanup()
 
     #return
     load = True
