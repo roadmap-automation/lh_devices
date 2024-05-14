@@ -16,11 +16,11 @@ import matplotlib.pyplot as plt
 
 from connections import Port
 
-plt.set_loglevel('notset')
+plt.set_loglevel('warning')
 
 from HamiltonComm import HamiltonSerial
 from HamiltonDevice import HamiltonSyringePump, PollTimer, HamiltonValvePositioner
-from assemblies import AssemblyBase
+from assemblies import AssemblyBase, Mode
 from valve import SyringeLValve, SyringeValveBase, DistributionValve
 from webview import run_socket_app
 
@@ -29,7 +29,7 @@ from labjack import ljm
 class YValve(DistributionValve):
 
     def __init__(self, position: int = 0, ports: List[Port] = [], name=None) -> None:
-        super().__init__(2, position, ports, name)
+        super().__init__(3, position, ports, name)
         self.hamilton_valve_code = 0
 
 class SmoothFlowSyringePump(HamiltonSyringePump):
@@ -145,7 +145,7 @@ class SyringePumpRamp(SmoothFlowSyringePump):
         # start move and timer simultaneously
         #delay_cmd = ''.join([f'M{round(d)}' if d >= 5 else '' for d in delay_list])
         await asyncio.sleep(delay / 1000)
-        await self.query(f'V{self._speed_code(flow_rates[0])}D{stroke_length}R')
+        await self.query(f'u{self._speed_code(flow_rates[0])}D{stroke_length}R')
         await timer.cycle()
         cur_fr = flow_rates[0]
         data.append((time.time() - itime, self._flow_rate(self._speed_code(flow_rates[0]))))
@@ -157,7 +157,7 @@ class SyringePumpRamp(SmoothFlowSyringePump):
 
             if fr != cur_fr:
             # set new speed and start the poll_delay timer
-                await asyncio.gather(self.query(f'V{self._speed_code(fr)}'), timer.cycle())
+                await asyncio.gather(self.query(f'u{self._speed_code(fr)}'), timer.cycle())
                 cur_fr = fr
             else:
                 await timer.cycle()
@@ -378,10 +378,10 @@ class LabJackDriver(USBDriverBase):
         self.instr = None
 
         self.channel_map = {'AIN0': 0,
-                            'AIN1': 2,
-                            'AIN2': 4,
-                            'AIN3': 6}
-
+                            'AIN1': 1,
+                            'AIN2': 2,
+                            'AIN3': 3}
+        
     def open(self, model='T7'):
         
         handle = ljm.openS("ANY","ANY","ANY")
@@ -474,6 +474,7 @@ class LabJackDriver(USBDriverBase):
             data = data.reshape((len(addresses), -1), order='F')
             all_data.append(data)
 
+        ljm.eWriteName(self.instr, 'STREAM_SETTLING_US', 10)
         actual_scanrate = ljm.eStreamStart(self.instr, round(ScanRate / ScansPerSecond), len(addresses), addresses, ScanRate)
         ljm.setStreamCallback(self.instr, _stream_callback)
 
@@ -500,7 +501,7 @@ class PressureSensorwithInAmp(LabJackDriver):
         ljm.eWriteName(self.instr, self.channel + '_RANGE', 1)
 
     def stream(self, ScansPerSecond: float = 1, ScanRate: float = 500) -> Tuple[float, np.ndarray]:
-        sample_rate, data = super().stream(ScansPerSecond, [self.channel_map[self.channel]], ScanRate)
+        sample_rate, data = super().stream(ScansPerSecond, [self.channel_map[self.channel] * 2], ScanRate)
         data /= self.gain
 
         return sample_rate, data
@@ -526,7 +527,35 @@ class PressureSensorDifferential(LabJackDriver):
         #ljm.eWriteName(self.instr, self.dac_channel, self.dac_output)
 
     def stream(self, ScansPerSecond: float = 1, ScanRate: float = 500) -> Tuple[float, np.ndarray]:
-        sample_rate, data = super().stream(ScansPerSecond, [self.channel_map[self.channel]], ScanRate)
+        sample_rate, data = super().stream(ScansPerSecond, [self.channel_map[self.channel] * 2], ScanRate)
+        data /= self.gain
+
+        return sample_rate, data
+
+class PressureSensorDifferentialDouble(LabJackDriver):
+
+    def __init__(self, channel_high: str = 'AIN0', channel_low: str='AIN2', sensor_voltage: float = 5.0, timeout=0.05, name='LabJackDriver') -> None:
+        super().__init__(timeout, name)
+
+        self.channel_high = channel_high
+        self.channel_low = channel_low
+        self.sensor_voltage = sensor_voltage
+        self.gain = 1
+
+    def open(self, model='T7'):
+        super().open(model)
+
+        # set up differential measurement
+        for channel in [self.channel_high, self.channel_low]:
+            negative_channel = self.channel_map[channel] + 1
+            ljm.eWriteName(self.instr, channel + '_RANGE', 0.01)
+            ljm.eWriteName(self.instr, channel + '_NEGATIVE_CH', negative_channel)
+
+        # set up output voltage
+        #ljm.eWriteName(self.instr, self.dac_channel, self.dac_output)
+
+    def stream(self, ScansPerSecond: float = 1, ScanRate: float = 500) -> Tuple[float, np.ndarray]:
+        sample_rate, data = super().stream(ScansPerSecond, [self.channel_map[self.channel_high] * 2, self.channel_map[self.channel_low] * 2], ScanRate * 2)
         data /= self.gain
 
         return sample_rate, data
@@ -630,7 +659,7 @@ class StreamPot:
         # get pressure data result
         actual_sample_rate, pdata = await stream
         t = np.arange(pdata.shape[1]) / actual_sample_rate
-        pressure_data = t, pdata
+        pressure_data = t, np.array(pdata[1]) - np.array(pdata[0])
 
         #plt.figure()
         #plt.plot(poll_data[0], poll_data[1])
@@ -686,10 +715,12 @@ class StreamPot:
         await asyncio.sleep(10)
 
         # calculate expected time
-        expected_time = volume / (0.5 * (max_flow_rate + min_flow_rate)) * 60
+        actual_max_flow_rate = sp._flow_rate(sp._speed_code(max_flow_rate * 1000 / 60)) * 60 / 1000
+        actual_min_flow_rate = sp._flow_rate(sp._speed_code(min_flow_rate * 1000 / 60)) * 60 / 1000
+        expected_time = volume / (0.5 * (actual_max_flow_rate + actual_min_flow_rate)) * 60
         nsteps = round(expected_time / MIN_STEP_TIME / 2)
 
-        flow_rates = np.linspace(min_flow_rate, max_flow_rate, nsteps, endpoint=True) / 60 * 1000
+        flow_rates = np.linspace(actual_min_flow_rate, actual_max_flow_rate, nsteps, endpoint=True) / 60 * 1000
 
         # 2. set up the Keithley
 
@@ -739,13 +770,13 @@ class StreamPot:
         # get pressure data result
         actual_sample_rate, pdata = await stream
         tp = np.arange(pdata.shape[1]) / actual_sample_rate
-        pressure_data = tp, pdata
+        pressure_data = tp, pdata[0] - pdata[1]
 
         # format data into numpy arrays
         data = np.fromstring(data, sep=',')
         V, t = data.reshape((2, pointcount), order='F')
 
-        return V, t, pressure_data, speed_data
+        return V, t, pressure_data, speed_data, expected_time
     
     async def exchange(self, volume: float, flow_rate: float, baseline_duration: float = 10) -> None:
 
@@ -793,7 +824,7 @@ class StreamPot:
         # collect the measurements
         actual_sample_rate, pdata = await stream
         tp = np.arange(pdata.shape[1]) / actual_sample_rate
-        pressure_data = tp, pdata
+        pressure_data = tp, np.array(pdata[1]) - np.array(pdata[0])
 
         # Get number of available points and read all data
         pointcount = int(await self.smu.query(':TRAC:ACT? "defbuffer1"'))
@@ -862,9 +893,9 @@ def analyze_streampot(t, V, baseline, baseline_pad = 0):
 async def main():
 
     ser = HamiltonSerial(port='COM6', baudrate=38400)
-    sp = SyringePumpRamp(ser, '3', SyringeLValve(4, name='syringe_LValve'), 250, False, name='syringe_pump')
-    sp.max_dispense_flow_rate = 5. / 60 * 1000.
-    sp.max_aspirate_flow_rate = 5. / 60 * 1000.
+    sp = SyringePumpRamp(ser, '0', SyringeLValve(4, name='syringe_LValve'), 1000, name='Smooth Flow Syringe Pump')
+    sp.max_dispense_flow_rate = 4. / 60 * 1000.
+    sp.max_aspirate_flow_rate = 4. / 60 * 1000.
 
     await sp.run_until_idle(sp.initialize())
 
@@ -872,7 +903,7 @@ async def main():
     thread_task = asyncio.create_task(k.start())
     #await asyncio.sleep(0.1)
 
-    lj = PressureSensorDifferential(channel='AIN0', sensor_voltage=5.0)
+    lj = PressureSensorDifferentialDouble(channel_high='AIN0', channel_low='AIN2', sensor_voltage=5.0)
     #lj = PressureSensorwithInAmp(channel='AIN2', gain=201)
     await asyncio.to_thread(lj.open)
     #thread_task2 = asyncio.create_task(lj.start())
@@ -880,9 +911,9 @@ async def main():
 
     streampot = StreamPot(k, sp, lj)
     #R, dV, V, I = await sp.measure_iv()
-    baseline = 10
-    flow_rate = 0.1
-    volume = flow_rate * 0.5
+    baseline = 30
+    flow_rate = 0.01
+    volume = flow_rate * 2.5
 
     if False:
         print(f'Actual speed: {sp._flow_rate(sp._speed_code(flow_rate / 60 * 1000)) / 1000 * 60:0.3f} mL/min')
@@ -919,12 +950,13 @@ async def main():
         expected_length = 2.0 * baseline + volume / (flow_rate / 60)
         logging.info('Expected time (s): %0.3f', expected_length)
 
-        V, t, pressure_data, speed_data = await streampot.measure_streaming_potential(min_flow_rate=flow_rate,
+        V, t, pressure_data, speed_data, expected_length = await streampot.measure_streaming_potential(min_flow_rate=flow_rate,
                                                     max_flow_rate=flow_rate,
                                                     volume=volume,
                                                     baseline_duration=baseline)
+        logging.info('Actual expected time (s): %0.3f', expected_length)
 
-
+        expected_length += 2.0 * baseline
 
         Rs = []
         dRs = []
@@ -977,7 +1009,7 @@ async def main():
 
         tp, mv = pressure_data
         tcrit = tp < expected_length
-        mv = mv[0][tcrit]
+        mv = mv[tcrit]
         tp = tp[tcrit]
         mv2pa = 0.2584e-3 * lj.sensor_voltage / 6894.75
         pa = mv / mv2pa
@@ -1095,15 +1127,15 @@ async def ivcurve():
 
 async def exchange_with_iv():
     ser = HamiltonSerial(port='COM6', baudrate=38400)
-    sp = SyringePumpRamp(ser, '3', SyringeLValve(4, name='syringe_LValve'), 250, False, name='syringe_pump')
-    sp.max_dispense_flow_rate = 10. / 60 * 1000.
-    sp.max_aspirate_flow_rate = 10. / 60 * 1000.
+    sp = SyringePumpRamp(ser, '0', SyringeLValve(4, name='syringe_LValve'), 1000, name='Smooth Flow Syringe Pump')
+    sp.max_dispense_flow_rate = 4. / 60 * 1000.
+    sp.max_aspirate_flow_rate = 4. / 60 * 1000.
 
     k = KeithleyDriver(timeout=0.05)
     thread_task = asyncio.create_task(k.start())
     #await asyncio.sleep(0.1)
 
-    lj = PressureSensorDifferential(channel='AIN0', sensor_voltage=5.0)
+    lj = PressureSensorDifferentialDouble(channel_high='AIN0', channel_low='AIN2', sensor_voltage=5.0)
     #lj = PressureSensorwithInAmp(channel='AIN2', gain=201)
     await asyncio.to_thread(lj.open)
     #thread_task2 = asyncio.create_task(lj.start())
@@ -1114,7 +1146,7 @@ async def exchange_with_iv():
 
     await sp.run_until_idle(sp.initialize())
     init_time = time.time()
-    volume = sp.syringe_volume * 2
+    volume = sp.syringe_volume * 0.1
     flow_rate = 0.2 / 60 * 1000
     expected_time = volume / flow_rate
     print(expected_time)
@@ -1140,6 +1172,16 @@ async def sp_test():
     sp.max_aspirate_flow_rate = 4. / 60 * 1000.
 
     sp_system = AssemblyBase([sp, mvp], name='Streaming Potential Setup')
+    #sp_system.modes = {'Load': Mode({sp: 3, mvp:3}),
+    #                   'Measure': Mode({sp: 4, mvp: 0}),
+    #                   'Flush': Mode({sp: 4, mvp: 1}),
+    #                   'Manual flush': Mode({sp: 0, mvp: 2})}
+
+    sp_system.modes = {'Load': Mode({sp: 3, mvp: 2}),
+                       'Measure': Mode({sp: 4, mvp: 1}),
+                       'Flush': Mode({sp: 4, mvp: 1}),
+                       'Manual flush': Mode({sp: 0, mvp: 3})}
+
 
     await sp_system.initialize()
     app = sp_system.create_web_app(template='roadmap.html')
@@ -1203,7 +1245,7 @@ if __name__=='__main__':
     logging.basicConfig(
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
-                            level=logging.DEBUG)
+                            level=logging.INFO)
     #mlog = logging.getLogger('matplotlib')
     #mlog.setLevel('WARNING')
     asyncio.run(sp_test(), debug=True)
