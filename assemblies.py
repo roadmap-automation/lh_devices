@@ -267,7 +267,7 @@ class AssemblyBase(WebNodeBase):
         app = super().create_web_app(template)
 
         for device in self.devices:
-            app.add_subapp(f'/{device.id}/', device.create_web_app())
+            app.add_subapp(f'/{device.id}/', device.create_web_app(template))
 
         return app
 
