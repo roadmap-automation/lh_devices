@@ -1,4 +1,5 @@
 from typing import Tuple, List, Coroutine
+from aiohttp.web_app import Application as Application
 import pyvisa
 from threading import Event, Lock
 from queue import Queue, Empty, Full
@@ -7,6 +8,7 @@ import time
 import asyncio
 import logging
 from enum import Enum
+from uuid import uuid4
 
 import numpy as np
 from scipy.ndimage import median_filter
@@ -20,9 +22,9 @@ plt.set_loglevel('warning')
 
 from HamiltonComm import HamiltonSerial
 from HamiltonDevice import HamiltonSyringePump, PollTimer, HamiltonValvePositioner
-from assemblies import AssemblyBase, Mode
+from assemblies import AssemblyBase, Mode, connect_nodes
 from valve import SyringeLValve, SyringeValveBase, DistributionValve
-from webview import run_socket_app
+from webview import run_socket_app, WebNodeBase
 
 from labjack import ljm
 
@@ -131,6 +133,7 @@ class SyringePumpRamp(SmoothFlowSyringePump):
             flow_rates = flow_rates + flow_rates[::-1]
         
         delay *= 1000 # now in ms
+        delay = int(delay)
         delay_list = [30000] * (delay // 30000) + [delay % 30000]
 
         stroke_length = self._stroke_length(volume)
@@ -266,35 +269,58 @@ class USBDriverBase:
 
         return res
 
-class KeithleyDriver(USBDriverBase):
+class KeithleyDriver(USBDriverBase, WebNodeBase):
 
-    def __init__(self, timeout=0.05, name='KeithleyDriver') -> None:
-        super().__init__(timeout, name)
+    def __init__(self, timeout=0.05, model='2450', name='KeithleyDriver') -> None:
+        WebNodeBase.__init__(self)
+        USBDriverBase.__init__(self, timeout, name)
 
+        self.id = str(uuid4())
         self.rm = None
         self.instr = None
+        self.model = model
+        self.idle: bool = True
+        self.reserved: bool = False
+        self.run_task: asyncio.Task | None = None
 
-    def open(self, model='2450'):
+    async def initialize(self):
         
-        rm = pyvisa.ResourceManager()
-        res_id = next(res for res in rm.list_resources() if model in res)
-        logging.info('Connecting to %s', res_id)
+        if self.instr is None:
+            rm = pyvisa.ResourceManager()
+            res_id = next(res for res in rm.list_resources() if self.model in res)
+            logging.info('Connecting to %s', res_id)
 
-        instr = rm.open_resource(res_id)
+            instr = rm.open_resource(res_id)
 
-        self.rm = rm
-        self.instr = instr
+            self.rm = rm
+            self.instr = instr
+
+            self.run_task = asyncio.create_task(self.start())
+        else:
+            logging.warning(f'Keithley device already initialized: {self.instr.resource_name}')
 
     def close(self):
 
+        self.run_task.cancel()
         self.instr.close()
+        self.instr = None
         self.rm.close()
+        self.rm = None
+
+    async def get_info(self) -> dict:
+        d = await super().get_info()
+        d.update({ 'type': 'device',
+                          'config': {'model': self.model},
+                          'state': {'idle': self.idle,
+                                  'reserved': self.reserved},
+                          'controls': {}})
+        
+        return d
 
     def run(self, loop: asyncio.AbstractEventLoop):
         """Synchronous code to interact with the Keithley"""
 
         # open instrument resource
-        self.open()
         self.clear()
         while not self.stop_event.is_set():
 
@@ -326,7 +352,8 @@ class KeithleyDriver(USBDriverBase):
                     self.active_futures.append(future)
                     future.result()
                     self.active_futures.pop(self.active_futures.index(future))
-            
+
+
         self.close()
 
     async def setup_source_current_measure_voltage(self, current: float = 0, voltage_limit: float = 0.02, time: float|None = None, additional_commands: List[str] = []):
@@ -571,17 +598,83 @@ class PollTask:
 
         return self.fxn(*self.args, **self.kwargs)
 
-class StreamPot:
+class StreamPotAssembly(AssemblyBase):
 
-    def __init__(self, smu: KeithleyDriver, syringepump: SyringePumpRamp, psensor: LabJackDriver):
+    def __init__(self, syringepump: SyringePumpRamp, mvp: HamiltonValvePositioner, smu: KeithleyDriver, psensor: LabJackDriver, name='Streaming Potential Assembly'):
+        super().__init__([syringepump, mvp], name=name)
+        self.devices += [smu]
         self.smu = smu
+        self.smu_task: asyncio.Task = None
         self.syringepump = syringepump
+        self.mvp = mvp
         self.psensor = psensor
         self.trigger: asyncio.Event = asyncio.Event()
         self._stop_polling: asyncio.Event = asyncio.Event()
+        
+        # state variables
+        self.flow_rate = 0.1
+        self.volume = 0.05
+        self.baseline = 10
 
-        # TODO: Pressure sensor (create Labjack driver)
-        # TODO: Syringe pump loop system
+        self.modes = {'Load': Mode({syringepump: 3, mvp: 2}),
+                       'Measure': Mode({syringepump: 4, mvp: 1}),
+                       'Flush': Mode({syringepump: 4, mvp: 1}),
+                       'Manual flush': Mode({syringepump: 0, mvp: 3})}
+
+        print(self.devices, self.modes)
+
+    async def initialize(self) -> None:
+        await asyncio.gather(super().initialize(), asyncio.to_thread(self.psensor.open))
+
+    def shutdown(self) -> None:
+        self.psensor.close()
+
+    def create_web_app(self, template='roadmap.html') -> Application:
+        return super().create_web_app(template)
+    
+    async def get_info(self) -> dict:
+        info = await super().get_info()
+
+        controls = {'set_measurement_speed': {'type': 'textbox',
+                                              'text': 'Measurement Flow Rate (mL /min): '},
+                    'set_measurement_volume': {'type': 'textbox',
+                                               'text': 'Measurement Volume (mL): '},
+                    'set_baseline_time': {'type': 'textbox',
+                                               'text': 'Baseline time (s): '},
+                    'exchange_with_iv': {'type': 'button',
+                                 'text': 'Exchange with IV'},
+                    'measure_streaming_potential': {'type': 'button',
+                                                    'text': 'Measure Streaming Potential'}}
+        
+        info['controls'] = info['controls'] | controls
+
+        return info
+
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        # TODO: fix methods to trigger updates, store results, generate plots??
+
+        if command == 'set_measurement_speed':
+            self.flow_rate = float(data['value'])
+        elif command == 'set_measurement_volume':
+            self.volume = float(data['value'])
+        elif command == 'set_baseline_time':
+            self.baseline = float(data['value'])
+        elif command == 'exchange_with_iv':
+            asyncio.create_task(self.exchange(self.volume * 1000, self.flow_rate * 1000 / 60, self.baseline))
+        elif command == 'measure_streaming_potential':
+            asyncio.create_task(self.measure_streaming_potential(min_flow_rate=self.flow_rate,
+                                                                 max_flow_rate=self.flow_rate,
+                                                                 volume=self.volume,
+                                                                 baseline_duration=self.baseline))
+        else:
+            await super().event_handler(command, data)
 
     async def start_polling(self, duration: float, sample_rate: float, tasks: List[PollTask] = []):
             # set up timer
@@ -894,58 +987,61 @@ async def main():
 
     ser = HamiltonSerial(port='COM6', baudrate=38400)
     sp = SyringePumpRamp(ser, '0', SyringeLValve(4, name='syringe_LValve'), 1000, name='Smooth Flow Syringe Pump')
+    mvp = HamiltonValvePositioner(ser, '1', YValve(name='MVP Y Valve'), name='Switching Y Valve')    
     sp.max_dispense_flow_rate = 4. / 60 * 1000.
     sp.max_aspirate_flow_rate = 4. / 60 * 1000.
 
-    await sp.run_until_idle(sp.initialize())
+    connect_nodes(sp.valve.nodes[3], mvp.valve.nodes[1], 1000)
 
-    k = KeithleyDriver(timeout=0.05)
-    thread_task = asyncio.create_task(k.start())
-    #await asyncio.sleep(0.1)
+    #await sp.run_until_idle(sp.initialize())
 
+    k = KeithleyDriver(timeout=0.05, model='2450', name='Keithley 2450')
     lj = PressureSensorDifferentialDouble(channel_high='AIN0', channel_low='AIN2', sensor_voltage=5.0)
-    #lj = PressureSensorwithInAmp(channel='AIN2', gain=201)
-    await asyncio.to_thread(lj.open)
-    #thread_task2 = asyncio.create_task(lj.start())
-    #await asyncio.sleep(0.1) 
 
-    streampot = StreamPot(k, sp, lj)
+    streampot = StreamPotAssembly(sp, mvp, k, lj)
+    await streampot.initialize()
+    app = streampot.create_web_app(template='roadmap.html')
+    runner = await run_socket_app(app, 'localhost', 5003)
+
     #R, dV, V, I = await sp.measure_iv()
-    baseline = 30
-    flow_rate = 0.01
-    volume = flow_rate * 2.5
+    flow_rate = 0.05
+    volume = flow_rate * 0.5
+    baseline = volume / flow_rate * 60
 
-    if False:
-        print(f'Actual speed: {sp._flow_rate(sp._speed_code(flow_rate / 60 * 1000)) / 1000 * 60:0.3f} mL/min')
+    await streampot.change_mode('Measure')
 
-        volume = flow_rate * 1000 / 10
-        expected_length = 2.0 * baseline + volume / (flow_rate / 60 * 1000)
-        #volume = 1.0 * 1000
-        e_data, p_data = await streampot.exchange(volume, flow_rate / 60 * 1000, baseline)
-        plt.figure()
-        plt.plot(e_data[0], e_data[1])
-        plt.figure()
-        mv2pa = 0.2584e-3 * lj.sensor_voltage / 6894.75
-        pa = (p_data[1][0]) / mv2pa
-        tp = p_data[0]
+    try:
 
-        baseline_crit = (tp>1) & (tp < 2)
-        crit = (tp > 11) & (tp < 12)
-        pa_sub = np.average(pa[crit]) - np.average(pa[baseline_crit])
-        print(f'Average pressure (Pa): {pa_sub} +/- {np.std(pa[crit])}')
+        if False:
+            print(f'Actual speed: {sp._flow_rate(sp._speed_code(flow_rate / 60 * 1000)) / 1000 * 60:0.3f} mL/min')
 
-        #np.savetxt('viscosity_data.csv', np.stack((tp, pa), axis=-1), delimiter=',')
+            volume = flow_rate * 1000 / 10
+            expected_length = 2.0 * baseline + volume / (flow_rate / 60 * 1000)
+            #volume = 1.0 * 1000
+            e_data, p_data = await streampot.exchange(volume, flow_rate / 60 * 1000, baseline)
+            plt.figure()
+            plt.plot(e_data[0], e_data[1])
+            plt.figure()
+            mv2pa = 0.2584e-3 * lj.sensor_voltage / 6894.75
+            pa = (p_data[1][0]) / mv2pa
+            tp = p_data[0]
 
-        tcrit = tp < expected_length
-        y_cond, y_model, _, _ = analyze_streampot(tp[tcrit], pa[tcrit], baseline=baseline, baseline_pad=baseline/2)
-        #plt.plot(tp, pa)
-        plt.plot(tp[tcrit], y_cond)
-        plt.plot(tp[tcrit], y_model)
-        plt.show()
-    
+            baseline_crit = (tp>1) & (tp < 2)
+            crit = (tp > 11) & (tp < 12)
+            pa_sub = np.average(pa[crit]) - np.average(pa[baseline_crit])
+            print(f'Average pressure (Pa): {pa_sub} +/- {np.std(pa[crit])}')
 
-        return
-    else:
+            #np.savetxt('viscosity_data.csv', np.stack((tp, pa), axis=-1), delimiter=',')
+
+            tcrit = tp < expected_length
+            y_cond, y_model, _, _ = analyze_streampot(tp[tcrit], pa[tcrit], baseline=baseline, baseline_pad=baseline/2)
+            #plt.plot(tp, pa)
+            plt.plot(tp[tcrit], y_cond)
+            plt.plot(tp[tcrit], y_model)
+            plt.show()
+        
+
+            return
         
         expected_length = 2.0 * baseline + volume / (flow_rate / 60)
         logging.info('Expected time (s): %0.3f', expected_length)
@@ -1025,6 +1121,12 @@ async def main():
         #plt.plot(t, V / np.interp(t, poll_data[0], y_cond))
         plt.show()
 
+    finally:
+        logging.info('Shutting down...')
+        streampot.shutdown()
+        logging.info('Cleaning up...')
+        await runner.cleanup()
+
 async def viscosity():
 
     ser = HamiltonSerial(port='COM6', baudrate=38400)
@@ -1044,7 +1146,7 @@ async def viscosity():
     #thread_task2 = asyncio.create_task(lj.start())
     #await asyncio.sleep(0.1)
 
-    streampot = StreamPot(k, sp, lj)
+    streampot = StreamPotAssembly(sp, mvp, k, lj)
     #R, dV, V, I = await sp.measure_iv()
     baseline = 10
     flow_rate = 0.2 / 1
@@ -1128,6 +1230,7 @@ async def ivcurve():
 async def exchange_with_iv():
     ser = HamiltonSerial(port='COM6', baudrate=38400)
     sp = SyringePumpRamp(ser, '0', SyringeLValve(4, name='syringe_LValve'), 1000, name='Smooth Flow Syringe Pump')
+    mvp = HamiltonValvePositioner(ser, '1', YValve(name='MVP Y Valve'), name='Switching Y Valve')    
     sp.max_dispense_flow_rate = 4. / 60 * 1000.
     sp.max_aspirate_flow_rate = 4. / 60 * 1000.
 
@@ -1141,7 +1244,7 @@ async def exchange_with_iv():
     #thread_task2 = asyncio.create_task(lj.start())
     #await asyncio.sleep(0.1)
 
-    streampot = StreamPot(k, sp, lj)
+    streampot = StreamPotAssembly(sp, mvp, k, lj)
     #R, dV, V, I = await sp.measure_iv()
 
     await sp.run_until_idle(sp.initialize())
@@ -1248,4 +1351,4 @@ if __name__=='__main__':
                             level=logging.INFO)
     #mlog = logging.getLogger('matplotlib')
     #mlog.setLevel('WARNING')
-    asyncio.run(sp_test(), debug=True)
+    asyncio.run(main(), debug=True)
