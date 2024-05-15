@@ -288,7 +288,7 @@
             $('<div>').addClass("device_column").text("Syringe position: ").appendTo(newprogressbar)
             var newframe = $('<div>').addClass("progress_bar_frame").addClass("device_column")
             var newfill = $('<div>').addClass("progress_bar_fill")
-                                    .css('width', Math.round(pct) + '%')
+                                    .css('width', pct + '%')
                                     .appendTo(newframe)
             
             newprogressbar.append(newframe)
