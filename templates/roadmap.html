@@ -149,7 +149,7 @@
                                 $('<text>').addClass("valve_position").text(data['state']['valve']['valve_position']).appendTo(valvestatecontainer)
                             }
                             if ('syringe' in data['state']) {
-                                statediv.append(progressbar(data['state']['syringe']['position'] / data['state']['syringe']['max_position'] * 100, data['state']['syringe']['syringe_volume']))
+                                statediv.append(progressbar(data['state']['syringe']['position'], data['state']['syringe']['syringe_volume']))
                                 syringespeedcontainer = $('<div>').text('Syringe speed (mL /min): ').appendTo(statediv)
                                 $('<text>').addClass("syringe_speed").text(data['state']['syringe']['speed']).appendTo(syringespeedcontainer)
                             }
@@ -283,16 +283,30 @@
             }
         }
 
-        function progressbar(pct, volume) {
+        function format_volume(volume) {
+            // volume in mL
+            if (volume < 1.0) {
+                return (volume * 1000).toFixed(1) + ' uL'
+            }
+            else {
+                return (volume * 1).toFixed(3) + ' mL'
+            }
+        }
+
+        function progressbar(position, volume) {
             var newprogressbar = $('<div>').addClass("progress_bar").addClass("device_row")
             $('<div>').addClass("device_column").text("Syringe position: ").appendTo(newprogressbar)
-            var newframe = $('<div>').addClass("progress_bar_frame").addClass("device_column")
+            var newframe = $('<div>').addClass("progress_bar_frame")
+                                     .addClass("device_column")
             var newfill = $('<div>').addClass("progress_bar_fill")
-                                    .css('width', pct + '%')
+                                    .css('width', position / volume * 100 + '%')
+                                    .appendTo(newframe)
+            var newtext = $('<div>').addClass('progress_bar_text')
+                                    .text(format_volume(position))
                                     .appendTo(newframe)
             
             newprogressbar.append(newframe)
-            $('<div>').addClass("device_column").text(volume + ' mL').appendTo(newprogressbar)
+            $('<div>').addClass("device_column").text(format_volume(volume)).appendTo(newprogressbar)
             
             return newprogressbar
         }
@@ -385,12 +399,20 @@
         text-align: right;
     }
     .progress_bar_frame {
+        position: relative;
         width: 100%;
         border: 2px solid black;
         background-color: rgba(1, 1, 1, 0.2);
         margin-right: 5px;
     }
+    .progress_bar_text {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        text-align: center;
+    }
     .progress_bar_fill {
+        position: absolute;
         height: 100%;
         background-color: rgb(171, 95, 95) !important;
         margin-right: 5px;

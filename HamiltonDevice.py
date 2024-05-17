@@ -567,12 +567,13 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             dict: information dictionary
         """
         info = await super().get_info()
+        syringe_position = self.syringe_position / self._get_max_position() * self.syringe_volume / 1000.
         add_state = {'syringe': {                                
                                 'high_resolution': self._high_resolution,
-                                'position': self.syringe_position,
+                                'position': f'{syringe_position:0.6f}',
                                 'speed': f'{self._flow_rate(self._speed) * 60 / 1000:0.3f}',
                                 'max_position': self._get_max_position(),
-                                'syringe_volume': f'{self.syringe_volume / 1000.:0.3f}'
+                                'syringe_volume': f'{self.syringe_volume / 1000.:0.6f}'
         }}
         info['state']= info['state'] | add_state
 
