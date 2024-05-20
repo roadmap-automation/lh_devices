@@ -261,13 +261,31 @@ class DirectInject(MethodBaseDeadVolume):
         logging.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
         await self.channel.wait_for_trigger()
 
-        # switch to standby mode
+        # switch to standby mode    
         logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
         await self.channel.change_mode('Standby')
 
         # At this point, liquid handler is done, release communications
         self.disconnect_gsioc()
         self.release_all()
+
+class RoadmapChannelInit(MethodBase):
+    """Directly inject from LH to a ROADMAP channel flow cell
+    """
+
+    def __init__(self, channel: RoadmapChannelBase) -> None:
+        super().__init__([])
+        self.channel = channel
+
+    @dataclass
+    class MethodDefinition(MethodBase.MethodDefinition):
+        
+        name: str = "RoadmapChannelInit"
+
+    async def run(self, **kwargs) -> None:
+        
+        method = self.MethodDefinition(**kwargs)
+        logging.info(f'{self.channel.name} received Init method')
 
 class RoadmapChannel(RoadmapChannelBase):
     """Roadmap channel with populated methods
@@ -277,7 +295,8 @@ class RoadmapChannel(RoadmapChannelBase):
         super().__init__(loop_valve, syringe_pump, flow_cell, sample_loop, injection_node, name)
 
         # add standalone methods
-        self.methods = {'InjectLoop': InjectLoop(self)}
+        self.methods = {'InjectLoop': InjectLoop(self),
+                        'RoadmapChannelInit': RoadmapChannelInit(self)}
         
 class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
 
