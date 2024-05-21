@@ -621,7 +621,9 @@ class StreamPotAssembly(AssemblyBase):
         self.volume = 0.05
         self.baseline = 10
 
-        self.modes = {'Load': Mode({syringepump: 3, mvp: 2}),
+        self.modes = { 'Aspirate': Mode({syringepump: 1}),
+                       'Aspirate air gap': Mode({syringepump: 4, mvp: 2}),
+                       'Load': Mode({syringepump: 3, mvp: 2}),
                        'Measure': Mode({syringepump: 4, mvp: 1}),
                        'Flush': Mode({syringepump: 4, mvp: 1}),
                        'Manual flush': Mode({syringepump: 0, mvp: 3})}
@@ -646,6 +648,8 @@ class StreamPotAssembly(AssemblyBase):
                                                'text': 'Measurement Volume (mL): '},
                     'set_baseline_time': {'type': 'textbox',
                                                'text': 'Baseline time (s): '},
+                    'measure_iv': {'type': 'button',
+                                 'text': 'Measure IV'},
                     'exchange_with_iv': {'type': 'button',
                                  'text': 'Exchange with IV'},
                     'measure_streaming_potential': {'type': 'button',
@@ -671,6 +675,8 @@ class StreamPotAssembly(AssemblyBase):
             self.volume = float(data['value'])
         elif command == 'set_baseline_time':
             self.baseline = float(data['value'])
+        elif command == 'measure_iv':
+            asyncio.create_task(self.measure_iv())
         elif command == 'exchange_with_iv':
             asyncio.create_task(self.exchange(self.volume * 1000, self.flow_rate * 1000 / 60, self.baseline))
         elif command == 'measure_streaming_potential':
@@ -773,6 +779,8 @@ class StreamPotAssembly(AssemblyBase):
         dV = b * 1e3
         ddV = db * 1e3
 
+        logging.info('IV curve results: %f, %f, %f, %f' % (R, dR, dV, ddV))
+
         return R, dR, dV, ddV, V, I, pdata
 
     async def measure_streaming_potential(self,
@@ -811,7 +819,7 @@ class StreamPotAssembly(AssemblyBase):
 
         # IMPORTANT: offset syringe position by 50 uL to account for final mating with seal,
         # which changes the pressure profile
-        await sp.run_syringe_until_idle(sp.move_absolute(sp._stroke_length(vol + 50)))
+        await sp.run_syringe_until_idle(sp.move_absolute(sp._stroke_length(vol + 100)))
         await sp.run_until_idle(sp.move_valve(sp.valve.dispense_position))
 
         # allow system to settle after valve moves
@@ -996,6 +1004,7 @@ async def main():
 
     ser = HamiltonSerial(port='COM6', baudrate=38400)
     sp = SyringePumpRamp(ser, '0', SyringeLValve(4, name='syringe_LValve'), 1000, name='Smooth Flow Syringe Pump')
+    await sp.run_until_idle(sp.query('T'))
     mvp = HamiltonValvePositioner(ser, '1', YValve(name='MVP Y Valve'), name='Switching Y Valve')    
     sp.max_dispense_flow_rate = 4. / 60 * 1000.
     sp.max_aspirate_flow_rate = 4. / 60 * 1000.
@@ -1013,15 +1022,72 @@ async def main():
     runner = await run_socket_app(app, 'localhost', 5003)
 
     #R, dV, V, I = await sp.measure_iv()
-    flow_rate = 0.05
+    flow_rate = 0.2
     volume = flow_rate * 0.5
     baseline = volume / flow_rate * 60
 
     await streampot.change_mode('Measure')
 
+    if True:
+        await streampot.change_mode('Measure')
+        stroke_length = sp._stroke_length(volume*1000)
+        period = 64 # s
+        fast_flow_rate = 0.1
+
+        await k.setup_source_current_measure_voltage(0.0, time=None)    
+        await sp.run_until_idle(sp.query('K1R'))
+        stream = asyncio.create_task(asyncio.to_thread(streampot.psensor.stream, 1, 500))
+        await k.write(':INIT')
+
+        for flow_rate in [0.01][::-1]:
+            total_time = volume / flow_rate * 60
+            period_stroke = int(period / total_time * stroke_length / 2)
+            print(period_stroke, stroke_length)
+            await sp.run_until_idle(sp.set_speed(flow_rate * 1000 / 60))
+            #flow_code = sp._speed_code(flow_rate * 1000 / 60.)
+            #for _ in range(2):
+            #    await sp.run_until_idle(sp.set_speed(fast_flow_rate * 1000 / 60))
+                #await sp.run_syringe_until_idle(sp.query('D100R'))
+            #    await sp.run_until_idle(sp.set_speed(flow_rate * 1000 / 60))
+            #    await sp.run_syringe_until_idle(sp.query(f'D{period_stroke}R'))
+            #    await sp.run_until_idle(sp.set_speed(fast_flow_rate * 1000 / 60))
+            #    #await sp.run_syringe_until_idle(sp.query('P100R'))
+            #    await sp.run_until_idle(sp.set_speed(flow_rate * 1000 / 60))
+            #    await sp.run_syringe_until_idle(sp.query(f'P{period_stroke}R'))
+
+            await sp.run_syringe_until_idle(sp.query(f'J2D{period_stroke}J0P{period_stroke}G8R'))
+            print(f'Done with {flow_rate} mL/min, {period} s')
+
+        streampot.psensor.stop_stream.set()
+        await k.write(':ABOR')
+        await k.write(':OUTP 0')
+
+        # get pressure data result
+        actual_sample_rate, pdata = await stream
+        tp = np.arange(pdata.shape[1]) / actual_sample_rate
+        pressure_data = tp, pdata[0] - pdata[1]
+
+        # Get number of available points and read all data
+        pointcount = int(await k.query(':TRAC:ACT? "defbuffer1"'))
+        data = await k.query(f':TRAC:DATA? 1, {pointcount}, "defbuffer1", READ, REL')
+        data = np.fromstring(data, sep=',')
+        V, t = data.reshape((2, pointcount), order='F')
+
+        plt.figure()
+        plt.plot(tp, median_filter(pdata[0], 201), tp, median_filter(pdata[1], 201), tp, median_filter(pdata[0] - pdata[1], 201))
+
+        plt.figure()
+        plt.plot(t, median_filter(V, 21))
+
+        plt.show()
+
+        np.savetxt('sio2_popc_data_0_01mlmin_10xsalt.txt', np.vstack((t, V)).T)
+
+    #await sp.run_until_idle(sp.set_digital_output(1, True))
+
     try:
 
-        #await asyncio.Event().wait()
+        await asyncio.Event().wait()
 
         if False:
             print(f'Actual speed: {sp._flow_rate(sp._speed_code(flow_rate / 60 * 1000)) / 1000 * 60:0.3f} mL/min')
@@ -1133,6 +1199,7 @@ async def main():
         plt.show()
 
     finally:
+        await sp.stop()
         logging.info('Shutting down...')
         streampot.shutdown()
         logging.info('Cleaning up...')
@@ -1258,24 +1325,39 @@ async def exchange_with_iv():
     runner = await run_socket_app(app, 'localhost', 5003)
 
     init_time = time.time()
-    volume = sp.syringe_volume * 0.05
-    flow_rate = 0.2 / 60 * 1000
+    volume = 0.3 * 1000
+    flow_rate = 0.01 / 60 * 1000
     expected_time = volume / flow_rate
     print(expected_time)
     await streampot.change_mode('Flush')
-    task = asyncio.create_task(sp.smart_dispense(volume, flow_rate))
+    exchange_task = asyncio.create_task(sp.smart_dispense(volume, flow_rate))
 
     mv2pa = 0.2584e-3 * lj.sensor_voltage / 6894.75
-    while (time.time() - init_time) < expected_time:
+    Rs = []
+    V0s = []
+    ts = []
+    while ((time.time() - init_time) < expected_time) & (not exchange_task.done()):
         R, dR, V0, dV0, viv, iiv, pdata = await streampot.measure_iv(maxV=0.001)
         try:
-            print(time.time() - init_time, R, dR, V0, dV0, np.average(pdata[1][0] / mv2pa))
+            print(time.time() - init_time, R, dR, V0, dV0, np.average(pdata[1] / mv2pa))
         except:
             print(time.time() - init_time, R, dR, V0, dV0)
+        Rs.append(R)
+        ts.append(time.time() - init_time)
+        V0s.append(V0)
 
-    await task
+    plt.figure()
+    plt.plot(flow_rate * np.array(ts) / 1000., Rs)
+    plt.show()
+
+    plt.figure()
+    plt.plot(flow_rate * np.array(ts) / 1000., V0s)
+    plt.show()
+
+    await exchange_task
+
     try:
-
+        logging.info('Waiting...')
         await asyncio.Event().wait()
     finally:
         logging.info('Shutting down...')
@@ -1369,3 +1451,4 @@ if __name__=='__main__':
     #mlog = logging.getLogger('matplotlib')
     #mlog.setLevel('WARNING')
     asyncio.run(main(), debug=True)
+    #asyncio.run(exchange_with_iv(), debug=True)
