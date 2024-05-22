@@ -42,7 +42,7 @@
                             return response.json();
                         }).then(function (newinfo) {
                             // 3. Recursively create new divs for the subassemblies
-                            console.log(newinfo)
+                            //console.log(newinfo)
                             gen_assembly_tree(newinfo, newdiv)
 
                         });
@@ -125,7 +125,7 @@
                 .then(function (response) {
                         return response.json();
                     }).then(function (data) {
-                        console.log(data)
+                        //console.log(data)
                         $('.' + id).each(function (index) {
                             set_border($(this), data['state'])
                         })
@@ -325,7 +325,7 @@
                 .then(function (response) {
                     return response.json();
                 }).then(function (info) {
-                    console.log(info)
+                    //console.log(info)
                     var newdiv = create_assembly_div(info['id'])
                     gen_assembly_tree(info, newdiv)
                     newdiv.addClass("top-frame")
