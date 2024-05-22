@@ -184,6 +184,70 @@ class SyringePumpRamp(SmoothFlowSyringePump):
 
         return data
 
+class MeasurementResult:
+
+    def __init__(self, results: np.ndarray | None = None, labels: List[str] = [], xlabel: str | None = None, ylabel: str | None = None) -> None:
+        self.results = results
+        self.labels = labels
+        self.xlabel = xlabel if xlabel is not None else labels[0]
+        self.ylabel = ylabel if ylabel is not None else labels[1]
+
+    def plot_results(self) -> go.Figure | None:
+        """Generates a plotly Figure for the results
+
+        Returns:
+            go.Figure: output Figure
+        """
+
+        if self.results is None:
+            return
+
+        results = self.results
+        labels = self.labels
+
+        if not results.shape[1]:
+            return
+
+        fig = make_subplots(rows=1, cols=1)
+
+        traces = []
+        rows = []
+        cols = []
+
+        for tracenum in range(1, self.results.shape[0]):
+            traces.append(go.Scatter(x=results[0],
+                                    y=results[tracenum],
+                                    #customdata=np.stack((t/60., t/3600., Ts), axis=-1),
+                                    mode='lines+markers',
+                                    name=labels[tracenum],
+                                    line=dict(color=CB_color_cycle[0]),
+                                    #hovertemplate =
+                                    #    'Time: %{x} s (%{customdata[0]:0.2f} min, %{customdata[1]:0.2f} h)'+
+                                    #    '<br>df (Hz): %{y}<br>'+
+                                    #    'T (C): %{customdata[2]:0.3f}')
+                                    ))
+        rows.append(1)
+        cols.append(1)
+
+        fig.add_traces(traces, rows, cols)
+
+        fig.update_yaxes(title_text=self.ylabel, row=1, col=1, exponentformat='power')
+        fig.update_xaxes(title_text=self.xlabel, row=1, col=1)
+        #fig.update_traces(visible=True)
+        fig.update_layout(
+            template = 'plotly_white',
+            plot_bgcolor = "rgba(255,255,255,0.25)",
+            paper_bgcolor = "rgba(255,255,255,0)",
+            autosize = True,
+            margin = {'l': 50,
+                      'b': 50,
+                      't': 25,
+                      'r': 25,
+                      'autoexpand': True}
+        )
+
+        return fig
+
 class USBDriverBase:
 
     def __init__(self, timeout = 0.05, name='USBDriver') -> None:
@@ -294,7 +358,7 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
         self.idle: bool = True
         self.reserved: bool = False
         self.run_task: asyncio.Task | None = None
-        self.live_results: np.ndarray | None = None
+        self.live_results: MeasurementResult | None = None
         self.poll_interval = 1.0
 
     async def initialize(self):
@@ -323,13 +387,13 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
 
     async def get_info(self) -> dict:
         d = await super().get_info()
-        plotdata = self.plot_results()
+        plotdata = self.live_results.plot_results()
         plotdata = plotdata.to_json() if plotdata is not None else None
         d.update({ 'type': 'device',
                           'config': {'model': self.model},
                           'state': {'idle': self.idle,
                                   'reserved': self.reserved,
-                                  'plot': {'id': str(uuid4()), 'plotdata': plotdata}},
+                                  'plot': plotdata},
                           'controls': {'measure_iv': {'type': 'button',
                                      'text': 'Measure default IV curve'},
                                      }})
@@ -389,13 +453,13 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
 
         self.close()
 
-    async def monitor(self, buffers: List[str] = ['SOUR', 'READ']) -> None:
+    async def monitor(self, buffers: List[str] = ['SOUR', 'READ'], labels=['V', 'I']) -> None:
 
         self.idle = False
         timer = PollTimer(self.poll_interval, self.name + ' monitor PollTimer')
         await self.trigger_update()
         asyncio.create_task(timer.cycle())
-        self.live_results = np.empty((2, 0))
+        self.live_results = MeasurementResult(results=np.empty((2, 0)), labels=labels)
         live_pointcount: int = 0
         while 'RUNNING' in await self.get_status():
             await timer.wait_until_set()
@@ -405,67 +469,12 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
                 results = await self._get_data(start=live_pointcount + 1, end=pointcount, buffers=buffers)
                 results = np.fromstring(results, sep=',')
                 results = results.reshape((2, len(results) // 2), order='F')
-                self.live_results = np.append(self.live_results, results, axis=1)
+                self.live_results.results = np.append(self.live_results.results, results, axis=1)
                 live_pointcount = pointcount
                 await self.trigger_update()
             
         self.idle = True
         await self.trigger_update()
-
-    def plot_results(self) -> go.Figure | None:
-        """Generates a plotly Figure for the data stream (frequency and dissipation only)
-
-        Returns:
-            go.Figure: output Figure
-        """
-        
-        results = self.live_results
-
-        if results is None:
-            return
-        
-        if not self.live_results.shape[1]:
-            return
-
-        starttime = time.time()
-        fig = make_subplots(rows=1, cols=1)
-
-        traces = []
-        rows = []
-        cols = []
-
-        traces.append(go.Scatter(x=results[0],
-                                y=results[1],
-                                #customdata=np.stack((t/60., t/3600., Ts), axis=-1),
-                                mode='lines+markers',
-                                #name=lbl,
-                                line=dict(color=CB_color_cycle[0]),
-                                #hovertemplate =
-                                #    'Time: %{x} s (%{customdata[0]:0.2f} min, %{customdata[1]:0.2f} h)'+
-                                #    '<br>df (Hz): %{y}<br>'+
-                                #    'T (C): %{customdata[2]:0.3f}')
-                                ))
-        rows.append(1)
-        cols.append(1)
-
-        fig.add_traces(traces, rows, cols)
-
-        fig.update_yaxes(title_text='y', row=1, col=1, exponentformat='power')
-        fig.update_xaxes(title_text='x', row=1, col=1)
-        #fig.update_traces(visible=True)
-        fig.update_layout(
-            template = 'plotly_white',
-            plot_bgcolor = "rgba(255,255,255,0.25)",
-            paper_bgcolor = "rgba(255,255,255,0)",
-            autosize = True,
-            margin = {'l': 50,
-                      'b': 50,
-                      't': 25,
-                      'r': 25,
-                      'autoexpand': True}
-        )
-
-        return fig
 
     async def setup_source_current_measure_voltage(self, current: float = 0, voltage_limit: float = 0.02, time: float|None = None, additional_commands: List[str] = []):
         if time is None:
@@ -538,7 +547,7 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
 
         await self.setup_iv(maxV=maxV, npts=npts)
         await self.trigger_start_measurement()
-        await self.monitor(buffers=['SOUR', 'READ'])
+        await self.monitor(buffers=['SOUR', 'READ'], labels=['V', 'I'])
 
 class CommandType(Enum):
     READ = 'read'
@@ -870,18 +879,20 @@ class StreamPotAssembly(AssemblyBase):
         stream = asyncio.create_task(asyncio.to_thread(self.psensor.stream, 1, sample_rate))
 
         # perform measurement
+        logging.debug('Measuring IV curve...')
         await self.smu.measure_iv(maxV=maxV, npts=npts)
 
         # stop pressure sensor
         self.psensor.stop_stream.set()
 
         # get pressure data result
+        logging.debug('Waiting for psensor stream...')
         actual_sample_rate, pdata = await stream
         t = np.arange(pdata.shape[1]) / actual_sample_rate
         pressure_data = t, np.array(pdata[1]) - np.array(pdata[0])
 
         # get result from smu
-        V, I = self.smu.live_results
+        V, I = self.smu.live_results.results
 
         # Calculate resistance and voltage offset (in mV)
         p, cov = np.polyfit(I, V, 1, full=False, cov=True)
@@ -960,7 +971,7 @@ class StreamPotAssembly(AssemblyBase):
         stream = asyncio.create_task(asyncio.to_thread(self.psensor.stream, 1, sample_rate))
         speed_data, _ = await asyncio.gather(sp.ramp_speed(vol, flow_rates.tolist(), delay=baseline_duration, reverse=True),
                                                self.smu.trigger_start_measurement())
-        smu_monitor = asyncio.create_task(self.smu.monitor(buffers=['REL', 'READ']))
+        smu_monitor = asyncio.create_task(self.smu.monitor(buffers=['REL', 'READ'], labels=['t', 'V']))
 
         # 4. Wait until syringe pump is done
         #await sp.poll_until_idle()
@@ -978,7 +989,7 @@ class StreamPotAssembly(AssemblyBase):
 
         # get smu results
         await smu_monitor
-        t, V  = self.smu.live_results
+        t, V  = self.smu.live_results.results
 
         return V, t, pressure_data, speed_data, expected_time
     
@@ -1132,7 +1143,7 @@ async def main():
         await sp.run_until_idle(sp.query('K1R'))
         stream = asyncio.create_task(asyncio.to_thread(streampot.psensor.stream, 1, 500))
         await k.trigger_start_measurement()
-        smu_monitor = asyncio.create_task(k.monitor(buffers=['REL', 'READ']))
+        smu_monitor = asyncio.create_task(k.monitor(buffers=['REL', 'READ'], labels=['t', 'V']))
 
         for flow_rate in [0.01][::-1]:
             total_time = volume / flow_rate * 60
@@ -1164,7 +1175,7 @@ async def main():
 
         # Read smu data after it finishes
         await smu_monitor
-        t, V = k.live_results
+        t, V = k.live_results.results
 
         plt.figure()
         plt.plot(tp, median_filter(pdata[0], 201), tp, median_filter(pdata[1], 201), tp, median_filter(pdata[0] - pdata[1], 201))
@@ -1541,8 +1552,8 @@ if __name__=='__main__':
     logging.basicConfig(
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
-                            level=logging.INFO)
+                            level=logging.DEBUG)
     #mlog = logging.getLogger('matplotlib')
     #mlog.setLevel('WARNING')
-    #asyncio.run(main(), debug=True)
-    asyncio.run(exchange_with_iv(), debug=True)
+    asyncio.run(main(), debug=True)
+    #asyncio.run(exchange_with_iv(), debug=True)

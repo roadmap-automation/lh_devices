@@ -155,10 +155,10 @@
                                 $('<text>').addClass("syringe_speed").text(data['state']['syringe']['speed']).appendTo(syringespeedcontainer)
                             }
                             if ('plot' in data['state']) {
-                                if (data['state']['plot']['plotdata'] != null) {
+                                if (data['state']['plot'] != null) {
                                     newdiv = $('<div>').addClass('plotcontainer')
                                     newdiv.appendTo(statediv)
-                                    let plotobj = JSON.parse(data['state']['plot']['plotdata'].replace(new RegExp('\n', 'g'), '<br>'))
+                                    let plotobj = JSON.parse(data['state']['plot'].replace(new RegExp('\n', 'g'), '<br>'))
                                     Plotly.react(newdiv.get(0), plotobj['data'], plotobj['layout'], {responsive: true})
                                 }
                             }
