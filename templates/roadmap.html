@@ -286,7 +286,7 @@
         function format_volume(volume) {
             // volume in mL
             if (volume < 1.0) {
-                return (volume * 1000).toFixed(1) + ' uL'
+                return (volume * 1000).toFixed(1) + ' ' + String.fromCharCode(181) + 'L'
             }
             else {
                 return (volume * 1).toFixed(3) + ' mL'
