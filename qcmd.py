@@ -156,15 +156,32 @@ class QCMDMeasurementChannel(QCMDMeasurementInterface, WebNodeBase):
         self.idle = True
         self.reserved = False
 
-        self.methods = {'QCMDRecord': self.QCMDRecord}
+        self.methods = {'QCMDRecord': self.QCMDRecord,
+                        'QCMDInit': self.QCMDInit,
+                        'QCMDSleep': self.QCMDSleep}
         self.result: dict | None = None
+
+    async def QCMDInit(self):
+        """Initialization command
+        """
+
+        logging.info(f'{self.name}: Received Init command')
+
+    async def QCMDSleep(self, sleep_time: float = 0.0) -> None:
+        """Sleep
+
+        Args:
+            sleep_time (float, optional): Time to sleep in seconds. Defaults to 0.0.
+        """
+
+        await asyncio.sleep(sleep_time)
 
     async def QCMDRecord(self, record_time: float = 0.0, sleep_time: float = 0.0):
         """Recording 
 
         Args:
-            record_time (float, optional): Time to record. Defaults to 0.0.
-            sleep_time (float, optional): Time to sleep before recording. Defaults to 0.0.
+            record_time (float, optional): Time to record in seconds. Defaults to 0.0.
+            sleep_time (float, optional): Time to sleep before recording in seconds. Defaults to 0.0.
         """
 
         self.reserve()
