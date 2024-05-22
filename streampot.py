@@ -287,6 +287,8 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
         self.idle: bool = True
         self.reserved: bool = False
         self.run_task: asyncio.Task | None = None
+        self.live_results: np.ndarray | None = None
+        self.poll_interval = 1.0
 
     async def initialize(self):
         
@@ -318,9 +320,25 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
                           'config': {'model': self.model},
                           'state': {'idle': self.idle,
                                   'reserved': self.reserved},
-                          'controls': {}})
+                          'controls': {'measure_iv': {'type': 'button',
+                                     'text': 'Measure default IV curve'},
+                                     }})
         
         return d
+
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        await super().event_handler(command, data)
+
+        if command == 'measure_iv':
+            # measures default IV curve
+            asyncio.create_task(self.measure_iv())
 
     def run(self, loop: asyncio.AbstractEventLoop):
         """Synchronous code to interact with the Keithley"""
@@ -361,6 +379,29 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
 
         self.close()
 
+    async def monitor(self, buffers: List[str] = ['SOUR', 'READ']) -> None:
+
+        self.idle = False
+        timer = PollTimer(self.poll_interval, self.name + ' monitor PollTimer')
+        await self.trigger_update()
+        asyncio.create_task(timer.cycle())
+        self.live_results = np.empty((2, 0))
+        live_pointcount: int = 0
+        while 'RUNNING' in await self.get_status():
+            await timer.wait_until_set()
+            asyncio.create_task(timer.cycle())
+            pointcount = int(await self.query(':TRAC:ACT? "defbuffer1"'))
+            if pointcount > live_pointcount:
+                results = await self._get_data(start=live_pointcount + 1, end=pointcount, buffers=buffers)
+                results = np.fromstring(results, sep=',')
+                results = results.reshape((2, len(results) // 2), order='F')
+                self.live_results = np.append(self.live_results, results, axis=1)
+                live_pointcount = pointcount
+                await self.trigger_update()
+            
+        self.idle = True
+        await self.trigger_update()
+
     async def setup_source_current_measure_voltage(self, current: float = 0, voltage_limit: float = 0.02, time: float|None = None, additional_commands: List[str] = []):
         if time is None:
             time = 100000
@@ -396,6 +437,43 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
         
         for cmd in setup_commands:
             await self.write(cmd)
+
+    async def setup_iv(self, maxV: float = 0.001, npts: int = 5) -> None:
+        setup_commands = [
+                    ':SOUR:FUNC VOLT',
+                    ':SENS:FUNC "CURR"',
+                    #':CURR:RANG:AUTO ON',
+                f':SOUR:SWE:VOLT:LIN -{maxV}, {maxV}, {npts}, -1']
+        
+        for cmd in setup_commands:
+            await self.write(cmd)
+
+    async def trigger_start_measurement(self):
+
+        await self.write(':INIT')
+
+    async def abort_measurement(self):
+
+        await self.write(':ABOR')
+        await self.write(':OUTP 0')
+
+    async def _get_data(self, buffer: str = 'defbuffer1', start: int = 1, end: int | None = None, buffers: List[str] = ['SOUR', 'READ']) -> List[float]:
+
+        if end is None:
+            end = int(await self.query(':TRAC:ACT? "defbuffer1"'))
+        data = await self.query(f':TRAC:DATA? {start}, {end}, "defbuffer1", ' + ','.join(buffers))
+
+        return data
+
+    async def get_status(self) -> str:
+
+        return await self.query(':TRIG:STAT?')
+    
+    async def measure_iv(self, maxV: float = 0.001, npts: int = 5) -> None:
+
+        await self.setup_iv(maxV=maxV, npts=npts)
+        await self.trigger_start_measurement()
+        await self.monitor(buffers=['SOUR', 'READ'])
 
 class CommandType(Enum):
     READ = 'read'
@@ -714,63 +792,31 @@ class StreamPotAssembly(AssemblyBase):
 
     async def measure_iv(self,
                          maxV: float = 0.001,
-                         npts: int = 5,
-                         time_per_point: float = 0.2) -> Tuple[float,
-                                                               float,
-                                                               np.ndarray,
-                                                               np.ndarray]:
+                         npts: int = 5) -> Tuple[float,
+                                                float,
+                                                np.ndarray,
+                                                np.ndarray]:
 
         # protect against V/mV confusion
         assert maxV < 0.1
 
-        # run setup commands
-        setup_commands = [
-                          ':SOUR:FUNC VOLT',
-                          ':SENS:FUNC "CURR"',
-                          #':CURR:RANG:AUTO ON',
-                        f':SOUR:SWE:VOLT:LIN -{maxV}, {maxV}, {npts}, -1',
-                        ':INIT',
-                        ]
-
-        for cmd in setup_commands:
-            await self.smu.write(cmd)
-
         # start polling pressure sensor
-        #poll_task = asyncio.create_task(self.start_polling(1e9, 0.01, [PollTask(self.psensor.query, 'AIN2', None, CommandType.READ)]))
         sample_rate = 500
         stream = asyncio.create_task(asyncio.to_thread(self.psensor.stream, 1, sample_rate))
 
-        # monitor output until correct number of points have been collected
-        pointcount = 0
-        status = 'RUNNING'
-        while 'RUNNING' in status:
-            await asyncio.sleep(time_per_point)
-            status = await self.smu.query(':TRIG:STAT?')
+        # perform measurement
+        await self.smu.measure_iv(maxV=maxV, npts=npts)
 
         # stop pressure sensor
         self.psensor.stop_stream.set()
-
-
-        #while pointcount < npts:
-        #    await asyncio.sleep(time_per_point)
-        
-        #    print(await(self.smu.query(':TRIG:STAT?')))
-
-        pointcount = int(await self.smu.query(':TRAC:ACT? "defbuffer1"'))
-        # read all data        
-        data = await self.smu.query(f':TRAC:DATA? 1, {pointcount}, "defbuffer1", SOUR, READ')
 
         # get pressure data result
         actual_sample_rate, pdata = await stream
         t = np.arange(pdata.shape[1]) / actual_sample_rate
         pressure_data = t, np.array(pdata[1]) - np.array(pdata[0])
 
-        #plt.figure()
-        #plt.plot(poll_data[0], poll_data[1])
-    
-        # format data into numpy arrays
-        data = np.fromstring(data, sep=',')
-        V, I = data.reshape((2, len(data) // 2), order='F')
+        # get result from smu
+        V, I = self.smu.live_results
 
         # Calculate resistance and voltage offset (in mV)
         p, cov = np.polyfit(I, V, 1, full=False, cov=True)
@@ -848,43 +894,26 @@ class StreamPotAssembly(AssemblyBase):
         sample_rate = 500
         stream = asyncio.create_task(asyncio.to_thread(self.psensor.stream, 1, sample_rate))
         speed_data, _ = await asyncio.gather(sp.ramp_speed(vol, flow_rates.tolist(), delay=baseline_duration, reverse=True),
-                                               self.smu.write(':INIT'))
-        #print(poll_data, speed_data)
-
-        # gets current syringe speed
-        #response, error = await sp.query('?2')
+                                               self.smu.trigger_start_measurement())
+        smu_monitor = asyncio.create_task(self.smu.monitor(buffers=['REL', 'READ']))
 
         # 4. Wait until syringe pump is done
         #await sp.poll_until_idle()
         await asyncio.sleep(baseline_duration)
         print(f'Ramp time expected: {expected_time + 2.0 * baseline_duration}\n\tand elapsed: {time.time() - init_time}')
 
-        # 5. Get measurement result
-        # TODO: Figure out how to get status and wait until it's done measuring.
-        #status = 'RUNNING'
-        #while 'RUNNING' in status:
-        #    await asyncio.sleep(0.1)
-        #    status = await self.smu.query(':TRIG:STAT?')
-
         # stop pressure sensor and measurement
         self.psensor.stop_stream.set()
-        await self.smu.write(':ABOR')
-        await self.smu.write(':OUTP 0')
-
-        # Get number of available points
-        pointcount = int(await self.smu.query(':TRAC:ACT? "defbuffer1"'))
-
-        # read all data        
-        data = await self.smu.query(f':TRAC:DATA? 1, {pointcount}, "defbuffer1", READ, REL')
+        await self.smu.abort_measurement()
 
         # get pressure data result
         actual_sample_rate, pdata = await stream
         tp = np.arange(pdata.shape[1]) / actual_sample_rate
         pressure_data = tp, pdata[0] - pdata[1]
 
-        # format data into numpy arrays
-        data = np.fromstring(data, sep=',')
-        V, t = data.reshape((2, pointcount), order='F')
+        # get smu results
+        await smu_monitor
+        t, V  = self.smu.live_results
 
         return V, t, pressure_data, speed_data, expected_time
     
@@ -1028,7 +1057,7 @@ async def main():
 
     await streampot.change_mode('Measure')
 
-    if True:
+    if False:
         await streampot.change_mode('Measure')
         stroke_length = sp._stroke_length(volume*1000)
         period = 64 # s
@@ -1450,5 +1479,5 @@ if __name__=='__main__':
                             level=logging.INFO)
     #mlog = logging.getLogger('matplotlib')
     #mlog.setLevel('WARNING')
-    asyncio.run(main(), debug=True)
-    #asyncio.run(exchange_with_iv(), debug=True)
+    #asyncio.run(main(), debug=True)
+    asyncio.run(exchange_with_iv(), debug=True)
