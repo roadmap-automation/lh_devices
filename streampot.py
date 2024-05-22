@@ -1,4 +1,4 @@
-from typing import Tuple, List, Coroutine
+from typing import Tuple, List, Coroutine, Callable
 from aiohttp.web_app import Application as Application
 import pyvisa
 from threading import Event, Lock
@@ -9,6 +9,7 @@ import asyncio
 import logging
 from enum import Enum
 from uuid import uuid4
+from functools import partial
 
 import numpy as np
 from scipy.ndimage import median_filter
@@ -199,14 +200,30 @@ class MeasurementResult:
             go.Figure: output Figure
         """
 
+        max_pts = 1000
+
         if self.results is None:
             return
 
-        results = self.results
-        labels = self.labels
-
+        results = copy(self.results)
         if not results.shape[1]:
             return
+
+        if len(results[0]) > max_pts:
+            downsampling = int(np.ceil(len(results[0]) / max_pts))
+            x = results[0][::downsampling]
+            newresults = np.empty((results.shape[0], len(x)))
+            init_time = time.time()
+            for tracenum in range(1, self.results.shape[0]):
+                #newresults[tracenum] = savgol_filter(results[tracenum], downsampling, 0)[::downsampling]
+                newresults[tracenum] = results[tracenum][::downsampling]
+            #logging.info('Filter time: %f', time.time() - init_time)
+            results = newresults
+        else:
+            x = results[0]
+            
+
+        labels = self.labels
 
         fig = make_subplots(rows=1, cols=1)
 
@@ -214,20 +231,20 @@ class MeasurementResult:
         rows = []
         cols = []
 
-        for tracenum in range(1, self.results.shape[0]):
-            traces.append(go.Scatter(x=results[0],
+        for tracenum in range(1, results.shape[0]):
+            traces.append(go.Scatter(x=x,
                                     y=results[tracenum],
                                     #customdata=np.stack((t/60., t/3600., Ts), axis=-1),
                                     mode='lines+markers',
                                     name=labels[tracenum],
-                                    line=dict(color=CB_color_cycle[0]),
+                                    line=dict(color=CB_color_cycle[tracenum - 1]),
                                     #hovertemplate =
                                     #    'Time: %{x} s (%{customdata[0]:0.2f} min, %{customdata[1]:0.2f} h)'+
                                     #    '<br>df (Hz): %{y}<br>'+
                                     #    'T (C): %{customdata[2]:0.3f}')
                                     ))
-        rows.append(1)
-        cols.append(1)
+            rows.append(1)
+            cols.append(1)
 
         fig.add_traces(traces, rows, cols)
 
@@ -387,7 +404,7 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
 
     async def get_info(self) -> dict:
         d = await super().get_info()
-        plotdata = self.live_results.plot_results()
+        plotdata = self.live_results.plot_results() if self.live_results is not None else None
         plotdata = plotdata.to_json() if plotdata is not None else None
         d.update({ 'type': 'device',
                           'config': {'model': self.model},
@@ -553,19 +570,38 @@ class CommandType(Enum):
     READ = 'read'
     WRITE = 'write'
 
-class LabJackDriver(USBDriverBase):
+class LabJackDriver(USBDriverBase, WebNodeBase):
 
     def __init__(self, timeout=0.05, name='LabJackDriver') -> None:
-        super().__init__(timeout, name)
+        WebNodeBase.__init__(self)
+        USBDriverBase.__init__(self, timeout, name)
 
-        self.stop_stream: Event = Event()
+        self.id = str(uuid4())
+        self.stop_stream: asyncio.Event = asyncio.Event()
+        self.stream_started: asyncio.Event = asyncio.Event()
         self.instr = None
+        self.idle: bool = True
+        self.reserved: bool = False
+        self.run_task: asyncio.Task | None = None        
+        self.live_results: MeasurementResult | None = None
+        self.actual_scanrate: float | None = None
+        self.poll_interval = 1.0
+        self.gain = 1.0
 
         self.channel_map = {'AIN0': 0,
                             'AIN1': 1,
                             'AIN2': 2,
                             'AIN3': 3}
-        
+
+    async def initialize(self):
+
+        if self.instr is None:
+            await asyncio.to_thread(self.open)
+            self.run_task = asyncio.create_task(self.start())
+        else:
+            logging.warning(f'{self.name} already initialized: {self.instr }')
+
+
     def open(self, model='T7'):
         
         handle = ljm.openS("ANY","ANY","ANY")
@@ -587,88 +623,149 @@ class LabJackDriver(USBDriverBase):
         """Synchronous code to interact with the Labjack via call-and-response"""
 
         # open instrument resource
-        if self.instr is None:
-            self.open()
-
         self.clear()
         while not self.stop_event.is_set():
 
             cmd = None
 
-            # TODO: figure out how to do this with a timeout (to be responsive to stop signal)
             future = asyncio.run_coroutine_threadsafe(self.inqueue.get(), loop)
             self.active_futures.append(future)
-            cmd: Tuple[CommandType, str, str | None] | None = future.result()
+            cmd: Callable | None = future.result()
             self.active_futures.pop(self.active_futures.index(future))
             
             if cmd is not None:
 
-                name, value, command_type = cmd
+                logging.debug('%s => %s', self.name, cmd.__repr__())
 
-                logging.debug('%s => %s', self.name, cmd)
+                response = cmd()
 
-                if command_type == CommandType.WRITE:
-                    # write value to instrument
-                    #with self.lock:
-                    ljm.eWriteName(self.instr, name, value)
-                
-                # if command is a query command
-                else:
-                    #with self.lock:
-                    response = ljm.eReadName(self.instr, name)
+                logging.debug('%s <= %s', self.name, response)
 
-                    logging.debug('%s <= %s', self.name, response)
-
-                    # write response to outqueue (blocks until value is read)
-                    future = asyncio.run_coroutine_threadsafe(self.outqueue.put(response), loop)
-                    self.active_futures.append(future)
-                    future.result()
-                    self.active_futures.pop(self.active_futures.index(future))
+                # write response to outqueue (blocks until value is read)
+                future = asyncio.run_coroutine_threadsafe(self.outqueue.put(response), loop)
+                self.active_futures.append(future)
+                future.result()
+                self.active_futures.pop(self.active_futures.index(future))
             
         self.close()
 
-    async def query(self, cmd: str, value: str | None = None, command_type: CommandType = CommandType.WRITE) -> str:
-        #await self.write()
-        return await super().query((cmd, value, command_type))
+    async def query(self, cmd: Callable, *args, **kwargs) -> str:
+        return await super().query(partial(cmd, *args, **kwargs))
 
-    def stream(self, ScansPerSecond: float = 1,
+    async def _set_settling_time(self, settling_time: int) -> None:
+        return await self.query(ljm.eWriteName, self.instr, 'STREAM_SETTLING_US', settling_time)
+
+    async def _start_stream(self, ScanRate, ScansPerSecond, addresses) -> None:
+        self.actual_scanrate = await self.query(ljm.eStreamStart, self.instr, round(ScanRate / ScansPerSecond), len(addresses), addresses, ScanRate)
+
+    async def _stop_stream(self) -> None:
+        return await self.query(ljm.eStreamStop, self.instr)
+
+    async def _read_data(self) -> Tuple[list, int, int]:
+        return await self.query(ljm.eStreamRead, self.instr)
+
+    async def _get_data(self):
+
+        if (not self.idle) & (self.instr is not None) & (self.live_results is not None):
+            data, deviceScanBacklog, ljmScanBacklog = await self._read_data()
+            data = np.array(data)
+            data = data.reshape((self.live_results.results.shape[0] - 1, -1), order='F')
+            data /= self.gain
+            #print(data.shape)
+            timeaxis = np.ones_like(data[0])[:, None].T
+            #print(timeaxis.shape)
+            data = np.vstack((timeaxis, data))
+            self.live_results.results = np.append(self.live_results.results, data, axis=1)
+            self.live_results.results[0] = (1. / self.actual_scanrate) * np.arange(self.live_results.results.shape[1])
+            #print(data.shape, self.live_results.results.shape)
+        else:
+            logging.warning(f'{self.name}: get_data failed; idle state {self.idle}, instrument {self.instr}, results {self.live_results}')
+
+    async def stream(self, ScansPerSecond: float = 1,
                      addresses: List[int] = [6],
-                     ScanRate: float = 500) -> Tuple[float, np.ndarray]:
+                     ScanRate: float = 500,
+                     labels: List[float]= []) -> None:
         """Synchronous code to interact with the Labjack via streaming
 
         Args:
             ScansPerSecond (int, optional): Scans per second. Defaults to 1.
             addresses (List[int], optional): integer addresses to read (see Modbus Map). Defaults to [6] ('AIN3').
             ScanRate (float, optional): Samples per second. Defaults to 500.
-
-        Returns:
-            list: all data returned from stream
+            labels (List[float], optional): labels for each address
         """
-        if self.instr is None:
-            self.open()
 
+        self.idle = False
+        if not len(labels):
+            labels = [str(addr) for addr in addresses]
+        logging.debug('Creating live results...')
+        self.live_results = MeasurementResult(results=np.empty((len(addresses) + 1, 0)), labels=['t'] + labels)
         self.stop_stream.clear()
+
+        #ljm.eStreamStop(self.instr)
+        await self._set_settling_time(10)
+        logging.debug('Starting stream...')
+        await self._start_stream(ScanRate, ScansPerSecond, addresses)
+        self.stream_started.set()
+        monitor_task = asyncio.create_task(self.monitor())
+
+        logging.debug('Waiting for stop event...')
+        await self.stop_stream.wait()
+        self.stream_started.clear()
+        self.idle = True
+        await monitor_task
+        logging.debug('Stopping...')
+        await self._stop_stream()
+        await self.trigger_update()
+
+    async def monitor(self) -> None:
+
+        timer = PollTimer(self.poll_interval, self.name + ' monitor PollTimer')
+        await self.trigger_update()
+        asyncio.create_task(timer.cycle())
+        while not self.idle:
+            await timer.wait_until_set()
+            asyncio.create_task(timer.cycle())
+            data_length = self.live_results.results.shape[1]
+            await self._get_data()
+            if self.live_results.results.shape[1] > data_length:
+                await self.trigger_update()
+
+        logging.debug('monitor ended')
+        await self.trigger_update()
+
+    async def get_info(self) -> dict:
+        d = await super().get_info()
+        plotdata = self.live_results.plot_results() if self.live_results is not None else None
+        plotdata = plotdata.to_json() if plotdata is not None else None
+        d.update({ 'type': 'device',
+                          'config': {},
+                          'state': {'idle': self.idle,
+                                  'reserved': self.reserved,
+                                  'plot': plotdata},
+                          'controls': {'start_stream': {'type': 'button',
+                                     'text': 'Start stream'},
+                                       'stop_stream': {'type': 'button',
+                                     'text': 'Stop stream'}
+                                     }})
         
-        all_data = []
+        return d
 
-        def _stream_callback(handle):
-            data, deviceScanBacklog, ljmScanBacklog = ljm.eStreamRead(handle)
-            #print(deviceScanBacklog, ljmScanBacklog)
-            data = np.array(data)
-            data = data.reshape((len(addresses), -1), order='F')
-            all_data.append(data)
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
 
-        ljm.eWriteName(self.instr, 'STREAM_SETTLING_US', 10)
-        actual_scanrate = ljm.eStreamStart(self.instr, round(ScanRate / ScansPerSecond), len(addresses), addresses, ScanRate)
-        ljm.setStreamCallback(self.instr, _stream_callback)
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
 
-        self.stop_stream.wait()
-        _stream_callback(self.instr)
-        ljm.eStreamStop(self.instr)
+        await super().event_handler(command, data)
 
-        all_data = np.concatenate(all_data, axis=1)
+        if command == 'start_stream':
+            # starts stream
+            asyncio.create_task(self.stream())
+        elif command == 'stop_stream':
+            self.stop_stream.set()
 
-        return actual_scanrate, all_data    
 
 class PressureSensorwithInAmp(LabJackDriver):
 
@@ -718,13 +815,12 @@ class PressureSensorDifferential(LabJackDriver):
 
 class PressureSensorDifferentialDouble(LabJackDriver):
 
-    def __init__(self, channel_high: str = 'AIN0', channel_low: str='AIN2', sensor_voltage: float = 5.0, timeout=0.05, name='LabJackDriver') -> None:
+    def __init__(self, channel_high: str = 'AIN0', channel_low: str='AIN2', sensor_voltage: float = 5.0, timeout=0.05, name='Double Differential Pressure Sensor') -> None:
         super().__init__(timeout, name)
 
         self.channel_high = channel_high
         self.channel_low = channel_low
         self.sensor_voltage = sensor_voltage
-        self.gain = 1
 
     def open(self, model='T7'):
         super().open(model)
@@ -738,11 +834,8 @@ class PressureSensorDifferentialDouble(LabJackDriver):
         # set up output voltage
         #ljm.eWriteName(self.instr, self.dac_channel, self.dac_output)
 
-    def stream(self, ScansPerSecond: float = 1, ScanRate: float = 500) -> Tuple[float, np.ndarray]:
-        sample_rate, data = super().stream(ScansPerSecond, [self.channel_map[self.channel_high] * 2, self.channel_map[self.channel_low] * 2], ScanRate * 2)
-        data /= self.gain
-
-        return sample_rate, data
+    async def stream(self, ScansPerSecond: float = 1, ScanRate: float = 500) -> None:
+        return await super().stream(ScansPerSecond, [self.channel_map[self.channel_high] * 2, self.channel_map[self.channel_low] * 2], ScanRate * 2, labels=['Phigh', 'Plow'])
 
 class PollTask:
 
@@ -759,7 +852,7 @@ class StreamPotAssembly(AssemblyBase):
 
     def __init__(self, syringepump: SyringePumpRamp, mvp: HamiltonValvePositioner, smu: KeithleyDriver, psensor: LabJackDriver, name='Streaming Potential Assembly'):
         super().__init__([syringepump, mvp], name=name)
-        self.devices += [smu]
+        self.devices += [smu, psensor]
         self.smu = smu
         self.smu_task: asyncio.Task = None
         self.syringepump = syringepump
@@ -786,7 +879,7 @@ class StreamPotAssembly(AssemblyBase):
         await asyncio.gather(super().initialize(), asyncio.to_thread(self.psensor.open))
 
     def shutdown(self) -> None:
-        self.psensor.close()
+        self.psensor.stop()
 
     def create_web_app(self, template='roadmap.html') -> Application:
         return super().create_web_app(template)
@@ -876,7 +969,8 @@ class StreamPotAssembly(AssemblyBase):
 
         # start polling pressure sensor
         sample_rate = 500
-        stream = asyncio.create_task(asyncio.to_thread(self.psensor.stream, 1, sample_rate))
+        stream = asyncio.create_task(self.psensor.stream(1, sample_rate))
+        await self.psensor.stream_started.wait()
 
         # perform measurement
         logging.debug('Measuring IV curve...')
@@ -884,12 +978,13 @@ class StreamPotAssembly(AssemblyBase):
 
         # stop pressure sensor
         self.psensor.stop_stream.set()
+        await stream
 
         # get pressure data result
         logging.debug('Waiting for psensor stream...')
-        actual_sample_rate, pdata = await stream
-        t = np.arange(pdata.shape[1]) / actual_sample_rate
-        pressure_data = t, np.array(pdata[1]) - np.array(pdata[0])
+        pdata = self.psensor.live_results.results
+        t = pdata[0]
+        pressure_data = t, np.array(pdata[2]) - np.array(pdata[1])
 
         # get result from smu
         V, I = self.smu.live_results.results
@@ -1141,7 +1236,9 @@ async def main():
 
         await k.setup_source_current_measure_voltage(0.0, time=None)    
         await sp.run_until_idle(sp.query('K1R'))
-        stream = asyncio.create_task(asyncio.to_thread(streampot.psensor.stream, 1, 500))
+        stream = asyncio.create_task(streampot.psensor.stream(1, 500))
+        await streampot.psensor.stream_started.wait()
+
         await k.trigger_start_measurement()
         smu_monitor = asyncio.create_task(k.monitor(buffers=['REL', 'READ'], labels=['t', 'V']))
 
@@ -1169,9 +1266,10 @@ async def main():
         await k.abort_measurement()
 
         # get pressure data result
-        actual_sample_rate, pdata = await stream
-        tp = np.arange(pdata.shape[1]) / actual_sample_rate
-        pressure_data = tp, pdata[0] - pdata[1]
+        await stream
+        pdata = streampot.psensor.live_results.results
+        tp = pdata[0]
+        pressure_data = tp, np.array(pdata[2]) - np.array(pdata[1])
 
         # Read smu data after it finishes
         await smu_monitor
@@ -1185,7 +1283,7 @@ async def main():
 
         plt.show()
 
-        np.savetxt('sio2_popc_data_0_01mlmin_10xsalt.txt', np.vstack((t, V)).T)
+        #np.savetxt('sio2_popc_data_0_01mlmin_10xsalt.txt', np.vstack((t, V)).T)
 
     #await sp.run_until_idle(sp.set_digital_output(1, True))
 
@@ -1376,17 +1474,20 @@ async def labjack():
 
 async def labjack_stream():
 
-    lj = PressureSensorDifferential(channel='AIN1', negative_channel='AIN0', dac_channel='DAC0', dac_output=5)
-    await asyncio.to_thread(lj.open)
+    lj = PressureSensorDifferentialDouble(channel_high='AIN0', channel_low='AIN2', sensor_voltage=5.0, name='Double Differential Pressure Sensor')
+    await lj.initialize()
     sample_rate = 500
-    stream = asyncio.create_task(asyncio.to_thread(lj.stream, 1, sample_rate))
-    await asyncio.sleep(5)
+    stream = asyncio.create_task(lj.stream(1, sample_rate))
+    logging.debug('Sleeping...')
+    await lj.stream_started.wait()
+    await asyncio.sleep(10.5)
+    logging.debug('Setting stop event...')
     lj.stop_stream.set()
-    actual_sample_rate, data = await stream
-    print(actual_sample_rate)
-    t = np.arange(int(data.shape[1])) / actual_sample_rate
+    await stream
 
-    plt.plot(t, data[0])
+    lj.stop()
+    print(len(lj.live_results.results[0]), lj.actual_scanrate)
+    plt.plot(lj.live_results.results[0], lj.live_results.results[1])
     plt.show()
 
 async def ivcurve():
@@ -1552,8 +1653,9 @@ if __name__=='__main__':
     logging.basicConfig(
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
-                            level=logging.DEBUG)
+                            level=logging.INFO)
     #mlog = logging.getLogger('matplotlib')
     #mlog.setLevel('WARNING')
     asyncio.run(main(), debug=True)
     #asyncio.run(exchange_with_iv(), debug=True)
+    #asyncio.run(labjack_stream())
