@@ -16,6 +16,13 @@ from scipy.signal import convolve
 from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+CB_color_cycle = ['#377eb8', '#ff7f00', '#4daf4a',
+                  '#f781bf', '#a65628', '#984ea3',
+                  '#999999', '#e41a1c', '#dede00']
+
 from connections import Port
 
 plt.set_loglevel('warning')
@@ -316,10 +323,13 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
 
     async def get_info(self) -> dict:
         d = await super().get_info()
+        plotdata = self.plot_results()
+        plotdata = plotdata.to_json() if plotdata is not None else None
         d.update({ 'type': 'device',
                           'config': {'model': self.model},
                           'state': {'idle': self.idle,
-                                  'reserved': self.reserved},
+                                  'reserved': self.reserved,
+                                  'plot': {'id': str(uuid4()), 'plotdata': plotdata}},
                           'controls': {'measure_iv': {'type': 'button',
                                      'text': 'Measure default IV curve'},
                                      }})
@@ -401,6 +411,61 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
             
         self.idle = True
         await self.trigger_update()
+
+    def plot_results(self) -> go.Figure | None:
+        """Generates a plotly Figure for the data stream (frequency and dissipation only)
+
+        Returns:
+            go.Figure: output Figure
+        """
+        
+        results = self.live_results
+
+        if results is None:
+            return
+        
+        if not self.live_results.shape[1]:
+            return
+
+        starttime = time.time()
+        fig = make_subplots(rows=1, cols=1)
+
+        traces = []
+        rows = []
+        cols = []
+
+        traces.append(go.Scatter(x=results[0],
+                                y=results[1],
+                                #customdata=np.stack((t/60., t/3600., Ts), axis=-1),
+                                mode='lines+markers',
+                                #name=lbl,
+                                line=dict(color=CB_color_cycle[0]),
+                                #hovertemplate =
+                                #    'Time: %{x} s (%{customdata[0]:0.2f} min, %{customdata[1]:0.2f} h)'+
+                                #    '<br>df (Hz): %{y}<br>'+
+                                #    'T (C): %{customdata[2]:0.3f}')
+                                ))
+        rows.append(1)
+        cols.append(1)
+
+        fig.add_traces(traces, rows, cols)
+
+        fig.update_yaxes(title_text='y', row=1, col=1, exponentformat='power')
+        fig.update_xaxes(title_text='x', row=1, col=1)
+        #fig.update_traces(visible=True)
+        fig.update_layout(
+            template = 'plotly_white',
+            plot_bgcolor = "rgba(255,255,255,0.25)",
+            paper_bgcolor = "rgba(255,255,255,0)",
+            autosize = True,
+            margin = {'l': 50,
+                      'b': 50,
+                      't': 25,
+                      'r': 25,
+                      'autoexpand': True}
+        )
+
+        return fig
 
     async def setup_source_current_measure_voltage(self, current: float = 0, voltage_limit: float = 0.02, time: float|None = None, additional_commands: List[str] = []):
         if time is None:
@@ -1057,7 +1122,7 @@ async def main():
 
     await streampot.change_mode('Measure')
 
-    if False:
+    if True:
         await streampot.change_mode('Measure')
         stroke_length = sp._stroke_length(volume*1000)
         period = 64 # s
@@ -1066,7 +1131,8 @@ async def main():
         await k.setup_source_current_measure_voltage(0.0, time=None)    
         await sp.run_until_idle(sp.query('K1R'))
         stream = asyncio.create_task(asyncio.to_thread(streampot.psensor.stream, 1, 500))
-        await k.write(':INIT')
+        await k.trigger_start_measurement()
+        smu_monitor = asyncio.create_task(k.monitor(buffers=['REL', 'READ']))
 
         for flow_rate in [0.01][::-1]:
             total_time = volume / flow_rate * 60
@@ -1087,20 +1153,18 @@ async def main():
             await sp.run_syringe_until_idle(sp.query(f'J2D{period_stroke}J0P{period_stroke}G8R'))
             print(f'Done with {flow_rate} mL/min, {period} s')
 
+        # stop measurement
         streampot.psensor.stop_stream.set()
-        await k.write(':ABOR')
-        await k.write(':OUTP 0')
+        await k.abort_measurement()
 
         # get pressure data result
         actual_sample_rate, pdata = await stream
         tp = np.arange(pdata.shape[1]) / actual_sample_rate
         pressure_data = tp, pdata[0] - pdata[1]
 
-        # Get number of available points and read all data
-        pointcount = int(await k.query(':TRAC:ACT? "defbuffer1"'))
-        data = await k.query(f':TRAC:DATA? 1, {pointcount}, "defbuffer1", READ, REL')
-        data = np.fromstring(data, sep=',')
-        V, t = data.reshape((2, pointcount), order='F')
+        # Read smu data after it finishes
+        await smu_monitor
+        t, V = k.live_results
 
         plt.figure()
         plt.plot(tp, median_filter(pdata[0], 201), tp, median_filter(pdata[1], 201), tp, median_filter(pdata[0] - pdata[1], 201))
@@ -1337,6 +1401,7 @@ async def ivcurve():
 async def exchange_with_iv():
     ser = HamiltonSerial(port='COM6', baudrate=38400)
     sp = SyringePumpRamp(ser, '0', SyringeLValve(4, name='syringe_LValve'), 1000, name='Smooth Flow Syringe Pump')
+    await sp.run_until_idle(sp.query('T'))
     mvp = HamiltonValvePositioner(ser, '1', YValve(name='MVP Y Valve'), name='Switching Y Valve')    
     sp.max_dispense_flow_rate = 4. / 60 * 1000.
     sp.max_aspirate_flow_rate = 4. / 60 * 1000.

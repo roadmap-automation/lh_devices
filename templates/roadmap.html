@@ -2,6 +2,7 @@
 <head>
     <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js" integrity="sha512-q/dWJ3kcmjBLU4Qc47E4A9kTB4m3wuTY7vkFJDTZKjTs8jhyGQnaUrxa0Ytd0ssMZhbNua9hE+E7Qv1j+DyZwA==" crossorigin="anonymous"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <script>
         var socket = io()
 
@@ -152,6 +153,14 @@
                                 statediv.append(progressbar(data['state']['syringe']['position'], data['state']['syringe']['syringe_volume']))
                                 syringespeedcontainer = $('<div>').text('Syringe speed (mL /min): ').appendTo(statediv)
                                 $('<text>').addClass("syringe_speed").text(data['state']['syringe']['speed']).appendTo(syringespeedcontainer)
+                            }
+                            if ('plot' in data['state']) {
+                                if (data['state']['plot']['plotdata'] != null) {
+                                    newdiv = $('<div>').addClass('plotcontainer')
+                                    newdiv.appendTo(statediv)
+                                    let plotobj = JSON.parse(data['state']['plot']['plotdata'].replace(new RegExp('\n', 'g'), '<br>'))
+                                    Plotly.react(newdiv.get(0), plotobj['data'], plotobj['layout'], {responsive: true})
+                                }
                             }
                             statediv.append($('<hr>'))
                             if ('digital_outputs' in data['state']) {
@@ -482,6 +491,12 @@
         height: 95%;*/
         width: 100%
     }
+    .plotcontainer {
+        overflow: auto;
+        resize: both;
+        height:100%;
+        width:100%
+    }    
     .top-frame {
         border-radius: 10px;
         border-color: rgb(107, 70, 180);
