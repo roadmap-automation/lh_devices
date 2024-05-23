@@ -270,7 +270,7 @@ class DirectInject(MethodBaseDeadVolume):
         self.release_all()
 
 class RoadmapChannelInit(MethodBase):
-    """Directly inject from LH to a ROADMAP channel flow cell
+    """Initialize a ROADMAP channel
     """
 
     def __init__(self, channel: RoadmapChannelBase) -> None:
@@ -286,6 +286,26 @@ class RoadmapChannelInit(MethodBase):
         
         method = self.MethodDefinition(**kwargs)
         logging.info(f'{self.channel.name} received Init method')
+
+class RoadmapChannelSleep(MethodBase):
+    """Roadmap Channel Sleep. Used for simulating other operations
+    """
+
+    def __init__(self, channel: RoadmapChannelBase) -> None:
+        super().__init__(devices=channel.devices)
+        self.channel = channel
+
+    @dataclass
+    class MethodDefinition(MethodBase.MethodDefinition):
+        
+        name: str = "RoadmapChannelSleep"
+        sleep_time: float = 0.0
+
+    async def run(self, **kwargs) -> None:
+        
+        method = self.MethodDefinition(**kwargs)
+        logging.info(f'{self.channel.name} sleeping {method.sleep_time} s')
+        await asyncio.sleep(method.sleep_time)
 
 class RoadmapChannel(RoadmapChannelBase):
     """Roadmap channel with populated methods
@@ -324,7 +344,9 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
 
             # add system-specific methods to the channel
             ch.methods.update({'LoadLoop': LoadLoop(ch, distribution_system.modes[str(1 + 2 * i)], gsioc),
-                               'DirectInject': DirectInject(ch, distribution_system.modes[str(2 + 2 * i)], gsioc)
+                               'DirectInject': DirectInject(ch, distribution_system.modes[str(2 + 2 * i)], gsioc),
+                               'RoadmapChannelInit': RoadmapChannelInit(ch),
+                               'RoadmapChannelSleep': RoadmapChannelSleep(ch)
                                })
 
         self.channels = channels
