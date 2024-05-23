@@ -5,6 +5,7 @@ from threading import Event, Lock
 from queue import Queue, Empty, Full
 from copy import copy
 import time
+import datetime
 import asyncio
 import logging
 from enum import Enum
@@ -188,10 +189,17 @@ class SyringePumpRamp(SmoothFlowSyringePump):
 class MeasurementResult:
 
     def __init__(self, results: np.ndarray | None = None, labels: List[str] = [], xlabel: str | None = None, ylabel: str | None = None) -> None:
+        self.starttime: datetime.datetime = datetime.datetime.now()
         self.results = results
         self.labels = labels
         self.xlabel = xlabel if xlabel is not None else labels[0]
         self.ylabel = ylabel if ylabel is not None else labels[1]
+
+    def save_results(self, fnprefix: str = '') -> None:
+        """Saves live results to a CSV file
+        """
+
+        np.savetxt(fnprefix + self.starttime.strftime('%Y%m%dT%H%M%S') + '.csv', self.results.T, delimiter=',', header=','.join(self.labels))
 
     def plot_results(self) -> go.Figure | None:
         """Generates a plotly Figure for the results
@@ -411,7 +419,9 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
                           'state': {'idle': self.idle,
                                   'reserved': self.reserved,
                                   'plot': plotdata},
-                          'controls': {'measure_iv': {'type': 'button',
+                          'controls': {'save_data': {'type': 'button',
+                                        'text': 'Save data'},
+                                       'measure_iv': {'type': 'button',
                                      'text': 'Measure default IV curve'},
                                      }})
         
@@ -430,6 +440,9 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
         if command == 'measure_iv':
             # measures default IV curve
             asyncio.create_task(self.measure_iv())
+        elif command == 'save_data':
+            if self.live_results is not None:
+                self.live_results.save_results(fnprefix=self.name.replace(' ', '_') + '_')
 
     def run(self, loop: asyncio.AbstractEventLoop):
         """Synchronous code to interact with the Keithley"""
@@ -743,10 +756,12 @@ class LabJackDriver(USBDriverBase, WebNodeBase):
                           'state': {'idle': self.idle,
                                   'reserved': self.reserved,
                                   'plot': plotdata},
-                          'controls': {'start_stream': {'type': 'button',
+                          'controls': {'save_data': {'type': 'button',
+                                                     'text': 'Save data'},
+                                    'start_stream': {'type': 'button',
                                      'text': 'Start stream'},
                                        'stop_stream': {'type': 'button',
-                                     'text': 'Stop stream'}
+                                     'text': 'Stop stream'},
                                      }})
         
         return d
@@ -766,7 +781,9 @@ class LabJackDriver(USBDriverBase, WebNodeBase):
             asyncio.create_task(self.stream())
         elif command == 'stop_stream':
             self.stop_stream.set()
-
+        elif command == 'save_data':
+            if self.live_results is not None:
+                self.live_results.save_results(fnprefix=self.name.replace(' ', '_') + '_')
 
 class PressureSensorwithInAmp(LabJackDriver):
 
@@ -1284,7 +1301,7 @@ async def main():
 
         plt.show()
 
-        np.savetxt('sio2_rinse_data_0_01mlmin_10xsalt.txt', np.vstack((t, V)).T)
+        np.savetxt('sio2_rinse_no_pressure_data_0_01mlmin_10xsalt.txt', np.vstack((t, V)).T)
 
     #await sp.run_until_idle(sp.set_digital_output(1, True))
 
