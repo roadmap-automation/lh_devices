@@ -6,4 +6,4 @@ python-socketio
 numpy
 scipy
 plotly
-
+svg.py
