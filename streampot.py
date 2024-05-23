@@ -11,6 +11,7 @@ import logging
 from enum import Enum
 from uuid import uuid4
 from functools import partial
+import traceback
 
 import numpy as np
 from scipy.ndimage import median_filter
@@ -650,7 +651,11 @@ class LabJackDriver(USBDriverBase, WebNodeBase):
 
                 logging.debug('%s => %s', self.name, cmd.__repr__())
 
-                response = cmd()
+                try:
+                    response = cmd()
+                except Exception as e:
+                    response = traceback.format_stack(e)
+                    logging.error(traceback.format_stack(e))
 
                 logging.debug('%s <= %s', self.name, response)
 
@@ -667,6 +672,9 @@ class LabJackDriver(USBDriverBase, WebNodeBase):
 
     async def _set_settling_time(self, settling_time: int) -> None:
         return await self.query(ljm.eWriteName, self.instr, 'STREAM_SETTLING_US', settling_time)
+    
+    async def _set_resolution_index(self, resolution_index: int) -> None:
+        return await self.query(ljm.eWriteName, self.instr, 'STREAM_RESOLUTION_INDEX', resolution_index)
 
     async def _start_stream(self, ScanRate, ScansPerSecond, addresses) -> None:
         self.actual_scanrate = await self.query(ljm.eStreamStart, self.instr, round(ScanRate / ScansPerSecond), len(addresses), addresses, ScanRate)
@@ -717,6 +725,7 @@ class LabJackDriver(USBDriverBase, WebNodeBase):
 
         #ljm.eStreamStop(self.instr)
         await self._set_settling_time(10)
+        #await self._set_resolution_index(7)
         logging.debug('Starting stream...')
         await self._start_stream(ScanRate, ScansPerSecond, addresses)
         self.stream_started.set()
@@ -1494,19 +1503,20 @@ async def labjack_stream():
 
     lj = PressureSensorDifferentialDouble(channel_high='AIN0', channel_low='AIN2', sensor_voltage=5.0, name='Double Differential Pressure Sensor')
     await lj.initialize()
-    sample_rate = 500
+    sample_rate = 100
+    await lj._set_resolution_index(7)
     stream = asyncio.create_task(lj.stream(1, sample_rate))
     logging.debug('Sleeping...')
     await lj.stream_started.wait()
-    await asyncio.sleep(10.5)
+    await asyncio.sleep(4.5)
     logging.debug('Setting stop event...')
     lj.stop_stream.set()
     await stream
 
     lj.stop()
-    print(len(lj.live_results.results[0]), lj.actual_scanrate)
-    plt.plot(lj.live_results.results[0], lj.live_results.results[1])
-    plt.show()
+    print(len(lj.live_results.results[0]), lj.actual_scanrate, np.std(lj.live_results.results[0]))
+    #plt.plot(lj.live_results.results[0], lj.live_results.results[1])
+    #plt.show()
 
 async def ivcurve():
 
@@ -1671,7 +1681,7 @@ if __name__=='__main__':
     logging.basicConfig(
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
-                            level=logging.INFO)
+                            level=logging.DEBUG)
     #mlog = logging.getLogger('matplotlib')
     #mlog.setLevel('WARNING')
     asyncio.run(main(), debug=True)
