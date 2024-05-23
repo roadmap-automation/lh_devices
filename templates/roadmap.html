@@ -148,6 +148,7 @@
                             if ('valve' in data['state']) {
                                 valvestatecontainer = $('<div>').text('Valve position: ').appendTo(statediv)
                                 $('<text>').addClass("valve_position").text(data['state']['valve']['valve_position']).appendTo(valvestatecontainer)
+                                $('<div>').addClass("valve_svg").html(data['state']['valve']['valve_svg']).appendTo(statediv)
                             }
                             if ('syringe' in data['state']) {
                                 statediv.append(progressbar(data['state']['syringe']['position'], data['state']['syringe']['syringe_volume']))
@@ -493,9 +494,13 @@
     }
     .plotcontainer {
         overflow: auto;
-        resize: both;
+        aspect-ratio: 1/1;
         height:100%;
-        width:100%
+    }
+    .valve_svg {
+        margin:auto;
+        aspect-ratio: 1/1;
+        width: 50%;
     }    
     .top-frame {
         border-radius: 10px;
