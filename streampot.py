@@ -31,12 +31,12 @@ plt.set_loglevel('warning')
 from HamiltonComm import HamiltonSerial
 from HamiltonDevice import HamiltonSyringePump, PollTimer, HamiltonValvePositioner
 from assemblies import AssemblyBase, Mode, connect_nodes
-from valve import SyringeLValve, SyringeValveBase, DistributionValve
+from valve import SyringeLValve, LValve, SyringeValveBase, DistributionValve
 from webview import run_socket_app, WebNodeBase
 
 from labjack import ljm
 
-class YValve(DistributionValve):
+class YValve(LValve):
 
     def __init__(self, position: int = 0, ports: List[Port] = [], name=None) -> None:
         super().__init__(3, position, ports, name)
@@ -235,7 +235,7 @@ class MeasurementResult:
             traces.append(go.Scatter(x=x,
                                     y=results[tracenum],
                                     #customdata=np.stack((t/60., t/3600., Ts), axis=-1),
-                                    mode='lines+markers',
+                                    mode='lines',
                                     name=labels[tracenum],
                                     line=dict(color=CB_color_cycle[tracenum - 1]),
                                     #hovertemplate =
@@ -666,20 +666,21 @@ class LabJackDriver(USBDriverBase, WebNodeBase):
 
     async def _get_data(self):
 
-        if (not self.idle) & (self.instr is not None) & (self.live_results is not None):
-            data, deviceScanBacklog, ljmScanBacklog = await self._read_data()
-            data = np.array(data)
-            data = data.reshape((self.live_results.results.shape[0] - 1, -1), order='F')
-            data /= self.gain
-            #print(data.shape)
-            timeaxis = np.ones_like(data[0])[:, None].T
-            #print(timeaxis.shape)
-            data = np.vstack((timeaxis, data))
-            self.live_results.results = np.append(self.live_results.results, data, axis=1)
-            self.live_results.results[0] = (1. / self.actual_scanrate) * np.arange(self.live_results.results.shape[1])
-            #print(data.shape, self.live_results.results.shape)
-        else:
-            logging.warning(f'{self.name}: get_data failed; idle state {self.idle}, instrument {self.instr}, results {self.live_results}')
+        if not self.idle:
+            if (self.instr is not None) & (self.live_results is not None):
+                data, deviceScanBacklog, ljmScanBacklog = await self._read_data()
+                data = np.array(data)
+                data = data.reshape((self.live_results.results.shape[0] - 1, -1), order='F')
+                data /= self.gain
+                #print(data.shape)
+                timeaxis = np.ones_like(data[0])[:, None].T
+                #print(timeaxis.shape)
+                data = np.vstack((timeaxis, data))
+                self.live_results.results = np.append(self.live_results.results, data, axis=1)
+                self.live_results.results[0] = (1. / self.actual_scanrate) * np.arange(self.live_results.results.shape[1])
+                #print(data.shape, self.live_results.results.shape)
+            else:
+                logging.warning(f'{self.name}: get_data failed; idle state {self.idle}, instrument {self.instr}, results {self.live_results}')
 
     async def stream(self, ScansPerSecond: float = 1,
                      addresses: List[int] = [6],
@@ -1276,14 +1277,14 @@ async def main():
         t, V = k.live_results.results
 
         plt.figure()
-        plt.plot(tp, median_filter(pdata[0], 201), tp, median_filter(pdata[1], 201), tp, median_filter(pdata[0] - pdata[1], 201))
+        plt.plot(tp, median_filter(pdata[1], 201), tp, median_filter(pdata[2], 201), tp, median_filter(pdata[1] - pdata[2], 201))
 
         plt.figure()
         plt.plot(t, median_filter(V, 21))
 
         plt.show()
 
-        #np.savetxt('sio2_popc_data_0_01mlmin_10xsalt.txt', np.vstack((t, V)).T)
+        np.savetxt('sio2_rinse_data_0_01mlmin_10xsalt.txt', np.vstack((t, V)).T)
 
     #await sp.run_until_idle(sp.set_digital_output(1, True))
 
@@ -1531,7 +1532,7 @@ async def exchange_with_iv():
     runner = await run_socket_app(app, 'localhost', 5003)
 
     init_time = time.time()
-    volume = 0.3 * 1000
+    volume = 0.5 * 1000
     flow_rate = 0.01 / 60 * 1000
     expected_time = volume / flow_rate
     print(expected_time)
