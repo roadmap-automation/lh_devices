@@ -174,7 +174,15 @@ class QCMDMeasurementChannel(QCMDMeasurementInterface, WebNodeBase):
             sleep_time (float, optional): Time to sleep in seconds. Defaults to 0.0.
         """
 
+        self.reserve()
+        self.idle = False
+        await self.trigger_update()
+
         await asyncio.sleep(sleep_time)
+
+        self.release()
+        self.idle = True
+        await self.trigger_update()
 
     async def QCMDRecord(self, record_time: float = 0.0, sleep_time: float = 0.0):
         """Recording 
