@@ -5,11 +5,13 @@ from threading import Event, Lock
 from queue import Queue, Empty, Full
 from copy import copy
 import time
+import datetime
 import asyncio
 import logging
 from enum import Enum
 from uuid import uuid4
 from functools import partial
+import traceback
 
 import numpy as np
 from scipy.ndimage import median_filter
@@ -188,10 +190,17 @@ class SyringePumpRamp(SmoothFlowSyringePump):
 class MeasurementResult:
 
     def __init__(self, results: np.ndarray | None = None, labels: List[str] = [], xlabel: str | None = None, ylabel: str | None = None) -> None:
+        self.starttime: datetime.datetime = datetime.datetime.now()
         self.results = results
         self.labels = labels
         self.xlabel = xlabel if xlabel is not None else labels[0]
         self.ylabel = ylabel if ylabel is not None else labels[1]
+
+    def save_results(self, fnprefix: str = '') -> None:
+        """Saves live results to a CSV file
+        """
+
+        np.savetxt(fnprefix + self.starttime.strftime('%Y%m%dT%H%M%S') + '.csv', self.results.T, delimiter=',', header=','.join(self.labels))
 
     def plot_results(self) -> go.Figure | None:
         """Generates a plotly Figure for the results
@@ -411,7 +420,9 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
                           'state': {'idle': self.idle,
                                   'reserved': self.reserved,
                                   'plot': plotdata},
-                          'controls': {'measure_iv': {'type': 'button',
+                          'controls': {'save_data': {'type': 'button',
+                                        'text': 'Save data'},
+                                       'measure_iv': {'type': 'button',
                                      'text': 'Measure default IV curve'},
                                      }})
         
@@ -430,6 +441,9 @@ class KeithleyDriver(USBDriverBase, WebNodeBase):
         if command == 'measure_iv':
             # measures default IV curve
             asyncio.create_task(self.measure_iv())
+        elif command == 'save_data':
+            if self.live_results is not None:
+                self.live_results.save_results(fnprefix=self.name.replace(' ', '_') + '_')
 
     def run(self, loop: asyncio.AbstractEventLoop):
         """Synchronous code to interact with the Keithley"""
@@ -637,7 +651,11 @@ class LabJackDriver(USBDriverBase, WebNodeBase):
 
                 logging.debug('%s => %s', self.name, cmd.__repr__())
 
-                response = cmd()
+                try:
+                    response = cmd()
+                except Exception as e:
+                    response = traceback.format_stack(e)
+                    logging.error(traceback.format_stack(e))
 
                 logging.debug('%s <= %s', self.name, response)
 
@@ -654,6 +672,9 @@ class LabJackDriver(USBDriverBase, WebNodeBase):
 
     async def _set_settling_time(self, settling_time: int) -> None:
         return await self.query(ljm.eWriteName, self.instr, 'STREAM_SETTLING_US', settling_time)
+    
+    async def _set_resolution_index(self, resolution_index: int) -> None:
+        return await self.query(ljm.eWriteName, self.instr, 'STREAM_RESOLUTION_INDEX', resolution_index)
 
     async def _start_stream(self, ScanRate, ScansPerSecond, addresses) -> None:
         self.actual_scanrate = await self.query(ljm.eStreamStart, self.instr, round(ScanRate / ScansPerSecond), len(addresses), addresses, ScanRate)
@@ -704,6 +725,7 @@ class LabJackDriver(USBDriverBase, WebNodeBase):
 
         #ljm.eStreamStop(self.instr)
         await self._set_settling_time(10)
+        #await self._set_resolution_index(7)
         logging.debug('Starting stream...')
         await self._start_stream(ScanRate, ScansPerSecond, addresses)
         self.stream_started.set()
@@ -743,10 +765,12 @@ class LabJackDriver(USBDriverBase, WebNodeBase):
                           'state': {'idle': self.idle,
                                   'reserved': self.reserved,
                                   'plot': plotdata},
-                          'controls': {'start_stream': {'type': 'button',
+                          'controls': {'save_data': {'type': 'button',
+                                                     'text': 'Save data'},
+                                    'start_stream': {'type': 'button',
                                      'text': 'Start stream'},
                                        'stop_stream': {'type': 'button',
-                                     'text': 'Stop stream'}
+                                     'text': 'Stop stream'},
                                      }})
         
         return d
@@ -766,7 +790,9 @@ class LabJackDriver(USBDriverBase, WebNodeBase):
             asyncio.create_task(self.stream())
         elif command == 'stop_stream':
             self.stop_stream.set()
-
+        elif command == 'save_data':
+            if self.live_results is not None:
+                self.live_results.save_results(fnprefix=self.name.replace(' ', '_') + '_')
 
 class PressureSensorwithInAmp(LabJackDriver):
 
@@ -1284,7 +1310,7 @@ async def main():
 
         plt.show()
 
-        np.savetxt('sio2_rinse_data_0_01mlmin_10xsalt.txt', np.vstack((t, V)).T)
+        np.savetxt('sio2_rinse_no_pressure_data_0_01mlmin_10xsalt.txt', np.vstack((t, V)).T)
 
     #await sp.run_until_idle(sp.set_digital_output(1, True))
 
@@ -1477,19 +1503,20 @@ async def labjack_stream():
 
     lj = PressureSensorDifferentialDouble(channel_high='AIN0', channel_low='AIN2', sensor_voltage=5.0, name='Double Differential Pressure Sensor')
     await lj.initialize()
-    sample_rate = 500
+    sample_rate = 100
+    await lj._set_resolution_index(7)
     stream = asyncio.create_task(lj.stream(1, sample_rate))
     logging.debug('Sleeping...')
     await lj.stream_started.wait()
-    await asyncio.sleep(10.5)
+    await asyncio.sleep(4.5)
     logging.debug('Setting stop event...')
     lj.stop_stream.set()
     await stream
 
     lj.stop()
-    print(len(lj.live_results.results[0]), lj.actual_scanrate)
-    plt.plot(lj.live_results.results[0], lj.live_results.results[1])
-    plt.show()
+    print(len(lj.live_results.results[0]), lj.actual_scanrate, np.std(lj.live_results.results[0]))
+    #plt.plot(lj.live_results.results[0], lj.live_results.results[1])
+    #plt.show()
 
 async def ivcurve():
 
@@ -1654,7 +1681,7 @@ if __name__=='__main__':
     logging.basicConfig(
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
-                            level=logging.INFO)
+                            level=logging.DEBUG)
     #mlog = logging.getLogger('matplotlib')
     #mlog.setLevel('WARNING')
     asyncio.run(main(), debug=True)
