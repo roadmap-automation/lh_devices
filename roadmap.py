@@ -406,7 +406,9 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
 
             statuses = [Status.BUSY if ch.reserved else Status.IDLE for ch in self.channels]
 
-            return web.Response(json={'status': statuses})
+            return web.Response(json=dict(status=Status.UP,
+                                          channel_status=statuses),
+                                status=200)
 
         app.add_routes(routes)
 

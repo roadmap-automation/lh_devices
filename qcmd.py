@@ -258,7 +258,9 @@ class QCMDMultiChannelMeasurementDevice(AssemblyBase):
             
             statuses = [Status.BUSY if ch.reserved else Status.IDLE for ch in self.channels]
 
-            return web.Response(json={'status': statuses}, status=200)
+            return web.Response(json=dict(status=Status.UP,
+                                          channel_status=statuses),
+                                status=200)
 
         @routes.get('/GetTaskData')
         async def get_task(request: web.Request) -> web.Response:
