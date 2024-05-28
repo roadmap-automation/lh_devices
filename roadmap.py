@@ -14,6 +14,8 @@ from assemblies import AssemblyBase, InjectionChannelBase, Network, NestedAssemb
 from connections import connect_nodes, Node
 from methods import MethodBase, MethodBaseDeadVolume
 
+from autocontrol.status import Status
+
 class RoadmapChannelBase(InjectionChannelBase):
 
     def __init__(self, loop_valve: HamiltonValvePositioner,
@@ -375,16 +377,16 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
             logging.info(f'{self.name} received task {task}')
             channel: int = task['channel']
             if len(task['method_data']['method_list']) > 1:
-                return web.Response(text='only one method allowed', status=400)
+                return web.Response(text=Status.INVALID, status=400)
 
             method = task['method_data']['method_list'][0]
             method_name: str = method['method_name']
             method_data: dict = method['method_data']
             if self.channels[channel].is_ready(method_name):
                 self.run_channel_method(channel, method_name, method_data)
-                return web.Response(text='accepted', status=200)
+                return web.Response(text=Status.SUCCESS, status=200)
             
-            return web.Response(text='busy', status=503)
+            return web.Response(text=Status.BUSY, status=503)
 
         @routes.get('/GetTaskData')
         async def get_task(request: web.Request) -> web.Response:
