@@ -376,6 +376,9 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
             task = await request.json()
             logging.info(f'{self.name} received task {task}')
             channel: int = task['channel']
+            if channel < len(self.channels):
+                return web.Response(text=Status.INVALID, status=400)
+            
             if len(task['method_data']['method_list']) > 1:
                 return web.Response(text=Status.INVALID, status=400)
 
