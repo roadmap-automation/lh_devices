@@ -397,7 +397,14 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
             # TODO: actually return task data
             # TODO: Determine what task data we want to save. Logging? success? Any returned errors?
             return web.Response(text=json.dumps({'id': task_id}), status=200)
-        
+
+        @routes.get('/GetStatus')
+        async def get_status(request: web.Request) -> web.Response:
+
+            statuses = [Status.BUSY if ch.reserved else Status.IDLE for ch in self.channels]
+
+            return web.Response(json={'status': statuses})
+
         app.add_routes(routes)
 
         for i, channel in enumerate(self.channels):
