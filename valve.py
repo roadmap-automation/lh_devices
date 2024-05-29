@@ -114,7 +114,7 @@ class ValveBase(ComponentBase):
                 'valve_svg': self._render_valve()
         }
 
-    def _render_valve(self, through_center=True, highlight_zero=True):
+    def _render_valve(self, through_center=True, highlight_zero=True, half_rotate=False):
 
         pad = 2
         node_radius = 4
@@ -123,8 +123,9 @@ class ValveBase(ComponentBase):
         big_radius = 20
         outer_radius = big_radius + 2 * node_radius
         centerx, centery = outer_radius + pad, outer_radius + pad
-        vertices = [(round(-big_radius * math.sin(i * 2 * math.pi / self.n_ports)) + centerx,
-                    round(big_radius * math.cos(i * 2 * math.pi / self.n_ports)) + centery)
+        angle_offset = 0 if not half_rotate else math.pi / self.n_ports
+        vertices = [(round(-big_radius * math.sin(i * 2 * math.pi / self.n_ports + angle_offset)) + centerx,
+                    round(big_radius * math.cos(i * 2 * math.pi / self.n_ports + angle_offset)) + centery)
                     for i in range(0, self.n_ports)]
 
         elements = [svg.Circle(cx=centerx, cy=centery, r=outer_radius, stroke='black', stroke_width=thick_stroke, fill='black', fill_opacity=0, stroke_dasharray=4)]
@@ -218,7 +219,8 @@ class LoopFlowValve(ValveBase):
             self._portmap = {}
 
     def _render_valve(self):
-        return super()._render_valve(through_center=False, highlight_zero=False)
+        half_rotate = True if self.n_ports == 6 else False
+        return super()._render_valve(through_center=False, highlight_zero=False, half_rotate=half_rotate)
 
 class LValve(ValveBase):
     """L Valve (each position connects two adjacent inlets / outlets). Port 0 is down (syringe),
