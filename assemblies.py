@@ -467,7 +467,7 @@ class InjectionChannelBase(AssemblyBase):
     def get_dead_volume(self, mode: str | None = None) -> float:
         return super().get_dead_volume(self.injection_node, mode)
 
-    def run_method(self, method_name: str, method_kwargs: dict) -> None:
+    def run_method(self, method_name: str, **method_kwargs) -> None:
 
         if not self.methods[method_name].is_ready():
             logging.error(f'{self.name}: not all devices in {method_name} are available')

@@ -14,6 +14,8 @@ from assemblies import AssemblyBase, InjectionChannelBase, Network, NestedAssemb
 from connections import connect_nodes, Node
 from methods import MethodBase, MethodBaseDeadVolume
 
+from autocontrol.status import Status
+
 class RoadmapChannelBase(InjectionChannelBase):
 
     def __init__(self, loop_valve: HamiltonValvePositioner,
@@ -305,7 +307,11 @@ class RoadmapChannelSleep(MethodBase):
         
         method = self.MethodDefinition(**kwargs)
         logging.info(f'{self.channel.name} sleeping {method.sleep_time} s')
+        self.reserve_all()
+        await self.channel.trigger_update()
         await asyncio.sleep(method.sleep_time)
+        self.release_all()
+        await self.channel.trigger_update()
 
 class RoadmapChannel(RoadmapChannelBase):
     """Roadmap channel with populated methods
@@ -367,26 +373,43 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
         @routes.post('/SubmitTask')
         async def handle_task(request: web.Request) -> web.Response:
             # TODO: turn task into a dataclass; parsing will change
-            task = request.json()
+            task = await request.json()
+            logging.info(f'{self.name} received task {task}')
             channel: int = task['channel']
-            method_name: str = task['method_name']
-            method_data: dict = task['method_data']
+            if channel < len(self.channels):
+                return web.Response(text=Status.INVALID, status=400)
+            
+            if len(task['method_data']['method_list']) > 1:
+                return web.Response(text=Status.INVALID, status=400)
+
+            method = task['method_data']['method_list'][0]
+            method_name: str = method['method_name']
+            method_data: dict = method['method_data']
             if self.channels[channel].is_ready(method_name):
                 self.run_channel_method(channel, method_name, method_data)
-                return web.Response(text='accepted', status=200)
+                return web.Response(text=Status.SUCCESS, status=200)
             
-            return web.Response(text='busy', status=200)
-        
+            return web.Response(text=Status.BUSY, status=503)
+
         @routes.get('/GetTaskData')
         async def get_task(request: web.Request) -> web.Response:
             # TODO: turn task into a dataclass; parsing will change
-            task = request.json()
+            task = await request.json()
             task_id = task['id']
 
             # TODO: actually return task data
             # TODO: Determine what task data we want to save. Logging? success? Any returned errors?
             return web.Response(text=json.dumps({'id': task_id}), status=200)
-        
+
+        @routes.get('/GetStatus')
+        async def get_status(request: web.Request) -> web.Response:
+
+            statuses = [Status.BUSY if ch.reserved else Status.IDLE for ch in self.channels]
+
+            return web.Response(json=dict(status=Status.UP,
+                                          channel_status=statuses),
+                                status=200)
+
         app.add_routes(routes)
 
         for i, channel in enumerate(self.channels):
@@ -466,8 +489,8 @@ if __name__=='__main__':
             try:
                 #qcmd_system.distribution_valve.valve.move(2)
                 await qcmd_system.initialize()
-                await sp0.run_until_idle(sp0.set_digital_output(0, True))
-                await sp0.run_until_idle(sp0.set_digital_output(1, True))
+                #await sp0.run_until_idle(sp0.set_digital_output(0, True))
+                #await sp0.run_until_idle(sp0.set_digital_output(1, True))
                 #await sp0.query('J1R')
 #                await asyncio.sleep(2)
 #                await sp0.run_until_idle(sp0.set_digital_output(0, False))

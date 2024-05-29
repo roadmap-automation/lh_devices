@@ -18,6 +18,8 @@ from bubblesensor import SyringePumpwithBubbleSensor, BubbleSensorBase, SMDSenso
 from webview import run_socket_app, WebNodeBase
 from methods import MethodBaseDeadVolume
 
+from autocontrol.status import Status
+
 class Timer:
     """Basic timer. Essentially serves as a sleep but only allows one instance to run."""
 
@@ -239,21 +241,26 @@ class QCMDMultiChannelMeasurementDevice(AssemblyBase):
             task = await request.json()
             channel: int = task['channel']
             if channel < len(self.channels):
-                method_name: str = task['method_name']
-                method_data: dict = task['method_data']
+                method = task['method_data']['method_list'][0]
+                method_name: str = method['method_name']
+                method_data: dict = method['method_data']
                 if not self.channels[channel].reserved:
                     self.run_method(self.channels[channel].methods[method_name](**method_data))
                    
                     return web.Response(text='accepted', status=200)
                 
-                return web.Response(text='busy', status=200)
+                return web.Response(text='busy', status=503)
             
             return web.Response(text=f'error: channel {channel} does not exist', status=400)
         
         @routes.get('/GetStatus')
         async def get_status(request: web.Request) -> web.Response:
             
-            return web.Response(text=json.dumps({'status': [ch.reserved for ch in self.channels]}), status=200)
+            statuses = [Status.BUSY if ch.reserved else Status.IDLE for ch in self.channels]
+
+            return web.Response(json=dict(status=Status.UP,
+                                          channel_status=statuses),
+                                status=200)
 
         @routes.get('/GetTaskData')
         async def get_task(request: web.Request) -> web.Response:
