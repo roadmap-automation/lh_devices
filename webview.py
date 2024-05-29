@@ -20,7 +20,7 @@ Approach:
 
 """
 
-TEMPLATE_PATH = Path(__file__).parent / 'templates'
+TEMPLATE_PATH = Path(__file__).parent / 'static'
 
 sio = socketio.AsyncServer()
 
@@ -44,7 +44,9 @@ class WebNodeBase:
 
         @routes.get('/')
         async def get_handler(request: web.Request) -> web.Response:
-            return web.FileResponse(TEMPLATE_PATH / template)
+             return web.FileResponse(TEMPLATE_PATH / template)
+
+        routes.static('/src', TEMPLATE_PATH / 'src', follow_symlinks=True)
 
         @routes.get('/state')
         @routes.get(f'/{self.id}/state')
