@@ -258,8 +258,8 @@ class QCMDMultiChannelMeasurementDevice(AssemblyBase):
             
             statuses = [Status.BUSY if ch.reserved else Status.IDLE for ch in self.channels]
 
-            return web.Response(json=dict(status=Status.UP,
-                                          channel_status=statuses),
+            return web.Response(text=json.dumps(dict(status=Status.IDLE,
+                                          channel_status=statuses)),
                                 status=200)
 
         @routes.get('/GetTaskData')
@@ -1314,7 +1314,7 @@ async def qcmd_multichannel_measure():
     measurement_system = QCMDMultiChannelMeasurementDevice('localhost', 5011, 2)
 
     app = measurement_system.create_web_app(template='roadmap.html')
-    runner = await run_socket_app(app, 'localhost', 5003)
+    runner = await run_socket_app(app, 'localhost', 5005)
     print(json.dumps(await measurement_system.get_info()))
     try:
         await asyncio.Event().wait()
@@ -1367,5 +1367,5 @@ if __name__=='__main__':
                             format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S',
                             level=logging.INFO)
-        asyncio.run(qcmd_distribution(), debug=True)
+        asyncio.run(qcmd_multichannel_measure(), debug=True)
         #asyncio.run(sptest())

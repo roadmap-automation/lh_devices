@@ -378,7 +378,7 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
             channel: int = task['channel']
             if channel > len(self.channels) - 1:
                 return web.Response(text=str(Status.INVALID), status=400)
-            
+
             if len(task['method_data']['method_list']) > 1:
                 return web.Response(text=str(Status.INVALID), status=400)
 
@@ -406,8 +406,8 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
 
             statuses = [Status.BUSY if ch.reserved else Status.IDLE for ch in self.channels]
 
-            return web.Response(json=dict(status=Status.UP,
-                                          channel_status=statuses),
+            return web.Response(text=json.dumps(dict(status=Status.IDLE,
+                                          channel_status=statuses)),
                                 status=200)
 
         app.add_routes(routes)
