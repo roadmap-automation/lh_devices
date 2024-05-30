@@ -376,20 +376,20 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
             task = await request.json()
             logging.info(f'{self.name} received task {task}')
             channel: int = task['channel']
-            if channel < len(self.channels):
-                return web.Response(text=Status.INVALID, status=400)
+            if channel > len(self.channels) - 1:
+                return web.Response(text=str(Status.INVALID), status=400)
             
             if len(task['method_data']['method_list']) > 1:
-                return web.Response(text=Status.INVALID, status=400)
+                return web.Response(text=str(Status.INVALID), status=400)
 
             method = task['method_data']['method_list'][0]
             method_name: str = method['method_name']
             method_data: dict = method['method_data']
             if self.channels[channel].is_ready(method_name):
                 self.run_channel_method(channel, method_name, method_data)
-                return web.Response(text=Status.SUCCESS, status=200)
+                return web.Response(text=str(Status.SUCCESS), status=200)
             
-            return web.Response(text=Status.BUSY, status=503)
+            return web.Response(text=str(Status.BUSY), status=503)
 
         @routes.get('/GetTaskData')
         async def get_task(request: web.Request) -> web.Response:
