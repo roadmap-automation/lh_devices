@@ -14,7 +14,7 @@
         }
 
         function create_device(device_id, parent_div) {
-            var newdevicediv = create_device_div(device_id)
+            let newdevicediv = create_device_div(device_id)
             parent_div.children(".assembly_devices").append(newdevicediv)
 
             // Register update function
@@ -73,18 +73,18 @@
         }
 
         function create_assembly_div(assembly_id) {
-            var newdiv = new $('<div>')
+            let newdiv = new $('<div>')
                             .addClass(assembly_id)
                             .addClass("assembly")
             newdiv.append(new $('<div>').addClass("assembly_name"))
             newdiv.append(new $('<div>').addClass("assembly_id"))
             newdiv.append(new $('<div>').addClass("assembly_modes"))
             newdiv.append(new $('<div>').addClass("assembly_controls"))
-            assembliesdiv = new $('<div>')
+            let assembliesdiv = new $('<div>')
                 .addClass('sub_assemblies')
                 .addClass("grid-container")
                 .appendTo(newdiv)
-            devicesdiv = new $('<div>')
+            let devicesdiv = new $('<div>')
                 .addClass('assembly_devices')
                 .addClass("grid-container")
                 .appendTo(newdiv)
@@ -93,7 +93,7 @@
         }
 
         function create_device_div(device_id) {
-            var newdiv = new $('<div>')
+            let newdiv = new $('<div>')
                             .addClass(device_id)
                             .addClass("devicebox")
             newdiv.append(new $('<div>').addClass("device_name"))
@@ -143,10 +143,13 @@
                             // select all objects with class corresponding to object's id
                             $(this).children(".device_name").empty().append(data['name']);
                             $(this).children(".device_id").empty().append(new $("<a>").attr("href", data['id'] + "/").text(data['id']));
-                            statediv = $(this).children(".device_state")
+                            let statediv = $(this).children(".device_state")
+                            statediv.children(".plotcontainer").each(function (index) {
+                                Plotly.purge($(this).get(0))
+                            })
                             statediv.empty()
                             if ('valve' in data['state']) {
-                                valvestatecontainer = $('<div>').text('Valve position: ').appendTo(statediv)
+                                let valvestatecontainer = $('<div>').text('Valve position: ').appendTo(statediv)
                                 $('<text>').addClass("valve_position").text(data['state']['valve']['valve_position']).appendTo(valvestatecontainer)
                                 $('<div>').addClass("valve_svg").html(data['state']['valve']['valve_svg']).appendTo(statediv)
                             }
@@ -157,7 +160,7 @@
                             }
                             if ('plot' in data['state']) {
                                 if (data['state']['plot'] != null) {
-                                    newdiv = $('<div>').addClass('plotcontainer')
+                                    let newdiv = $('<div>').addClass('plotcontainer')
                                     newdiv.appendTo(statediv)
                                     let plotobj = JSON.parse(data['state']['plot'].replace(new RegExp('\n', 'g'), '<br>'))
                                     Plotly.react(newdiv.get(0), plotobj['data'], plotobj['layout'], {responsive: true})
@@ -165,7 +168,8 @@
                             }
                             statediv.append($('<hr>'))
                             if ('digital_outputs' in data['state']) {
-                                do_container = $('<div>').text('Digital outputs: ').appendTo(statediv)
+                                let do_container = $('<div>').text('Digital outputs: ')
+                                do_container.appendTo(statediv)
                                 for (let i = 0; i < data['state']['digital_outputs'].length; i++) {
                                     let newctrl = $('<button>')
                                         .addClass("digital_button")
@@ -203,7 +207,7 @@
         function update_modes(modediv, id, modes, current_mode) {
             if (modes.length) {
                 modediv.empty().append("Select mode: ")
-                var newselect = $('<select>')
+                let newselect = $('<select>')
                                         .addClass("mode_select")
                 $("<option>").text("").appendTo(newselect)
                 for (const mode of modes) {
@@ -213,7 +217,7 @@
                     newselect.val(current_mode)
                 }
                 newselect.on("change", function () {
-                    var val = newselect.val()
+                    let val = newselect.val()
                     if (val != "") {
                         issue_command(id, "change_mode", val)
                     }
@@ -228,9 +232,9 @@
                 for (const [cid, cdata] of Object.entries(controls)) {
                     //console.log(cid, cdata)
                     ctype = cdata['type']
-                    var newctrl = null
+                    let newctrl = null
                     if (ctype == 'button') {
-                        var newctrl = $('<button>')
+                       newctrl = $('<button>')
                                         .addClass(cid)
                                         .addClass(ctype)
                                         .text(cdata['text'])
@@ -240,13 +244,15 @@
                                         .appendTo(devicediv);
                                     }
                     else if (ctype=='select') {
-                        var newctrl = $('<div>')
+                        newctrl = $('<div>')
                                         .addClass(cid)
                                         .addClass(ctype)
                                         .appendTo(devicediv);
-                        var inputcontainer = $('<div>').addClass("textbox_controls").appendTo(newctrl)
+                        var inputcontainer = $('<div>').addClass("textbox_controls")
+                        inputcontainer.appendTo(newctrl)
                         $('<div>').text(cdata['text']).appendTo(inputcontainer)                                            
-                        let newselect = $('<select>').appendTo(inputcontainer)
+                        let newselect = $('<select>')
+                        newselect.appendTo(inputcontainer)
                         for (const option of cdata['options']) {
                             $("<option>").text(option).appendTo(newselect)
                         }
@@ -257,12 +263,12 @@
                         })
                     }
                     else if (ctype=='textbox') {
-                        var newctrl = $('<div>')
+                        let newctrl = $('<div>')
                                         .addClass(cid)
                                         .addClass(ctype)
                                         .appendTo(devicediv);
                         $('<div>').text(cdata['text']).appendTo(newctrl)                    
-                        var inputcontainer = $('<div>').addClass("textbox_controls").appendTo(newctrl)
+                        let inputcontainer = $('<div>').addClass("textbox_controls").appendTo(newctrl)
                         let newtext = $('<input type=text>').addClass('input_text').appendTo(inputcontainer)
                         let newtextbutton = $('<button>').addClass('textbutton').text('Go').appendTo(inputcontainer)                    
                         newtextbutton.on("click", function () {
@@ -270,18 +276,20 @@
                         })
                     }
                     else if (ctype=='number') {
-                        var newctrl = $('<div>')
+                        let newctrl = $('<div>')
                                         .addClass(cid)
                                         .addClass(ctype)
                                         .appendTo(devicediv);
                         
-                        var inputcontainer = $('<div>').addClass("textbox_controls").appendTo(newctrl)
+                        let inputcontainer = $('<div>').addClass("textbox_controls")
+                        inputcontainer.appendTo(newctrl)
                         $('<div>').text(cdata['text']).appendTo(inputcontainer)                    
                         let newtext = $('<input type=number>')
                                         .addClass('input_number')
                                         .attr("min", 1)
                                         .val(1).appendTo(inputcontainer)
-                        let newtextbutton = $('<button>').addClass('textbutton').text('Go').appendTo(inputcontainer)                    
+                        let newtextbutton = $('<button>').addClass('textbutton').text('Go')
+                        newtextbutton.appendTo(inputcontainer)                    
                         newtextbutton.on("click", function () {
                             issue_command(device_id, cid, {'n_prime': newtext.val()})
                         })
@@ -304,14 +312,14 @@
         }
 
         function progressbar(position, volume) {
-            var newprogressbar = $('<div>').addClass("progress_bar").addClass("device_row")
+            let newprogressbar = $('<div>').addClass("progress_bar").addClass("device_row")
             $('<div>').addClass("device_column").text("Syringe position: ").appendTo(newprogressbar)
-            var newframe = $('<div>').addClass("progress_bar_frame")
+            let newframe = $('<div>').addClass("progress_bar_frame")
                                      .addClass("device_column")
-            var newfill = $('<div>').addClass("progress_bar_fill")
+            let newfill = $('<div>').addClass("progress_bar_fill")
                                     .css('width', position / volume * 100 + '%')
                                     .appendTo(newframe)
-            var newtext = $('<div>').addClass('progress_bar_text')
+            let newtext = $('<div>').addClass('progress_bar_text')
                                     .text(format_volume(position))
                                     .appendTo(newframe)
             
@@ -327,7 +335,7 @@
                     return response.json();
                 }).then(function (info) {
                     //console.log(info)
-                    var newdiv = create_assembly_div(info['id'])
+                    let newdiv = create_assembly_div(info['id'])
                     gen_assembly_tree(info, newdiv)
                     newdiv.addClass("top-frame")
                     newdiv.children(".assembly_name").attr("id", "top_assembly_name").addClass("top_assembly_name_text")
