@@ -306,10 +306,10 @@ class RoadmapChannelSleep(MethodBase):
     async def run(self, **kwargs) -> None:
         
         method = self.MethodDefinition(**kwargs)
-        logging.info(f'{self.channel.name} sleeping {method.sleep_time} s')
+        logging.info(f'{self.channel.name} sleeping {method.sleep_time} min')
         self.reserve_all()
         await self.channel.trigger_update()
-        await asyncio.sleep(method.sleep_time)
+        await asyncio.sleep(method.sleep_time * 60)
         self.release_all()
         await self.channel.trigger_update()
 
@@ -403,7 +403,6 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
 
         @routes.get('/GetStatus')
         async def get_status(request: web.Request) -> web.Response:
-
             statuses = [Status.BUSY if ch.reserved else Status.IDLE for ch in self.channels]
 
             return web.Response(text=json.dumps(dict(status=Status.IDLE,
