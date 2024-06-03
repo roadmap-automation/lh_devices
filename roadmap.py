@@ -312,6 +312,7 @@ class RoadmapChannelSleep(MethodBase):
         await asyncio.sleep(method.sleep_time * 60)
         self.release_all()
         await self.channel.trigger_update()
+        logging.info(f'{self.channel.name} sleep complete')
 
 class RoadmapChannel(RoadmapChannelBase):
     """Roadmap channel with populated methods
