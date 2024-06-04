@@ -1,30 +1,55 @@
-import { createApp } from 'vue';
+import { createApp, ref } from 'vue';
+import { socket, get_state } from './connections.js';
 
-import PlotComponent from './components/PlotComponent.js';
-import FormComponent from './components/FormComponent.js';
+const app_id = ref('')
+
+const status = ref({id: '',
+                     idle: false,
+                     name: 'alice',
+                     type: 'none',
+                     status: {id: '',
+                     idle: false,
+                     name: 'bob',
+                     type: 'none',
+                     status: null}})
+
+socket.on('connect', async () => {
+    status.value = await get_state('')
+    app_id.value = status.value.id
+
+    socket.on(app_id.value, async () => {
+        status.value = await get_state(app_id.value)
+     })
+})
+
+//import PlotComponent from './components/PlotComponent.js';
+//import FormComponent from './components/FormComponent.js';
+import StatusComponent from './components/StatusComponent.js';
+import Valve from './components/Valve.js'
 
 const app = createApp({
     data: () => ({
-        traces: [{ x: [0,1,2], y: [3,2,4], type: 'xy' }],
-        form_inputs: {
-            name: "solvent",
-            value: 32.0
-        },
+        status: {status: status},
     }),
     components: {
-        PlotComponent,
-        FormComponent
+        StatusComponent,
+        Valve
     },
     template: `
         <div>
             <h2>Vue.js App</h2>
-            <form-component @inputs_changed="onFormInputsChanged" />
-            <plot-component :traces="traces" />
+            <status-component v-bind="status" @inputs_changed="onFormInputsChanged" />
+            <valve v-if="'valve' in status.status" v-bind="{valve: status.status.valve}" @changed="onValveChanged" />
         </div>
     `,
     methods: {
         onFormInputsChanged(inputs) {
-            alert(`Received: ${inputs.name} = ${inputs.value}`);
+            //alert(`Received: ${inputs.name} = ${inputs.value}`);
+            //console.log(inputs)
+            socket.emit(app_id.value, {"command": "update_status", "data": {"status": inputs.idle}})
+        },
+        onValveChanged(position) {
+            socket.emit(app_id.value, {"command": "move_valve", "data": {"position": position}})
         }
     }
 });

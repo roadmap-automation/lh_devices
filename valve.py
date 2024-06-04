@@ -1,6 +1,7 @@
 import logging
 import svg
 import math
+import copy
 from typing import List
 from connections import Port, Node
 from components import ComponentBase
@@ -106,12 +107,15 @@ class ValveBase(ComponentBase):
             dict: valve status information
         """
 
+        template_canvas, position_paths, combined_canvas = self._render_valve()
         return {
                 'name': self.name,
                 'valve_position': self.position,
                 'number_positions': self.n_positions,
                 'number_ports': self.n_ports,
-                'valve_svg': self._render_valve()
+                'valve_svg': combined_canvas,
+                'valve_svg_template': template_canvas,
+                'valve_svg_paths': position_paths
         }
 
     def _render_valve(self, through_center=True, highlight_zero=True, half_rotate=False):
@@ -136,23 +140,46 @@ class ValveBase(ComponentBase):
         for v in vertices[1:]:
             elements.append(svg.Circle(cx=v[0], cy=v[1], r=node_radius, stroke='black', stroke_width=stroke_width, fill='black', fill_opacity=0.5))
 
-        for start, end in self._portmap.items():
-            vs = vertices[start]
-            vn = vertices[end]
-
-            pathdata = [svg.MoveTo(x=vs[0], y=vs[1])]
-            if through_center:
-                pathdata.append(svg.LineTo(x=centerx, y=centery))
-            pathdata.append(svg.LineTo(x=vn[0], y=vn[1]))
-
-            elements.append(svg.Path(stroke="black", stroke_width=thick_stroke, fill_opacity=0, d=pathdata))
-
-        canvas = svg.SVG(
+        template_canvas = svg.SVG(
             viewBox=svg.ViewBoxSpec(0, 0, (outer_radius + pad) * 2, (outer_radius + pad) * 2),
             elements=elements
-        )
+        ).as_str()
 
-        return canvas.as_str()
+        position_paths = {}
+        starting_position = copy.copy(self.position)
+        for position in range(self.n_positions + 1):
+            self.move(position)
+            path_elements = []
+
+            for start, end in self._portmap.items():
+                vs = vertices[start]
+                vn = vertices[end]
+
+                pathdata = [svg.MoveTo(x=vs[0], y=vs[1])]
+                if through_center:
+                    pathdata.append(svg.LineTo(x=centerx, y=centery))
+                pathdata.append(svg.LineTo(x=vn[0], y=vn[1]))
+
+                path_elements.append(svg.Path(stroke="black", stroke_width=thick_stroke, fill_opacity=0, d=pathdata))
+
+            if position == starting_position:
+                combined_elements = elements + path_elements
+
+            canvas = svg.SVG(
+                viewBox=svg.ViewBoxSpec(0, 0, (outer_radius + pad) * 2, (outer_radius + pad) * 2),
+                elements=path_elements
+            )
+
+            position_paths[position] = canvas.as_str()
+        
+        combined_canvas = svg.SVG(
+                viewBox=svg.ViewBoxSpec(0, 0, (outer_radius + pad) * 2, (outer_radius + pad) * 2),
+                elements=combined_elements
+            ).as_str()
+
+        self.move(starting_position)
+
+        return template_canvas, position_paths, combined_canvas
 
 class SyringeValveBase(ValveBase):
 
