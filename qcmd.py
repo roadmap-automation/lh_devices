@@ -148,6 +148,37 @@ class QCMDMeasurementInterface:
         except (ConnectionRefusedError, ClientConnectionError):
             logging.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
 
+    async def record_tag(self, tag_name: str = '', record_time: float = 0.0, sleep_time: float = 0.0) -> dict:
+        """Executes timer and sends record command to QCMD. Call by sending
+            {"method": "record", {**kwargs}} over GSIOC.
+        """
+
+        record_time = float(record_time)
+        sleep_time = float(sleep_time)
+
+        # calculate total wait time
+        wait_time = record_time + sleep_time
+
+        # wait the full time
+        await asyncio.sleep(wait_time)
+
+        # send data request to QCMD interface
+        post_data = {'command': 'set_tag',
+                    'value': {'tag': tag_name,
+                            'delta_t': record_time}}
+
+        logging.info(f'{self.session._base_url}{self.url_path} => {post_data}')
+
+        # send an http request to QCMD server
+        try:
+            async with self.session.post(self.url_path, json=post_data, timeout=10) as resp:
+                response_json = await resp.json()
+                logging.info(f'{self.session._base_url}{self.url_path} <= {response_json}')
+                return response_json
+        except (ConnectionRefusedError, ClientConnectionError):
+            logging.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
+
+
 class QCMDMeasurementChannel(QCMDMeasurementInterface, WebNodeBase):
     
     def __init__(self, http_address: str, name='QCMDRecorder') -> None:
@@ -159,6 +190,7 @@ class QCMDMeasurementChannel(QCMDMeasurementInterface, WebNodeBase):
         self.reserved = False
 
         self.methods = {'QCMDRecord': self.QCMDRecord,
+                        'QCMDRecordTag': self.QCMDRecordTag,
                         'QCMDInit': self.QCMDInit,
                         'QCMDSleep': self.QCMDSleep}
         self.result: dict | None = None
@@ -199,6 +231,25 @@ class QCMDMeasurementChannel(QCMDMeasurementInterface, WebNodeBase):
         await self.trigger_update()
 
         self.result = await self.record(record_time, sleep_time)
+
+        self.release()
+        self.idle = True
+        await self.trigger_update()
+
+    async def QCMDRecordTag(self, tag_name: str = '', record_time: float = 0.0, sleep_time: float = 0.0):
+        """Sets a tag after sleep_time + record_time
+
+        Args:
+            tag_name (str, optional): Tag name
+            record_time (float, optional): Time to record in seconds. Defaults to 0.0.
+            sleep_time (float, optional): Time to sleep before recording in seconds. Defaults to 0.0.
+        """
+
+        self.reserve()
+        self.idle = False
+        await self.trigger_update()
+
+        self.result = await self.record_tag(tag_name, record_time, sleep_time)
 
         self.release()
         self.idle = True
