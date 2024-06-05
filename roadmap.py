@@ -241,27 +241,27 @@ class DirectInject(MethodBaseDeadVolume):
 
         # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
         logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
-        await self.channel.wait_for_trigger()
+        await self.wait_for_trigger()
         logging.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await asyncio.gather(self.channel.change_mode('LHPrime'), self.distribution_mode.activate())
 
         # Wait for trigger to switch to {method.name} mode (LH performs injection)
         logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
-        await self.channel.wait_for_trigger()
+        await self.wait_for_trigger()
 
         logging.info(f'{self.channel.name}.{method.name}: Switching to LHInject mode')
         await self.channel.change_mode('LHInject')
 
         # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
         logging.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
-        await self.channel.wait_for_trigger()
+        await self.wait_for_trigger()
 
         logging.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await self.channel.change_mode('LHPrime')
 
         # Wait for trigger to switch to Standby mode (this may not be necessary)
         logging.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
-        await self.channel.wait_for_trigger()
+        await self.wait_for_trigger()
 
         # switch to standby mode    
         logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
