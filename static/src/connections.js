@@ -8,7 +8,6 @@ export async function get_state(id) {
         id_prefix = '/' + id
     }
     let retval = await(await fetch(id_prefix + '/state')).json()
-    console.log(retval)
     return retval
 }
 

@@ -35,8 +35,8 @@ class VueTest(WebNodeBase):
 
 async def main():
 
-    vuetest = VueTest(valve=SyringeYValve(1))
-    #vuetest = HamiltonSyringePump(HamiltonSerial(), '0', SyringeYValve(1), 5000)
+    #vuetest = VueTest(valve=SyringeYValve(1))
+    vuetest = HamiltonSyringePump(HamiltonSerial(), '0', SyringeYValve(1), 5000, name='Syringe Pump')
     app = vuetest.create_web_app('index.html')
     runner = await run_socket_app(app, 'localhost', 5020)
     try:

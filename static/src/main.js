@@ -15,6 +15,7 @@ const status = ref({id: '',
 
 socket.on('connect', async () => {
     status.value = await get_state('')
+    console.log(status.value)
     app_id.value = status.value.id
 
     socket.on(app_id.value, async () => {
@@ -26,6 +27,7 @@ socket.on('connect', async () => {
 //import FormComponent from './components/FormComponent.js';
 import StatusComponent from './components/StatusComponent.js';
 import Valve from './components/Valve.js'
+import HamiltonDevice from './components/HamiltonDevice.js'
 
 const app = createApp({
     data: () => ({
@@ -33,13 +35,16 @@ const app = createApp({
     }),
     components: {
         StatusComponent,
+        HamiltonDevice,
         Valve
     },
     template: `
-        <div>
+        <div class=row>
             <h2>Vue.js App</h2>
             <status-component v-bind="status" @inputs_changed="onFormInputsChanged" />
             <valve v-if="'valve' in status.status" v-bind="{valve: status.status.valve}" @changed="onValveChanged" />
+            <hamilton-device class="col" v-bind="status.status" />
+            <hamilton-device class="col" v-bind="status.status" />
         </div>
     `,
     methods: {
