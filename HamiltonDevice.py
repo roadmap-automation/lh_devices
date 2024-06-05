@@ -665,7 +665,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             int: max position in half steps
         """
 
-        return self._full_stroke() / 2
+        return self._full_stroke() // 2
 
     def _min_flow_rate(self) -> int:
         """Calculates minimum flow rate of device
@@ -920,6 +920,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             total_steps_dispensed += current_position - self.syringe_position
         else:
             # number of full_volume loops plus remainder
+            print(total_steps, full_stroke)
             stroke_steps = [full_stroke] * (total_steps // full_stroke) + [total_steps % full_stroke]
             for stroke in stroke_steps:
                 if stroke > 0:
