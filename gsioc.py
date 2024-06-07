@@ -114,8 +114,8 @@ class GSIOC(aioserial.AioSerial):
 
                 logging.debug('Connection reset...')
         except asyncio.CancelledError:
-            logging.info('Sending break and closing GSIOC connection...')
-            await self.write1(chr(10))
+            logging.info('Closing GSIOC connection...')
+            #await self.write1(chr(10))
         except Exception:
             raise
 
