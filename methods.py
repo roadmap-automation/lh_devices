@@ -81,11 +81,13 @@ class MethodBasewithGSIOC(MethodBase):
             listening to a GSIOC device at a time.
         """
 
+        logging.debug('Starting GSIOC monitor')
         async with self.gsioc.client_lock:
+            logging.debug('Got GSIOC client lock...')
             try:
                 while True:
                     data: GSIOCMessage = await self.gsioc.message_queue.get()
-
+                    logging.debug(f'GSIOC got data {data}')
                     response = await self.handle_gsioc(data)
                     if data.messagetype == GSIOCCommandType.IMMEDIATE:
                         await self.gsioc.response_queue.put(response)
