@@ -192,7 +192,8 @@ class QCMDMeasurementChannel(QCMDMeasurementInterface, WebNodeBase):
         self.methods = {'QCMDRecord': self.QCMDRecord,
                         'QCMDRecordTag': self.QCMDRecordTag,
                         'QCMDInit': self.QCMDInit,
-                        'QCMDSleep': self.QCMDSleep}
+                        'QCMDSleep': self.QCMDSleep,
+                        'QCMDAcceptTransfer': self.QCMDAcceptTransfer}
         self.result: dict | None = None
 
     async def QCMDInit(self):
@@ -200,6 +201,12 @@ class QCMDMeasurementChannel(QCMDMeasurementInterface, WebNodeBase):
         """
 
         logging.info(f'{self.name}: Received Init command')
+
+    async def QCMDAcceptTransfer(self, contents: str = ''):
+        """Accept transfer
+        """
+
+        logging.info(f'{self.name}: Received transfer of material {contents}')
 
     async def QCMDSleep(self, sleep_time: float = 0.0) -> None:
         """Sleep
