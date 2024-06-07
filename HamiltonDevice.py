@@ -866,7 +866,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             if error:
                 logging.error(f'{self}: Syringe move error {error}')
 
-    async def smart_dispense(self, volume: float, dispense_flow_rate: float, interrupt_index: int | None = None) -> None:
+    async def smart_dispense(self, volume: float, dispense_flow_rate: float, interrupt_index: int | None = None) -> float:
         """Smart dispense, including both aspiration at max flow rate, dispensing at specified
             flow rate, and the ability to handle a volume that is larger than the syringe volume
             
@@ -882,10 +882,10 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         # check that aspiration and dispense positions are defined
         if (not hasattr(self.valve, 'aspirate_position')) | (not hasattr(self.valve, 'dispense_position')):
             logging.error(f'{self.name}: valve must have aspirate_position and dispense_position defined to use smart_dispense')
-            return
+            return 0
         if (self.valve.aspirate_position is None) | (self.valve.dispense_position is None):
             logging.error(f'{self.name}: aspirate_position and dispense_position must be set to use smart_dispense')
-            return
+            return 0
         
         # convert speeds to V factors
         aspirate_flow_rate = self.max_aspirate_flow_rate
@@ -897,7 +897,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         logging.debug(f'{self.name}: smart dispense requested {total_steps} steps')
         if total_steps <= 0:
             logging.warning(f'{self.name}: volume is not positive, smart_dispense terminating')
-            return
+            return 0
 
         # calculate max number of steps
         full_stroke = self._get_max_position()
