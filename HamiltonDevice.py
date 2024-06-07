@@ -577,7 +577,9 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         }}
         info['state']= info['state'] | add_state
 
-        controls = {'home_syringe': {'type': 'button',
+        controls = {'soft_reset' : {'type': 'button',
+                                    'text': 'Soft Reset'},
+                    'home_syringe': {'type': 'button',
                                      'text': 'Home Syringe'},
                     'load_syringe': {'type': 'button',
                                      'text': 'Move to load syringe position'},
@@ -624,6 +626,20 @@ class HamiltonSyringePump(HamiltonValvePositioner):
         elif command == 'set_speed':
             # set the speed. Do not use run_until_idle because on-the-fly changes are permitted
             await self.run_async(self.set_speed(float(data['value']) * 1000 / 60))
+        elif command == 'soft_reset':
+            await self.soft_reset()
+
+    async def soft_reset(self) -> str:
+        """Soft reset ('z') to use after syringe overloads
+        """
+
+        response, error = await self.query('zR')
+        if error:
+            logging.error(f'{self}: Soft reset error {error}')
+
+        await self.update_syringe_status()
+
+        return error
 
     async def get_syringe_status(self) -> str:
         """Gets full status string of device
