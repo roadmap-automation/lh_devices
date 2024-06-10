@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import Coroutine, List, Dict
@@ -13,7 +14,7 @@ from components import InjectionPort, FlowCell
 from assemblies import AssemblyBase, InjectionChannelBase, Network, NestedAssemblyBase, Mode, AssemblyMode
 from connections import connect_nodes, Node
 from methods import MethodBase, MethodBaseDeadVolume
-from bubblesensor import BubbleSensorBase
+from bubblesensor import BubbleSensorBase, SMDSensoronHamiltonDevice
 
 from autocontrol.status import Status
 
@@ -38,8 +39,7 @@ class RoadmapChannelBase(InjectionChannelBase):
 
         # Measurement modes
         self.modes = {'Standby': Mode({loop_valve: 0,
-                                       syringe_pump: 0},
-                                       final_node=syringe_pump.valve.nodes[2]),
+                                       syringe_pump: 0}),
                      'LoadLoop': Mode({loop_valve: 1,
                                        syringe_pump: 3},
                                        final_node=syringe_pump.valve.nodes[2]),
@@ -50,8 +50,7 @@ class RoadmapChannelBase(InjectionChannelBase):
                     'PumpInject': Mode({loop_valve: 2,
                                         syringe_pump: 4}),
                     'LHPrime': Mode({loop_valve: 2,
-                                     syringe_pump: 0},
-                                     final_node=loop_valve.valve.nodes[3]),
+                                     syringe_pump: 0}),
                     'LHInject': Mode({loop_valve: 1,
                                       syringe_pump: 0},
                                       final_node=loop_valve.valve.nodes[3])
@@ -121,6 +120,7 @@ class LoadLoop(MethodBaseDeadVolume):
         name: str = "LoadLoop"
         pump_volume: str | float = 0, # uL
         excess_volume: str | float = 0, #uL
+        air_gap: str | float = 0, #uL, not used
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
@@ -137,7 +137,8 @@ class LoadLoop(MethodBaseDeadVolume):
 
         # Set dead volume and wait for method to ask for it (might need brief wait in the calling
         # method to make sure this updates in time)
-        dead_volume = self.channel.get_dead_volume(self.channel.injection_node, self.dead_volume_mode)
+        await self.distribution_mode.activate()
+        dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
@@ -157,6 +158,9 @@ class LoadLoop(MethodBaseDeadVolume):
 
         # At this point, liquid handler is done, release communications
         self.disconnect_gsioc()
+        for valve in self.distribution_mode.valves.keys():
+            valve.reserved = False
+            await valve.trigger_update()
         #self.release_liquid_handler.set()
 
         logging.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
@@ -186,8 +190,9 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
     @dataclass
     class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
-        name: str = "LoadLoop"
+        name: str = "LoadLoopBubbleSensor"
         pump_volume: str | float = 0, # uL
+        excess_volume: str | float = 0 # uL, not used
         air_gap: str | float = 0, #uL
 
     async def run(self, **kwargs):
@@ -206,9 +211,13 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         # Power the bubble sensor
         await self.channel.syringe_pump.set_digital_output(1, True)
 
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
+        await self.distribution_mode.activate()
+        await self.wait_for_trigger()
+
         # Set dead volume and wait for method to ask for it (might need brief wait in the calling
         # method to make sure this updates in time)
-        dead_volume = self.channel.get_dead_volume(self.channel.injection_node, self.dead_volume_mode)
+        dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
@@ -220,7 +229,7 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         logging.info(f'{self.channel.name}.{method.name}: Switching to LoadLoop mode')
 
         # Move all valves
-        await asyncio.gather(self.distribution_mode.activate(), self.channel.change_mode('LoadLoop'))
+        await self.channel.change_mode('LoadLoop')
 
         # Wait for trigger to switch to PumpAspirate mode
         logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
@@ -228,8 +237,10 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
 
         # At this point, liquid handler is done, release communications
         self.disconnect_gsioc()
-        #self.release_liquid_handler.set()
-
+        for valve in self.distribution_mode.valves.keys():
+            valve.reserved = False
+            await valve.trigger_update()
+        
         logging.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
         await self.channel.change_mode('PumpPrimeLoop')
 
@@ -328,7 +339,8 @@ class InjectLoopBubbleSensor(MethodBase):
         logging.info(f'{self.channel.name}.{method.name}: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
 
         # inject, interrupting if sensor 1 goes low (air detected at end of sample loop)
-        await self.channel.syringe_pump.smart_dispense(pump_volume, pump_flow_rate, 5)
+        actual_volume = await self.channel.syringe_pump.smart_dispense(pump_volume, pump_flow_rate, 5)
+        logging.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume} uL')
 
         # Switch to prime loop mode and flush
         await self.channel.primeloop(volume=1000)
@@ -362,7 +374,8 @@ class DirectInject(MethodBaseDeadVolume):
 
         # Set dead volume and wait for method to ask for it (might need brief wait in the calling
         # method to make sure this updates in time)
-        dead_volume = self.channel.get_dead_volume(self.channel.injection_node, self.dead_volume_mode)
+        await self.distribution_mode.activate()
+        dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
@@ -404,7 +417,7 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
     """Directly inject from LH to measurement system through distribution valve and injection system, using bubble sensors to direct flow.
     """
 
-    def __init__(self, channel: RoadmapChannelBase, gsioc: GSIOC, distribution_mode: AssemblyMode, inlet_bubble_sensor: BubbleSensorBase, outlet_bubble_sensor: BubbleSensorBase) -> None:
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC, inlet_bubble_sensor: BubbleSensorBase, outlet_bubble_sensor: BubbleSensorBase) -> None:
         super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()])
         self.channel = channel
         self.inlet_bubble_sensor = inlet_bubble_sensor
@@ -427,9 +440,17 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         # Connect to GSIOC communications
         self.connect_gsioc()
 
+        # power up bubble sensors
+        await self.inlet_bubble_sensor.initialize()
+        await self.outlet_bubble_sensor.initialize()
+
+        logging.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
+        await self.distribution_mode.activate()
+        await self.wait_for_trigger()
+
         # Set dead volume and wait for method to ask for it (might need brief wait in the calling
         # method to make sure this updates in time)
-        dead_volume = self.channel.get_dead_volume(self.channel.injection_node, self.dead_volume_mode)
+        dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
@@ -444,7 +465,6 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         # Wait for another trigger, which indicates that the LH is going to start asking after the bubble status
         logging.info(f'{self.channel.name}.{method.name}: Waiting for trigger to traverse air gap')
         await self.wait_for_trigger()
-        await self.outlet_bubble_sensor.initialize()
         logging.info(f'{self.channel.name}.{method.name}: Traversing air gap...')
         
         # make sure there's always something there to read
@@ -461,16 +481,24 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
                     self.dead_volume.get_nowait()
             await self.dead_volume.put(int(liquid_in_line))
 
-        # Wait for trigger to switch to {method.name} mode (LH performs injection)
+        # Wait for trigger to switch to LHInject mode (LH performs injection)
         logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
         await self.wait_for_trigger()
 
         logging.info(f'{self.channel.name}.{method.name}: Switching to LHInject mode')
         await self.channel.change_mode('LHInject')
 
+        # monitor the process for air in the line
+        logging.info(f'{self.channel.name}.{method.name}: Starting air monitor on inlet bubble sensor...')
+        monitor_task = asyncio.create_task(self.detect_air_gap(callback=self.channel.change_mode('LHPrime')))
+
         # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
         logging.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
         await self.wait_for_trigger()
+
+        # cancel monitor task if it hasn't already been triggered by air in line
+        if not monitor_task.done():
+            monitor_task.cancel()
 
         logging.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await self.channel.change_mode('LHPrime')
@@ -486,6 +514,20 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         # At this point, liquid handler is done, release communications
         self.disconnect_gsioc()
         self.release_all()
+
+    async def detect_air_gap(self, callback: Coroutine, poll_interval: float = 0.1):
+        """Helper method to detect air gap
+        """
+
+        liquid_in_line = True
+        try:
+            while liquid_in_line:
+                _, liquid_in_line = await asyncio.gather(asyncio.sleep(poll_interval), self.inlet_bubble_sensor.read())
+
+            logging.info(f'{self.channel.name}.detect_air_gap: Air detected, activating callback')            
+            await callback
+        except asyncio.CancelledError:
+            callback.close()
 
 class RoadmapChannelInit(MethodBase):
     """Initialize a ROADMAP channel
@@ -540,10 +582,20 @@ class RoadmapChannel(RoadmapChannelBase):
         # add standalone methods
         self.methods = {'InjectLoop': InjectLoop(self),
                         'RoadmapChannelInit': RoadmapChannelInit(self)}
-        
+
+class RoadmapChannelBubbleSensor(RoadmapChannel):
+    """Roadmap channel with populated methods
+    """
+
+    def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump, flow_cell: FlowCell, sample_loop: FlowCell, inlet_bubble_sensor: BubbleSensorBase, outlet_bubble_sensor: BubbleSensorBase, injection_node: Node | None = None, name: str = '') -> None:
+        super().__init__(loop_valve, syringe_pump, flow_cell, sample_loop, injection_node, name)
+
+        self.inlet_bubble_sensor = inlet_bubble_sensor
+        self.outlet_bubble_sensor = outlet_bubble_sensor
+
 class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
 
-    def __init__(self, channels: List[RoadmapChannel], distribution_system: DistributionBase, gsioc: GSIOC, name='') -> None:
+    def __init__(self, channels: List[RoadmapChannelBubbleSensor], distribution_system: DistributionBase, gsioc: GSIOC, name='') -> None:
         NestedAssemblyBase.__init__(self, [], channels + [distribution_system], name)
         AssemblyBase.__init__(self, self.devices, name)
 
@@ -567,7 +619,11 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
 
             # add system-specific methods to the channel
             ch.methods.update({'LoadLoop': LoadLoop(ch, distribution_system.modes[str(1 + 2 * i)], gsioc),
+                               'LoadLoopBubbleSensor': LoadLoopBubbleSensor(ch, distribution_system.modes[str(1 + 2 * i)], gsioc),
+                               'InjectLoop': InjectLoop(ch),
+                               'InjectLoopBubbleSensor': InjectLoopBubbleSensor(ch),
                                'DirectInject': DirectInject(ch, distribution_system.modes[str(2 + 2 * i)], gsioc),
+                               'DirectInjectBubbleSensor': DirectInjectBubbleSensor(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor),
                                'RoadmapChannelInit': RoadmapChannelInit(ch),
                                'RoadmapChannelSleep': RoadmapChannelSleep(ch)
                                })
@@ -651,8 +707,12 @@ if __name__=='__main__':
             #ser = HamiltonSerial(port='COM3', baudrate=38400)
             dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Valve')
             mvp0 = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve0'), name='Loop Valve 0')
+            outlet_bubble_sensor0 = SMDSensoronHamiltonDevice(mvp0, 2, 1)
+            inlet_bubble_sensor0 = SMDSensoronHamiltonDevice(mvp0, 1, 0)
             sp0 = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve0'), 5000., False, name='Syringe Pump 0')
             mvp1 = HamiltonValvePositioner(ser, '4', LoopFlowValve(6, name='loop_valve1'), name='Loop Valve 1')
+            outlet_bubble_sensor1 = SMDSensoronHamiltonDevice(mvp1, 2, 1)
+            inlet_bubble_sensor1 = SMDSensoronHamiltonDevice(mvp1, 1, 0)
             sp1 = HamiltonSyringePump(ser, '3', SyringeLValve(4, name='syringe_LValve1'), 5000., False, name='Syringe Pump 1')
             for sp in [sp0, sp1]:
                 sp.max_dispense_flow_rate = 5 * 1000 / 60
@@ -663,8 +723,8 @@ if __name__=='__main__':
             sampleloop0 = FlowCell(5060., 'sample_loop0')
             sampleloop1 = FlowCell(5060., 'sample_loop1')
 
-            channel_0 = RoadmapChannel(mvp0, sp0, fc0, sampleloop0, injection_node=ip.nodes[0], name='Channel 0')
-            channel_1 = RoadmapChannel(mvp1, sp1, fc1, sampleloop1, injection_node=ip.nodes[0], name='Channel 1')
+            channel_0 = RoadmapChannelBubbleSensor(mvp0, sp0, fc0, sampleloop0, injection_node=ip.nodes[0], inlet_bubble_sensor=inlet_bubble_sensor0, outlet_bubble_sensor=outlet_bubble_sensor0, name='Channel 0')
+            channel_1 = RoadmapChannelBubbleSensor(mvp1, sp1, fc1, sampleloop1, injection_node=ip.nodes[0], inlet_bubble_sensor=inlet_bubble_sensor1, outlet_bubble_sensor=outlet_bubble_sensor1, name='Channel 1')
             #channel_2 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 2')
             #channel_3 = RoadmapChannel(mvp, sp, fc, sampleloop, injection_node=ip.nodes[0], gsioc=gsioc, name='Channel 3')
             distribution_system = DistributionSingleValve(dvp, ip, 'Distribution System')
@@ -674,11 +734,11 @@ if __name__=='__main__':
 
             # connect distribution valve port 1 to syringe pump valve node 2 (top)
             connect_nodes(dvp.valve.nodes[1], sp0.valve.nodes[2], 73 + 20)
-            connect_nodes(dvp.valve.nodes[3], sp1.valve.nodes[2], 74 + 20)
+            connect_nodes(dvp.valve.nodes[3], sp1.valve.nodes[2], 220 + 20)
 
             # connect distribution valve port 2 to loop valve node 3 (top right)
-            connect_nodes(dvp.valve.nodes[2], mvp0.valve.nodes[3], 82 + 20)
-            connect_nodes(dvp.valve.nodes[4], mvp1.valve.nodes[3], 83 + 20)
+            connect_nodes(dvp.valve.nodes[2], mvp0.valve.nodes[3], 160)
+            connect_nodes(dvp.valve.nodes[4], mvp1.valve.nodes[3], 180)
 
             # connect syringe pump valve port 3 to sample loop
             connect_nodes(sp0.valve.nodes[3], sampleloop0.inlet_node, 0.0)
@@ -705,6 +765,7 @@ if __name__=='__main__':
             try:
                 #qcmd_system.distribution_valve.valve.move(2)
                 await qcmd_system.initialize()
+                gsioc_task = asyncio.create_task(gsioc.listen())
                 #await sp0.run_until_idle(sp0.set_digital_output(0, True))
                 #await sp0.run_until_idle(sp0.set_digital_output(1, True))
                 #await sp0.query('J1R')
@@ -727,8 +788,10 @@ if __name__=='__main__':
                 #await sp.run_until_idle(sp.move_absolute(0, sp._speed_code(sp.max_dispense_flow_rate)))
 
                 await asyncio.Event().wait()
+
             finally:
                 logging.info('Cleaning up...')
+                gsioc_task.cancel()
                 asyncio.gather(
                             runner.cleanup())
 
