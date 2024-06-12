@@ -737,7 +737,7 @@ if __name__=='__main__':
             connect_nodes(dvp.valve.nodes[3], sp1.valve.nodes[2], 220 + 20)
 
             # connect distribution valve port 2 to loop valve node 3 (top right)
-            connect_nodes(dvp.valve.nodes[2], mvp0.valve.nodes[3], 160)
+            connect_nodes(dvp.valve.nodes[2], mvp0.valve.nodes[3], 140)
             connect_nodes(dvp.valve.nodes[4], mvp1.valve.nodes[3], 180)
 
             # connect syringe pump valve port 3 to sample loop
