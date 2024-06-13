@@ -297,6 +297,7 @@ class QCMDMultiChannelMeasurementDevice(AssemblyBase):
             # TODO: turn task into a dataclass; parsing will change
             # testing: curl -X POST http://localhost:5003/SubmitTask -d "{\"channel\": 0, \"method_name\": \"DirectInjectBubbleSensor\", \"method_data\": {}}"
             task = await request.json()
+            logging.info(f'{self.name} received task {task}')
             channel: int = task['channel']
             if channel < len(self.channels):
                 method = task['method_data']['method_list'][0]
