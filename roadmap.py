@@ -50,7 +50,8 @@ class RoadmapChannelBase(InjectionChannelBase):
                     'PumpInject': Mode({loop_valve: 2,
                                         syringe_pump: 4}),
                     'LHPrime': Mode({loop_valve: 2,
-                                     syringe_pump: 0}),
+                                     syringe_pump: 0},
+                                     final_node=loop_valve.valve.nodes[3]),
                     'LHInject': Mode({loop_valve: 1,
                                       syringe_pump: 0},
                                       final_node=loop_valve.valve.nodes[3])
@@ -302,6 +303,7 @@ class InjectLoop(MethodBase):
 
         # Prime loop
         await self.channel.primeloop(volume=1000)
+        await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
         self.release_all()
 
@@ -344,6 +346,7 @@ class InjectLoopBubbleSensor(MethodBase):
 
         # Switch to prime loop mode and flush
         await self.channel.primeloop(volume=1000)
+        await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
         self.release_all()
 
@@ -354,7 +357,7 @@ class DirectInject(MethodBaseDeadVolume):
     def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC) -> None:
         super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()])
         self.channel = channel
-        self.dead_volume_mode: str = 'LHInject'
+        self.dead_volume_mode: str = 'LHPrime'
         self.distribution_mode = distribution_mode
 
     @dataclass
@@ -423,7 +426,7 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         self.inlet_bubble_sensor = inlet_bubble_sensor
         self.outlet_bubble_sensor = outlet_bubble_sensor
         self.distribution_mode = distribution_mode
-        self.dead_volume_mode: str = 'LHInject'
+        self.dead_volume_mode: str = 'LHPrime'
 
     @dataclass
     class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
@@ -692,13 +695,18 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
 if __name__=='__main__':
 
     import asyncio
+    import datetime
     from HamiltonComm import HamiltonSerial
     from valve import LoopFlowValve, SyringeYValve, DistributionValve, SyringeLValve
     from webview import run_socket_app
 
-    logging.basicConfig(format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
+    logging.basicConfig(handlers=[
+                        logging.FileHandler(datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_roadmap_recorder_log.txt'),
+                        logging.StreamHandler()
+                    ],
+                    format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S',
-                    level=logging.INFO)
+                    level=logging.DEBUG)
 
     if True:
         async def main():
