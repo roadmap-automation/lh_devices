@@ -206,6 +206,9 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         pump_volume = float(method.pump_volume)
         air_gap = float(method.air_gap)
 
+        # set minimum pump volume before checking for bubbles
+        min_pump_volume = 100 if pump_volume > 200 else 0
+
         # Connect to GSIOC communications
         self.connect_gsioc()
 
@@ -246,9 +249,13 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         await self.channel.change_mode('PumpPrimeLoop')
 
         # smart dispense the volume required to move plug quickly through loop, interrupting if sensor 2 goes low (air detected)
-        logging.info(f'{self.channel.name}.{method.name}: Moving plug through loop until air gap detected, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume)} uL')
-        actual_volume = await self.channel.syringe_pump.smart_dispense(self.channel.sample_loop.get_volume() - pump_volume, self.channel.syringe_pump.max_dispense_flow_rate, 6)
-        logging.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume} uL')
+        logging.info(f'{self.channel.name}.{method.name}: Moving plug through loop until air gap detected, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume)} uL with minimum volume {min_pump_volume} uL')
+        if min_pump_volume > 0:
+            actual_volume0 = await self.channel.syringe_pump.smart_dispense(min_pump_volume, self.channel.syringe_pump.max_dispense_flow_rate)
+        else:
+            actual_volume0 = 0.0
+        actual_volume = await self.channel.syringe_pump.smart_dispense(self.channel.sample_loop.get_volume() - pump_volume - min_pump_volume, self.channel.syringe_pump.max_dispense_flow_rate, 6)
+        logging.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume + actual_volume0} uL')
 
         async def traverse_air_gap(nominal_air_gap: float, flow_rate: float = self.channel.syringe_pump.max_dispense_flow_rate, volume_step: float = 10) -> float:
             
@@ -302,7 +309,7 @@ class InjectLoop(MethodBase):
         await self.channel.syringe_pump.smart_dispense(pump_volume, pump_flow_rate)
 
         # Prime loop
-        await self.channel.primeloop(volume=1000)
+        await self.channel.primeloop()
         await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
         self.release_all()
@@ -331,6 +338,10 @@ class InjectLoopBubbleSensor(MethodBase):
         method = self.MethodDefinition(**kwargs)
 
         pump_volume = float(method.pump_volume)
+
+        # set minimum pump volume before checking for bubbles
+        min_pump_volume = 100 if pump_volume > 200 else 0
+
         pump_flow_rate = float(method.pump_flow_rate) * 1000 / 60 # convert to uL / s
 
         # Power the bubble sensor
@@ -341,11 +352,15 @@ class InjectLoopBubbleSensor(MethodBase):
         logging.info(f'{self.channel.name}.{method.name}: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
 
         # inject, interrupting if sensor 1 goes low (air detected at end of sample loop)
-        actual_volume = await self.channel.syringe_pump.smart_dispense(pump_volume, pump_flow_rate, 5)
-        logging.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume} uL')
+        if min_pump_volume > 0:
+            actual_volume0 = await self.channel.syringe_pump.smart_dispense(min_pump_volume, pump_flow_rate)
+        else:
+            actual_volume0 = 0.0
+        actual_volume = await self.channel.syringe_pump.smart_dispense(pump_volume - min_pump_volume, pump_flow_rate, 5)
+        logging.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume + actual_volume0} uL')
 
         # Switch to prime loop mode and flush
-        await self.channel.primeloop(volume=1000)
+        await self.channel.primeloop()
         await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
         self.release_all()
@@ -364,6 +379,8 @@ class DirectInject(MethodBaseDeadVolume):
     class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
         name: str = "DirectInject"
+        pump_volume: str | float = 0, # uL
+        pump_flow_rate: str | float = 1, # mL/min        
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
@@ -432,6 +449,8 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
     class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
         name: str = "DirectInject"
+        pump_volume: str | float = 0, # uL
+        pump_flow_rate: str | float = 1, # mL/min
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
@@ -439,6 +458,11 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         self.reserve_all()
 
         method = self.MethodDefinition(**kwargs)
+        pump_volume = float(method.pump_volume)
+        pump_flow_rate = float(method.pump_flow_rate) * 1000 / 60 # convert to uL / s
+
+        # set minimum pump volume before checking for bubbles
+        min_pump_volume = 100 if pump_volume > 200 else 0
 
         # Connect to GSIOC communications
         self.connect_gsioc()
@@ -492,8 +516,8 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         await self.channel.change_mode('LHInject')
 
         # monitor the process for air in the line
-        logging.info(f'{self.channel.name}.{method.name}: Starting air monitor on inlet bubble sensor...')
-        monitor_task = asyncio.create_task(self.detect_air_gap(callback=self.channel.change_mode('LHPrime')))
+        logging.info(f'{self.channel.name}.{method.name}: Starting air monitor on inlet bubble sensor with delay {min_pump_volume/pump_flow_rate: 0.2f} s...')
+        monitor_task = asyncio.create_task(self.detect_air_gap(delay=min_pump_volume/pump_flow_rate, callback=self.channel.change_mode('LHPrime')))
 
         # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
         logging.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
@@ -518,11 +542,13 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         self.disconnect_gsioc()
         self.release_all()
 
-    async def detect_air_gap(self, callback: Coroutine, poll_interval: float = 0.1):
+    async def detect_air_gap(self, callback: Coroutine, poll_interval: float = 0.1, delay: float = 0.0):
         """Helper method to detect air gap
         """
 
         liquid_in_line = True
+        logging.info(f'{self.channel.name}.detect_air_gap: Waiting {delay} s')
+        await asyncio.sleep(delay)
         try:
             while liquid_in_line:
                 _, liquid_in_line = await asyncio.gather(asyncio.sleep(poll_interval), self.inlet_bubble_sensor.read())
@@ -706,7 +732,7 @@ if __name__=='__main__':
                     ],
                     format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S',
-                    level=logging.DEBUG)
+                    level=logging.INFO)
 
     if True:
         async def main():
