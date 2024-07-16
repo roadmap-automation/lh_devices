@@ -31,12 +31,28 @@ class VueTest(WebNodeBase):
     
         if command=='move_valve':
             self.valve.move(int(data['position']))
-            await self.trigger_update()
 
 async def main():
 
+    import functools
+
+    async def monkey_patch_event_handler(self: HamiltonSyringePump, command: str, data: dict) -> None:
+    
+        if command=='toggle_idle':
+            self.idle = not self.idle
+        
+        elif command=='move_valve':
+            self.valve.position = data['index']
+
+        else:
+            await HamiltonSyringePump.event_handler(self, command, data)
+
+        await self.trigger_update()
+
     #vuetest = VueTest(valve=SyringeYValve(1))
     vuetest = HamiltonSyringePump(HamiltonSerial(), '0', SyringeYValve(1), 5000, name='Syringe Pump')
+    vuetest.event_handler = functools.partial(monkey_patch_event_handler, vuetest)
+    vuetest.idle = True
     app = vuetest.create_web_app('index.html')
     runner = await run_socket_app(app, 'localhost', 5020)
     try:

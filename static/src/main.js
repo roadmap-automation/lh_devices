@@ -41,6 +41,7 @@ const app = createApp({
     template: `
         <div class=row>
             <h2>Vue.js App</h2>
+            <button class="form-element" @click="toggleIdle">Toggle idle state</button>
             <status-component v-bind="status" @inputs_changed="onFormInputsChanged" />
             <valve v-if="'valve' in status.status" v-bind="{valve: status.status.valve}" @changed="onValveChanged" />
             <hamilton-device class="col" v-bind="status.status" />
@@ -55,6 +56,9 @@ const app = createApp({
         },
         onValveChanged(position) {
             socket.emit(app_id.value, {"command": "move_valve", "data": {"position": position}})
+        },
+        toggleIdle() {
+            socket.emit(app_id.value, {"command": "toggle_idle", "data": {}})
         }
     }
 });

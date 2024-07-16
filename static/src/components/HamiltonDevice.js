@@ -10,14 +10,11 @@ const template = `
     </div>
     <div v-if="!!state" class="row card-body">
         <valve class="col" v-bind="{valve: state.valve}" @changed="onValveChanged" />
-        <syringe v-if="(syringe in state)" class="col" v-bind="{syringe: state.syringe, idle: state.idle}" />
+        <syringe v-if="!!state.syringe" class="col" v-bind="{syringe: state.syringe, idle: state.idle}" />
     </div>
  </div>
 `;
 
-const cruft = `
-    <valve v-if="!!state" v-bind="{valve: valve}" @changed="onValveChanged" />
-`
 
 export default {
     name: "hamilton-device",
