@@ -148,6 +148,14 @@
                                 Plotly.purge($(this).get(0))
                             })
                             statediv.empty()
+                            if ('display' in data['state']) {
+                                let textstatecontainer = $('<div>').appendTo(statediv)
+                                Object.entries(data['state']['display']).forEach(([label, value]) => {
+                                    if (value != null) {
+                                        $('<div>').text(label + ': ' + value).appendTo(textstatecontainer)
+                                    }
+                            });
+                            }
                             if ('valve' in data['state']) {
                                 let valvestatecontainer = $('<div>').text('Valve position: ').appendTo(statediv)
                                 $('<text>').addClass("valve_position").text(data['state']['valve']['valve_position']).appendTo(valvestatecontainer)
@@ -335,6 +343,7 @@
                     return response.json();
                 }).then(function (info) {
                     //console.log(info)
+                    document.title = info['name'];
                     let newdiv = create_assembly_div(info['id'])
                     gen_assembly_tree(info, newdiv)
                     newdiv.addClass("top-frame")
