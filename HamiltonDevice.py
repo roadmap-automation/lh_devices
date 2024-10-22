@@ -936,7 +936,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             total_steps_dispensed += current_position - self.syringe_position
         else:
             # number of full_volume loops plus remainder
-            print(total_steps, full_stroke)
+            #print(total_steps, full_stroke)
             stroke_steps = [full_stroke] * (total_steps // full_stroke) + [total_steps % full_stroke]
             for stroke in stroke_steps:
                 if stroke > 0:
