@@ -207,7 +207,7 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         air_gap = float(method.air_gap)
 
         # set minimum pump volume before checking for bubbles
-        min_pump_volume = 100 if pump_volume > 200 else 0
+        min_pump_volume = 0.5 * pump_volume if pump_volume > 200 else 0
 
         # Connect to GSIOC communications
         self.connect_gsioc()
@@ -340,7 +340,7 @@ class InjectLoopBubbleSensor(MethodBase):
         pump_volume = float(method.pump_volume)
 
         # set minimum pump volume before checking for bubbles
-        min_pump_volume = 100 if pump_volume > 200 else 0
+        min_pump_volume = 0.5 * pump_volume if pump_volume > 200 else 0
 
         pump_flow_rate = float(method.pump_flow_rate) * 1000 / 60 # convert to uL / s
 
@@ -462,7 +462,7 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         pump_flow_rate = float(method.pump_flow_rate) * 1000 / 60 # convert to uL / s
 
         # set minimum pump volume before checking for bubbles
-        min_pump_volume = 100 if pump_volume > 200 else 0
+        min_pump_volume = 0.5 * pump_volume if pump_volume > 200 else 0
 
         # Connect to GSIOC communications
         self.connect_gsioc()
@@ -790,7 +790,7 @@ if __name__=='__main__':
             connect_nodes(mvp0.valve.nodes[5], fc0.outlet_node, 0.0)
             connect_nodes(mvp1.valve.nodes[5], fc1.outlet_node, 0.0)
 
-            qcmd_system = RoadmapChannelAssembly([channel_0, channel_1], distribution_system=distribution_system, gsioc=gsioc, name='MultiChannel System')
+            qcmd_system = RoadmapChannelAssembly([channel_0, channel_1], distribution_system=distribution_system, gsioc=gsioc, name='MultiChannel Injection System')
             app = qcmd_system.create_web_app(template='roadmap.html')
             runner = await run_socket_app(app, 'localhost', 5003)
             #print(json.dumps(await qcmd_system.get_info()))
