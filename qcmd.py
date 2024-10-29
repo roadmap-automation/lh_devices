@@ -130,6 +130,7 @@ class QCMDMeasurementChannel(WebNodeBase):
         self._start: float | None = None
         self._sleep_time: float = 0.0
         self._record_time: float = 0.0
+        self._active_sleep_task: asyncio.Task | None = None
 
         self.methods = {'QCMDRecord': self.QCMDRecord,
                         'QCMDRecordTag': self.QCMDRecordTag,
@@ -165,11 +166,16 @@ class QCMDMeasurementChannel(WebNodeBase):
         # start the monitor
         monitor = asyncio.create_task(self.monitor())
 
-        # wait the full time
-        await asyncio.sleep(wait_time)
-
-        # cancel the monitor
-        monitor.cancel()
+        # wait the full time and catch cancel
+        self._active_sleep_task = asyncio.create_task(asyncio.sleep(wait_time))
+        try:
+            await self._active_sleep_task
+        except asyncio.CancelledError:
+            logging.info(f'{self.name} interrupted')
+        finally:
+            # cancel the monitor
+            monitor.cancel()
+            self._active_sleep_task = None
 
     def _remaining_time_formatted(self) -> tuple[str | None, str | None]:
         time_elapsed = time.time() - self._start if self._start is not None else 0.0
@@ -350,6 +356,12 @@ class QCMDMeasurementChannel(WebNodeBase):
         """Release channel"""
         self.reserved = False
 
+    def interrupt(self):
+        """Interrupts current sleep"""
+
+        if self._active_sleep_task is not None:
+            self._active_sleep_task.cancel()
+
     async def get_info(self) -> dict:
         d = await super().get_info()
         sleep_time_remaining, record_time_remaining = self._remaining_time_formatted()
@@ -359,7 +371,9 @@ class QCMDMeasurementChannel(WebNodeBase):
                             'display': {'Tag': self._tag,
                                         'Sleep time remaining': sleep_time_remaining,
                                         'Record time remaining': record_time_remaining}},
-                  'controls': {'set_sleep_time': {'type': 'textbox',
+                  'controls': {'interrupt': {'type': 'button',
+                                             'text': 'Interrupt'},
+                               'set_sleep_time': {'type': 'textbox',
                                                   'text': 'Set sleep time (s): '},
                                'set_record_time': {'type': 'textbox',
                                                   'text': 'Set record time (s): '},                                                  
@@ -378,7 +392,9 @@ class QCMDMeasurementChannel(WebNodeBase):
 
         await super().event_handler(command, data)
 
-        if command == 'add_tag':
+        if command == 'interrupt':
+            self.interrupt()
+        elif command == 'add_tag':
             if not self.reserved:
                 asyncio.create_task(self.QCMDRecordTag(data['value'], self._record_time, self._sleep_time))
         elif command == 'set_sleep_time':
