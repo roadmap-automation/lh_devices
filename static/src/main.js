@@ -39,11 +39,10 @@ const app = createApp({
         Valve
     },
     template: `
-        <div class=row>
+        <div class="row">
             <h2>Vue.js App</h2>
             <button class="form-element" @click="toggleIdle">Toggle idle state</button>
             <status-component v-bind="status" @inputs_changed="onFormInputsChanged" />
-            <valve v-if="'valve' in status.status" v-bind="{valve: status.status.valve}" @changed="onValveChanged" />
             <hamilton-device class="col" v-bind="status.status" />
             <hamilton-device class="col" v-bind="status.status" />
         </div>
