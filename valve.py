@@ -260,6 +260,12 @@ class LValve(ValveBase):
     def _render_valve(self):
         return super()._render_valve(True, False)
 
+class YValve(LValve):
+
+    def __init__(self, position: int = 0, ports: List[Port] = [], name=None) -> None:
+        super().__init__(3, position, ports, name)
+        self.hamilton_valve_code = 0
+
 class SyringeLValve(SyringeValveBase):
     """L Valve (each position connects two adjacent inlets / outlets) that sits atop syringe
         pump. Port 0 is down (syringe), and ports are numbered clockwise from the syringe port.
