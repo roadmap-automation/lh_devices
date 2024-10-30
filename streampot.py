@@ -31,96 +31,12 @@ from connections import Port
 plt.set_loglevel('warning')
 
 from HamiltonComm import HamiltonSerial
-from HamiltonDevice import HamiltonSyringePump, PollTimer, HamiltonValvePositioner
+from HamiltonDevice import SmoothFlowSyringePump, PollTimer, HamiltonValvePositioner
 from assemblies import AssemblyBase, Mode, connect_nodes
-from valve import SyringeLValve, LValve, SyringeValveBase, DistributionValve
+from valve import SyringeLValve, YValve, SyringeValveBase, DistributionValve
 from webview import run_socket_app, WebNodeBase
 
 from labjack import ljm
-
-class YValve(LValve):
-
-    def __init__(self, position: int = 0, ports: List[Port] = [], name=None) -> None:
-        super().__init__(3, position, ports, name)
-        self.hamilton_valve_code = 0
-
-class SmoothFlowSyringePump(HamiltonSyringePump):
-
-    def __init__(self, serial_instance: HamiltonSerial, address: str, valve: SyringeValveBase, syringe_volume: float = 5000, name=None) -> None:
-        super().__init__(serial_instance, address, valve, syringe_volume, True, name)
-
-        # note that these are now "u" for the smooth flow pump
-        self.minV, self.maxV = 400, 816000
-        self._speed = 400
-
-    def _full_stroke(self) -> int:
-        """Calculates syringe stroke (# steps for full volume)
-
-        Returns:
-            float: stroke in steps
-        """
-
-        return 192000 if self._high_resolution else 24000
-    
-    def _get_max_position(self) -> int:
-        """Calculates the maximum position in half steps
-
-        Returns:
-            int: max position in half steps
-        """
-
-        return self._full_stroke()
-        
-    def _speed_code(self, desired_flow_rate: float) -> int:
-        """Calculates speed code (parameter u, see SF PSD/4 manual Appendix H) based on desired
-            flow rate and syringe parameters
-
-        Args:
-            desired_flow_rate (float): desired flow rate in uL / s
-
-        Returns:
-            int: u (steps per minute)
-        """
-
-        #calcV = float(desired_flow_rate * 6000) / self.syringe_volume
-
-        if desired_flow_rate < self._min_flow_rate():
-            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to lowest possible value {self._min_flow_rate()}')
-            return self.minV
-        elif desired_flow_rate > self._max_flow_rate():
-            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to highest possible value {self._max_flow_rate()}')
-            return self.maxV
-        else:
-            return round(float(desired_flow_rate * 60 * 192000) / self.syringe_volume)
-
-    def _flow_rate(self, V: int) -> float:
-        """Calculates actual flow rate from speed code parameter (V)
-
-        Args:
-            V (float): speed code in steps / minute ("u" in the smooth flow user manual)
-
-        Returns:
-            float: flow rate in uL / s
-        """
-
-        return float(V * self.syringe_volume) / 192000. / 60.
-
-    async def set_speed(self, flow_rate: float) -> str:
-        """Sets syringe speed to a specified flow rate
-
-        Args:
-            flow_rate (float): flow rate in uL / s
-        """
-
-        V = self._speed_code(flow_rate)
-        logging.info(f'Speed: {V}')
-        response, error = await self.query(f'u{V}R')
-        await self.run_async(self.get_speed())
-
-        if error:
-            logging.error(f'{self}: Syringe move error {error}')
-
-        return error
 
 class SyringePumpRamp(SmoothFlowSyringePump):
 
