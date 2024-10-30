@@ -407,9 +407,12 @@ class QCMDMeasurementChannel(WebNodeBase):
 class QCMDMultiChannelMeasurementDevice(AssemblyBase):
     """QCMD recording device simultaneously recording on multiple QCMD instruments"""
 
-    def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, n_channels: int = 1, name='MultiChannel QCMD Measurement Device') -> None:
+    def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, n_channels: int = 1, qcmd_ids: list | None = None, name='MultiChannel QCMD Measurement Device') -> None:
 
-        self.channels = [QCMDMeasurementChannel(f'http://{qcmd_address}:{qcmd_port}/QCMD/{i}/', name=f'QCMD Measurement Channel {i}') for i in range(n_channels)]
+        if qcmd_ids is not None:
+            self.channels = [QCMDMeasurementChannel(f'http://{qcmd_address}:{qcmd_port}/QCMD/id/{qcmd_id}/', name=f'QCMD Measurement Channel {i}, Serial Number {qcmd_id}') for i, qcmd_id in enumerate(qcmd_ids)]
+        else:
+            self.channels = [QCMDMeasurementChannel(f'http://{qcmd_address}:{qcmd_port}/QCMD/{i}/', name=f'QCMD Measurement Channel {i}') for i in range(n_channels)]
 
         super().__init__([], name)
 
@@ -1495,7 +1498,7 @@ async def qcmd_single_distribution():
 
 async def qcmd_multichannel_measure():
 
-    measurement_system = QCMDMultiChannelMeasurementDevice('localhost', 5011, 1)
+    measurement_system = QCMDMultiChannelMeasurementDevice('localhost', 5011, qcmd_ids=['13117490', '13110090'])
 
     app = measurement_system.create_web_app(template='roadmap.html')
     runner = await run_socket_app(app, 'localhost', 5005)
