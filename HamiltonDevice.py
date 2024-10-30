@@ -31,7 +31,7 @@ class HamiltonBase(DeviceBase, WebNodeBase):
 
     def __init__(self, serial_instance: HamiltonSerial, address: str, id=None, name=None) -> None:
 
-        super().__init__(id=id, name=name)        
+        DeviceBase.__init__(self, id=id, name=name)        
         self.serial = serial_instance
         self.digital_outputs: Tuple[bool, bool, bool] = (False, False, False)
         self.busy_code = '@'
@@ -651,7 +651,7 @@ class SimulatedHamiltonValvePositioner(SimulatedHamiltonBase, ValvePositionerBas
 class HamiltonSyringePumpState(HamiltonDeviceState, SyringePumpValvePositionerState):
     ...
 
-class HamiltonSyringePump(HamiltonBase, SyringePumpValvePositioner):
+class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
     """Hamilton syringe pump device. Includes both a syringe motor and a built-in valve positioner.
     """
 
@@ -664,7 +664,7 @@ class HamiltonSyringePump(HamiltonBase, SyringePumpValvePositioner):
                  id: str = None,
                  name: str = None,
                  ) -> None:
-        HamiltonBase.__init__(self, serial_instance, address, id, name)
+        HamiltonValvePositioner.__init__(self, serial_instance, address, valve, id, name)
         SyringePumpValvePositioner.__init__(self, valve, syringe_volume, self.id, self.name)
 
         # Syringe poll delay
@@ -1130,6 +1130,29 @@ class HamiltonSyringePump(HamiltonBase, SyringePumpValvePositioner):
                         break
 
         return self._volume_from_stroke_length(total_steps_dispensed)
+
+    async def move_absolute(self, position: int, interrupt_index: int | None = None) -> None:
+        """Low-level method for moving the syringe to an absolute position
+
+        Args:
+            position (int): syringe position in steps
+            interrupt_index (int | None, optional): index of condition to interrupt syringe movement.
+                See Hamilton PSD manual for codes. Defaults to None.
+
+        """
+
+        interrupt_string = '' if interrupt_index is None else f'i{interrupt_index}'
+
+        response, error = await self.query(interrupt_string + f'A{position}R')
+        if error:
+            logging.error(f'{self}: Syringe move error {error} for move to position {position} with V {self._speed}')
+
+    async def home(self) -> None:
+        """Homes syringe using maximum flow rate
+        """
+
+        await self.set_speed(self.max_dispense_flow_rate)
+        await self.move_absolute(0)
 
 class SimulatedHamiltonSyringePump(SimulatedHamiltonValvePositioner, SyringePumpValvePositioner):
     """Hamilton syringe pump device. Includes both a syringe motor and a built-in valve positioner.
