@@ -164,7 +164,7 @@
                             if ('syringe_state' in data['state']) {
                                 statediv.append(progressbar(data['state']['syringe_state']['position'], data['state']['syringe_state']['syringe_volume']))
                                 syringespeedcontainer = $('<div>').text('Syringe speed (mL /min): ').appendTo(statediv)
-                                $('<text>').addClass("syringe_speed").text(data['state']['syringe_state']['speed']).appendTo(syringespeedcontainer)
+                                $('<text>').addClass("syringe_speed").text(data['state']['syringe_state']['speed'].toFixed(3)).appendTo(syringespeedcontainer)
                             }
                             if ('plot' in data['state']) {
                                 if (data['state']['plot'] != null) {
