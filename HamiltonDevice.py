@@ -1,61 +1,24 @@
 import asyncio
 import logging
 import copy
-import json
 
-from typing import Tuple, List
-from uuid import uuid4
+from typing import Tuple
 from aiohttp import web
+from dataclasses import dataclass, asdict
 
 from HamiltonComm import HamiltonSerial
+from device import (DeviceBase, DeviceState, ValvePositionerBase,
+                    ValvePositionerState, PollTimer,
+                    SyringePumpValvePositionerState,
+                    SyringePumpValvePositioner, SyringeState)
 from valve import ValveBase, SyringeValveBase
-from connections import Node
-from webview import sio, WebNodeBase
+from webview import WebNodeBase
 
-class PollTimer:
-    """Async timer for polling delay
+@dataclass
+class HamiltonDeviceState(DeviceState):
+    digital_outputs: Tuple[bool, bool, bool]
 
-    Usage:
-    while <condition>:
-        # starts timer at the same time as the future
-        await asyncio.gather(<future to run periodically>, timer.cycle())
-
-        # ensures that the timer has expired before the future is run again
-        await timer.wait_until_set()
-    """
-    def __init__(self, poll_delay: float, address: str) -> None:
-        """Initializate timer
-
-        Args:
-            poll_delay (float): poll delay in seconds
-            address (str): address code of parent class. Used only for logging
-        """
-        self.poll_delay = poll_delay
-        self.address = address
-
-        # internal event to track polling expiration
-        self.expired = asyncio.Event()
-
-    async def cycle(self) -> None:
-        """Cycle the timer
-        """
-
-        # clear the event
-        self.expired.clear()
-        logging.debug(f'timer {self.address} started')
-
-        # sleep the required delay
-        await asyncio.sleep(self.poll_delay)
-        logging.debug(f'timer {self.address} ended')
-
-        # set the event
-        self.expired.set()
-
-    async def wait_until_set(self) -> None:
-        """Waits until the internal timer has expired"""
-        await self.expired.wait()
-
-class HamiltonBase(WebNodeBase):
+class HamiltonBase(DeviceBase, WebNodeBase):
     """Base class for Hamilton multi-valve positioner (MVP) and syringe pump (PSD) devices.
 
         Requires:
@@ -66,14 +29,10 @@ class HamiltonBase(WebNodeBase):
      
        """
 
-    def __init__(self, serial_instance: HamiltonSerial, address: str, name=None) -> None:
-        
+    def __init__(self, serial_instance: HamiltonSerial, address: str, id=None, name=None) -> None:
+
+        super().__init__(id=id, name=name)        
         self.serial = serial_instance
-        self.id = str(uuid4())
-        self.name = name
-        self.idle = True
-        self.initialized = False
-        self.reserved = False   # like a lock; allows reserving the device before running a method
         self.digital_outputs: Tuple[bool, bool, bool] = (False, False, False)
         self.busy_code = '@'
         self.idle_code = '`'
@@ -82,32 +41,24 @@ class HamiltonBase(WebNodeBase):
         self.address_code = chr(int(address, base=16) + int('31', base=16))
         self.response_queue: asyncio.Queue = asyncio.Queue()
 
-    def __repr__(self):
-
-        if self.name:
-            return self.name
-        else:
-            return object.__repr__(self)
-
-    def get_nodes(self) -> List[Node]:
-
-        return []
-
-    async def is_initialized(self) -> bool:
-        """Query device to get initialization state
-
-        Returns:
-            bool: True if device is initialized, else False
+    @property
+    def state(self) -> HamiltonDeviceState:
+        """Gets the current state
         """
 
-        return self.initialized
+        return HamiltonDeviceState(id=self.id,
+                           name=self.name,
+                           idle=self.idle,
+                           initialized=self.initialized,
+                           reserved=self.reserved,
+                           error=self.error,
+                           digital_outputs=self.digital_outputs)
 
     async def initialize(self) -> None:
         """Initialize device only if not already initialized
         """
 
-        if not await self.is_initialized():
-            await self.run_until_idle(self.initialize_device())
+        await super().initialize()
         
         await self.run_until_idle(self.set_digital_outputs((False, False, False)))
 
@@ -130,44 +81,6 @@ class HamiltonBase(WebNodeBase):
             return response, error
         else:
             return None, None
-
-    async def poll_until_idle(self) -> None:
-        """Polls device until idle
-
-        Returns:
-            str: error string
-        """
-
-        timer = PollTimer(self.poll_delay, self.address_code)
-
-        while (not self.idle):
-            # run update_status and start the poll_delay timer
-            await asyncio.gather(self.update_status(), timer.cycle())
-
-            # wait until poll_delay timer has ended before asking for new status.
-            await timer.wait_until_set()
-
-    async def run_until_idle(self, cmd: asyncio.Future) -> None:
-        """
-        Sends from serial connection and waits until idle
-        """
-
-        self.idle = False
-        await cmd
-        # TODO: Figure out whether this is the best updating strategy
-        await self.trigger_update()
-        await self.poll_until_idle()
-        await self.trigger_update()
-
-    async def run_async(self, cmd: asyncio.Future) -> None:
-        """
-        Sends from serial connection but does not update idle status
-        """
-
-        idle_value = copy.copy(self.idle)
-        await cmd
-        await self.trigger_update()
-        self.idle = idle_value
 
     async def update_status(self) -> None:
         """
@@ -281,10 +194,7 @@ class HamiltonBase(WebNodeBase):
                 'config': {
                            'com_port': self.serial.port,
                            'address': self.address},
-                'state': {'initialized': self.initialized,
-                          'idle': self.idle,
-                          'reserved': self.reserved,
-                          'digital_outputs': self.digital_outputs},
+                'state': asdict(self.state),
                 'controls': {'reset': {'type': 'button',
                                      'text': 'Reset'},
                              'stop': {'type': 'button',
@@ -310,7 +220,7 @@ class HamiltonBase(WebNodeBase):
         elif command == 'stop':
             await self.run_until_idle(self.stop())
         elif command == 'resume':
-            await self.run_until_idle(self.resume())
+            await self.resume() # probably do not want to run this until idle because device will not be idle after resuming
         elif command == 'set_digital_output':
             await self.run_until_idle(self.set_digital_output(int(data['number']), bool(data['value'])))
 
@@ -333,18 +243,193 @@ class HamiltonBase(WebNodeBase):
 
         response, error = await self.query('R')
 
-class HamiltonValvePositioner(HamiltonBase):
+    async def trigger_update(self) -> None:
+        """Trigger update using WebNodeBase inheritance
+        """
+
+        return await WebNodeBase.trigger_update(self)
+
+class SimulatedHamiltonBase(DeviceBase, WebNodeBase):
+    """Base class for Hamilton multi-valve positioner (MVP) and syringe pump (PSD) devices.
+       """
+
+    def __init__(self, speed_multiplier: float = 1.0, id=None, name=None) -> None:
+
+        DeviceBase.__init__(self, id=id, name=name)        
+        self.digital_outputs: Tuple[bool, bool, bool] = (False, False, False)
+        self.digital_inputs: Tuple[bool, bool] = (False, False)
+        self.speed_multiplier = speed_multiplier
+
+    @property
+    def state(self) -> HamiltonDeviceState:
+        """Gets the current state
+        """
+
+        return HamiltonDeviceState(id=self.id,
+                           name=self.name,
+                           idle=self.idle,
+                           initialized=self.initialized,
+                           reserved=self.reserved,
+                           error=self.error,
+                           digital_outputs=self.digital_outputs)
+
+    async def initialize(self) -> None:
+        """Initialize device only if not already initialized
+        """
+
+        await super().initialize()
+        
+        await self.set_digital_outputs((False, False, False))
+
+    async def initialize_device(self) -> None:
+        self.initialized = True
+        self.idle = True
+
+    async def update_status(self) -> None:
+        """
+        Polls the status of the device using 'Q'
+        """
+
+        return self.idle
+
+    async def get_digital_input(self, digital_input: int) -> bool:
+        """Gets value of a digital input.
+
+        Args:
+            digital_input (int): Index (either 1 or 2)
+
+        Returns:
+            bool: return value
+        """
+
+        return self.digital_inputs[digital_input - 1]
+
+    async def set_digital_output(self, digital_output: int, value: bool) -> None:
+        """Activates digital output corresponding to its index. Reads current digital output state and
+            makes the appropriate adjustment
+
+        Args:
+            sensor_index (int): Digital output that drives the bubble sensor
+        """
+
+        state = list(self.digital_outputs)
+        state[digital_output] = value
+
+        await self.set_digital_outputs(tuple(state))
+        self.idle = True
+
+    async def set_digital_outputs(self, digital_outputs: Tuple[bool, bool, bool]) -> None:
+        """Sets the three digital outputs, e.g. (True, False, False)
+
+        Returns:
+            Tuple[bool, bool, bool]: Tuple of the three digital output values
+        """
+
+        self.digital_outputs = digital_outputs
+        self.idle = True
+
+    async def get_digital_outputs(self) -> Tuple[bool, bool, bool]:
+        """Gets digital output values
+
+        Returns:
+            List[bool]: List of the three digital outputs
+        """
+
+        return self.digital_outputs
+
+    async def get_info(self) -> dict:
+        """Gets object state as dictionary
+
+        Returns:
+            dict: object state
+        """
+
+        d = await super().get_info()
+
+        d.update({
+                'type': 'device',
+                'config': {},
+                'state': asdict(self.state),
+                'controls': {'reset': {'type': 'button',
+                                     'text': 'Reset'},
+                             'stop': {'type': 'button',
+                                     'text': 'Stop'},
+                             'resume': {'type': 'button',
+                                     'text': 'Resume Next'}}})
+        
+        return d
+
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        await super().event_handler(command, data)
+
+        if command == 'reset':
+            await self.run_until_idle(self.reset())
+            await self.initialize()
+        elif command == 'stop':
+            await self.run_until_idle(self.stop())
+        elif command == 'resume':
+            await self.resume()
+        elif command == 'set_digital_output':
+            await self.run_until_idle(self.set_digital_output(int(data['number']), bool(data['value'])))
+
+    async def reset(self) -> None:
+        """Resets the device
+        """
+
+        self.idle = True
+        self.initialized = False
+
+    async def stop(self) -> None:
+        """Stops the device (terminates command buffer)
+        """
+
+        self.idle = True
+
+    async def resume(self) -> None:
+        """Resumes the device from next unexecuted command
+        """
+
+        self.idle = False
+
+    async def trigger_update(self) -> None:
+        """Trigger update using WebNodeBase inheritance
+        """
+
+        return await WebNodeBase.trigger_update(self)
+
+
+@dataclass
+class HamiltonValvePositionerState(HamiltonDeviceState, ValvePositionerState):
+    ...
+
+class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
     """Hamilton MVP4 device
     """
 
-    def __init__(self, serial_instance: HamiltonSerial, address: str, valve: ValveBase, name=None) -> None:
-        super().__init__(serial_instance, address, name)
+    def __init__(self, serial_instance: HamiltonSerial, address: str, valve: ValveBase, id=None, name=None) -> None:
+        HamiltonBase.__init__(self, serial_instance, address, id=id, name=name)
+        ValvePositionerBase.__init__(self, valve, self.id, self.name)
 
-        self.valve = valve
+    @property
+    def state(self) -> HamiltonValvePositionerState:
+        """Gets the current state
+        """
 
-    def get_nodes(self) -> List[Node]:
-        
-        return self.valve.nodes
+        return HamiltonValvePositionerState(id=self.id,
+                           name=self.name,
+                           idle=self.idle,
+                           initialized=self.initialized,
+                           reserved=self.reserved,
+                           error=self.error,
+                           digital_outputs=self.digital_outputs,
+                           valve_state=self.valve.state)
 
     async def initialize(self) -> None:
         await super().initialize()
@@ -480,8 +565,6 @@ class HamiltonValvePositioner(HamiltonBase):
             dict: information dictionary
         """
         info = await super().get_info()
-        add_state = {'valve': self.valve.get_info()}
-        info['state'] = info['state'] | add_state
         controls = {'move_valve': {'type': 'select',
                                    'text': 'Move Valve: ',
                                    'options': [str(i) for i in range(self.valve.n_positions + 1)],
@@ -505,7 +588,70 @@ class HamiltonValvePositioner(HamiltonBase):
             await self.run_until_idle(self.move_valve(int(newposition)))
 
 
-class HamiltonSyringePump(HamiltonValvePositioner):
+class SimulatedHamiltonValvePositioner(SimulatedHamiltonBase, ValvePositionerBase):
+    """Simulated Hamilton MVP4 device
+    """
+
+    def __init__(self, valve: ValveBase, id=None, name=None) -> None:
+        SimulatedHamiltonBase.__init__(self, id=id, name=name)
+        ValvePositionerBase.__init__(self, valve, id=self.id, name=self.name)
+
+    @property
+    def state(self) -> HamiltonValvePositionerState:
+        """Gets the current state
+        """
+
+        return HamiltonValvePositionerState(id=self.id,
+                           name=self.name,
+                           idle=self.idle,
+                           initialized=self.initialized,
+                           reserved=self.reserved,
+                           error=self.error,
+                           digital_outputs=self.digital_outputs,
+                           valve_state=self.valve.state)
+
+    async def initialize(self) -> None:
+        await super().initialize()
+        await self.move_valve(0)
+
+    async def get_info(self) -> dict:
+        """Gets information about valve positioner
+
+        Returns:
+            dict: information dictionary
+        """
+        info = await super().get_info()
+        controls = {'move_valve': {'type': 'select',
+                                   'text': 'Move Valve: ',
+                                   'options': [str(i) for i in range(self.valve.n_positions + 1)],
+                                   'current': str(self.valve.position)}
+                   }
+        info['controls'] = info['controls'] | controls
+        return info
+    
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        await super().event_handler(command, data)
+
+        if command == 'move_valve':
+            newposition = data['index']
+            await self.run_until_idle(self.move_valve(int(newposition)))
+
+    async def move_valve(self, position):
+        self.idle = True
+        return await super().move_valve(position)
+
+@dataclass
+class HamiltonSyringePumpState(HamiltonDeviceState, SyringePumpValvePositionerState):
+    ...
+
+class HamiltonSyringePump(HamiltonBase, SyringePumpValvePositioner):
     """Hamilton syringe pump device. Includes both a syringe motor and a built-in valve positioner.
     """
 
@@ -515,32 +661,62 @@ class HamiltonSyringePump(HamiltonValvePositioner):
                  valve: SyringeValveBase,
                  syringe_volume: float = 5000,
                  high_resolution = False,
-                 name = None,
+                 id: str = None,
+                 name: str = None,
                  ) -> None:
-        super().__init__(serial_instance, address, valve, name)
+        HamiltonBase.__init__(self, serial_instance, address, id, name)
+        SyringePumpValvePositioner.__init__(self, valve, syringe_volume, self.id, self.name)
 
         # Syringe poll delay
         self.syringe_poll_delay = 0.2
 
-        # Syringe volume in uL
-        self.syringe_volume = syringe_volume
-
         # default high resolution mode is False
         self._high_resolution = high_resolution
 
-        # save syringe position. Updated every time status is updated
-        self.syringe_position: int = 0
-
-        # min and max V
+        # min and max V speed codes
         self.minV, self.maxV = 2, 10000
 
-        # save syringe speed code
-        self._speed = 2
+        # save syringe speed code. Note speed is saved as a speed code
+        self._speed = self.minV
 
         # allow custom max flow rate
         self.max_aspirate_flow_rate = self._max_flow_rate()
         self.max_dispense_flow_rate = self._max_flow_rate()
         self.min_flow_rate = self._min_flow_rate()
+
+    @property
+    def syringe_speed(self) -> float:
+        return self._flow_rate(self._speed)
+
+    @property
+    def syringe_state(self) -> SyringeState:
+        """Gets the current state of the syringe
+
+        Returns:
+            SyringeState: state of the syringe
+        """
+
+        position = self.syringe_position / self._get_max_position() * self.syringe_volume / 1000.
+        return SyringeState(position,
+                            self.syringe_volume / 1000,
+                            self.syringe_speed * 60 / 1000,
+                            volume_units='ml',
+                            time_units='min')
+
+    @property
+    def state(self) -> HamiltonSyringePumpState:
+        """Gets the current state
+        """
+
+        return HamiltonSyringePumpState(id=self.id,
+                           name=self.name,
+                           idle=self.idle,
+                           initialized=self.initialized,
+                           reserved=self.reserved,
+                           error=self.error,
+                           digital_outputs=self.digital_outputs,
+                           valve_state=self.valve.state,
+                           syringe_state=self.syringe_state)
 
     async def initialize(self) -> None:
         await super().initialize()
@@ -567,15 +743,6 @@ class HamiltonSyringePump(HamiltonValvePositioner):
             dict: information dictionary
         """
         info = await super().get_info()
-        syringe_position = self.syringe_position / self._get_max_position() * self.syringe_volume / 1000.
-        add_state = {'syringe': {                                
-                                'high_resolution': self._high_resolution,
-                                'position': f'{syringe_position:0.6f}',
-                                'speed': f'{self._flow_rate(self._speed) * 60 / 1000:0.3f}',
-                                'max_position': self._get_max_position(),
-                                'syringe_volume': f'{self.syringe_volume / 1000.:0.6f}'
-        }}
-        info['state']= info['state'] | add_state
 
         controls = {'soft_reset' : {'type': 'button',
                                     'text': 'Soft Reset'},
@@ -757,7 +924,7 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         return strokes * (self.syringe_volume / (self._get_max_position()))
 
-    async def update_syringe_status(self) -> str:
+    async def update_syringe_status(self) -> int:
         """Reads absolute position of syringe
 
         Returns:
@@ -964,28 +1131,291 @@ class HamiltonSyringePump(HamiltonValvePositioner):
 
         return self._volume_from_stroke_length(total_steps_dispensed)
 
-    async def move_absolute(self, position: int, interrupt_index: int | None = None) -> None:
-        """Low-level method for moving the syringe to an absolute position
+class SimulatedHamiltonSyringePump(SimulatedHamiltonValvePositioner, SyringePumpValvePositioner):
+    """Hamilton syringe pump device. Includes both a syringe motor and a built-in valve positioner.
+    """
+
+    def __init__(self,
+                 valve: SyringeValveBase,
+                 syringe_volume: float = 5000,
+                 high_resolution = False,
+                 id: str = None,
+                 name: str = None,
+                 ) -> None:
+        SimulatedHamiltonValvePositioner.__init__(self, valve, id=id, name=name)
+        SyringePumpValvePositioner.__init__(self, valve, syringe_volume, id=self.id, name=self.name)
+
+        # Syringe poll delay
+        self.syringe_poll_delay = 0.2
+
+        # default high resolution mode is False
+        self._high_resolution = high_resolution
+
+        # min and max V speed codes
+        minV, maxV = 2, 10000
+
+        # allow custom max flow rate
+        self.max_aspirate_flow_rate = self._flow_rate(maxV)
+        self.max_dispense_flow_rate = self._flow_rate(maxV)
+        self.min_flow_rate = self._flow_rate(minV)
+        self._speed = self.min_flow_rate
+
+    @property
+    def syringe_speed(self) -> float:
+        return self._speed
+
+    @property
+    def state(self) -> HamiltonSyringePumpState:
+        """Gets the current state
+        """
+
+        return HamiltonSyringePumpState(id=self.id,
+                           name=self.name,
+                           idle=self.idle,
+                           initialized=self.initialized,
+                           reserved=self.reserved,
+                           error=self.error,
+                           digital_outputs=self.digital_outputs,
+                           valve_state=self.valve.state,
+                           syringe_state=self.syringe_state)
+
+    async def get_info(self) -> dict:
+        """Gets information about valve positioner
+
+        Returns:
+            dict: information dictionary
+        """
+        info = await super().get_info()
+
+        controls = {'soft_reset' : {'type': 'button',
+                                    'text': 'Soft Reset'},
+                    'home_syringe': {'type': 'button',
+                                     'text': 'Home Syringe'},
+                    'load_syringe': {'type': 'button',
+                                     'text': 'Move to load syringe position'},
+                    'set_speed': {'type': 'textbox',
+                                  'text': 'Syringe speed (mL / min)'},
+                    'aspirate': {'type': 'textbox',
+                                 'text': 'Aspirate volume (mL): '},
+                    'dispense': {'type': 'textbox',
+                                 'text': 'Dispense volume (mL): '},
+                    'smart_dispense': {'type': 'textbox',
+                                        'text': 'Smart dispense volume (mL): '}
+                                 }
+        info['controls'] = info['controls'] | controls
+        return info
+    
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
 
         Args:
-            position (int): syringe position in steps
-            interrupt_index (int | None, optional): index of condition to interrupt syringe movement.
-                See Hamilton PSD manual for codes. Defaults to None.
-
+            command (str): command name
+            data (dict): any data required by the command
         """
 
-        interrupt_string = '' if interrupt_index is None else f'i{interrupt_index}'
+        await super().event_handler(command, data)
 
-        response, error = await self.query(interrupt_string + f'A{position}R')
-        if error:
-            logging.error(f'{self}: Syringe move error {error} for move to position {position} with V {self._speed}')
+        if command == 'home_syringe':
+            # homes the syringe
+            await self.run_syringe_until_idle(self.home())
+        elif command == 'set_speed':
+            await self.run_until_idle(self.set_speed(float(data['value']) * 1000 / 60))
+        elif command == 'aspirate':
+            # aspirates given volume
+            # NOTE: Does not move any valves, so valves must be in safe position
+            await self.run_syringe_until_idle(self.aspirate(float(data['value']) * 1000, self._speed))
+        elif command == 'dispense':
+            # dispenses given volume
+            # NOTE: Does not move any valves, so valves must be in safe position
+            await self.run_syringe_until_idle(self.dispense(float(data['value']) * 1000, self._speed))
+        elif command == 'smart_dispense':
+            # smart dispenses given volume
+            await self.smart_dispense(float(data['value']) * 1000, self._speed)
 
-    async def home(self) -> None:
-        """Homes syringe using maximum flow rate
+    def _flow_rate(self, V: int) -> float:
+        """Calculates actual flow rate from speed code parameter (V)
+
+        Args:
+            V (float): speed code in half-steps / second
+
+        Returns:
+            float: flow rate in uL / s
         """
 
-        await self.set_speed(self.max_dispense_flow_rate)
-        await self.move_absolute(0)
+        return float(V * self.syringe_volume) / 6000.
+
+    async def poll_syringe_until_idle(self) -> None:
+        """Polls device until idle
+
+        Returns:
+            str: error string
+        """
+
+        timer = PollTimer(self.syringe_poll_delay, self.name)
+
+        while (not self.idle):
+            # run update_status and start the poll_delay timer
+            await asyncio.gather(self.update_syringe_status(), timer.cycle(), self.trigger_update())
+
+            # wait until poll_delay timer has ended before asking for new status.
+            await timer.wait_until_set()
+
+        await self.trigger_update()
+
+    async def run_syringe_until_idle(self, cmd: asyncio.Future) -> None:
+        """
+        Sends from serial connection and waits until idle
+        """
+
+        self.idle = False
+        await asyncio.gather(cmd, self.poll_syringe_until_idle())
+
+    async def set_speed(self, flow_rate):
+        self.idle = True
+        return await super().set_speed(flow_rate)
+
+    async def aspirate(self, volume: float, flow_rate: float) -> None:
+        """Aspirate (Pick-up)
+
+        Args:
+            volume (float): volume in uL
+            flow_rate (float): flow rate in uL / s
+        """
+
+        syringe_position = self.syringe_position
+        stroke_length = volume
+        max_position = self.syringe_volume
+        logging.debug(f'Stroke length: {stroke_length} out of full stroke {self.syringe_volume}')
+
+        if max_position < (stroke_length + syringe_position):
+            logging.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and maximum position {max_position}')
+            
+            # TODO: this is a hack to clear the response queue...need to fix this
+            #await self.update_status()
+        else:
+            #await self.set_speed(flow_rate)
+            self.idle = False
+            total_time = volume / flow_rate
+            n_steps = total_time // (self.poll_delay / 2.0)
+            for _ in range(int(n_steps)):
+                await asyncio.sleep(total_time / n_steps)
+                self.syringe_position += volume / n_steps
+
+        self.idle = True
+
+    async def dispense(self, volume: float, flow_rate: float) -> None:
+        """Dispense
+
+        Args:
+            volume (float): volume in uL
+            flow_rate (float): flow rate in uL / s
+        """
+
+        syringe_position = self.syringe_position
+        stroke_length = volume
+        logging.debug(f'Stroke length: {stroke_length} out of full stroke {self.syringe_volume}')
+
+        if (syringe_position - stroke_length) < 0:
+            logging.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and minimum position 0')
+            #await self.update_status()
+        else:
+            #await self.set_speed(flow_rate)
+            self.idle = False
+            total_time = volume / flow_rate
+            n_steps = total_time // (self.poll_delay / 2.0)
+            for _ in range(int(n_steps)):
+                await asyncio.sleep(total_time / n_steps)
+                self.syringe_position -= volume / n_steps
+
+        self.idle = True
+
+    async def move_absolute(self, position, interrupt_index = None):
+        self.idle = False
+        volume = position - self.syringe_position
+        total_time = abs(volume / self._speed)
+        logging.debug(f'total time {total_time} for volume {volume} at speed {self._speed   }')
+        n_steps = total_time // (self.poll_delay / 2.0) + 1
+        for _ in range(int(n_steps)):
+            await asyncio.sleep(total_time / n_steps)
+            self.syringe_position += volume / n_steps
+        
+        self.idle = True
+
+    async def smart_dispense(self, volume: float, dispense_flow_rate: float, interrupt_index: int | None = None) -> float:
+        """Smart dispense, including both aspiration at max flow rate, dispensing at specified
+            flow rate, and the ability to handle a volume that is larger than the syringe volume
+            
+        Args:
+            volume (float): volume in uL
+            flow_rate (float): flow rate in uL / s
+            interrupt_index (int | None, optional): See move_absolute. Defaults to None.
+            
+        Returns:
+            float: volume actually dispensed in uL
+            """
+
+        # check that aspiration and dispense positions are defined
+        if (not hasattr(self.valve, 'aspirate_position')) | (not hasattr(self.valve, 'dispense_position')):
+            logging.error(f'{self.name}: valve must have aspirate_position and dispense_position defined to use smart_dispense')
+            return 0
+        if (self.valve.aspirate_position is None) | (self.valve.dispense_position is None):
+            logging.error(f'{self.name}: aspirate_position and dispense_position must be set to use smart_dispense')
+            return 0
+        
+        # convert speeds to V factors
+        aspirate_flow_rate = self.max_aspirate_flow_rate
+        V_aspirate = aspirate_flow_rate
+        V_dispense = dispense_flow_rate
+
+        # calculate total volume in steps
+        total_steps = volume
+        full_stroke = self.syringe_volume
+
+        # update current syringe position (usually zero)
+        syringe_position = self.syringe_position
+        current_position = copy.copy(syringe_position)
+
+        # calculate number of aspirate/dispense operations and volume per operation
+        # if there is already enough volume in the syringe, just do a single dispense
+        total_steps_dispensed = 0
+        if current_position >= total_steps:
+            # switch valve and dispense
+            await self.run_until_idle(self.move_valve(self.valve.dispense_position))
+            await self.run_until_idle(self.set_speed(dispense_flow_rate))
+            await self.run_syringe_until_idle(self.move_absolute(current_position - total_steps, interrupt_index))
+            total_steps_dispensed += current_position - self.syringe_position
+        else:
+            # number of full_volume loops plus remainder
+            #print(total_steps, full_stroke)
+            stroke_steps = [full_stroke] * int(total_steps // full_stroke) + [total_steps % full_stroke]
+            for stroke in stroke_steps:
+                if stroke > 0:
+                    logging.debug(f'{self.name}: smart dispense aspirating {stroke - current_position} at V {V_aspirate}')
+                    # switch valve and aspirate
+                    await self.run_until_idle(self.move_valve(self.valve.aspirate_position))
+                    await self.run_until_idle(self.set_speed(aspirate_flow_rate))
+                    await self.run_syringe_until_idle(self.move_absolute(stroke))
+                    position_after_aspirate = copy.copy(self.syringe_position)
+                    logging.debug(f'position after aspirate: {position_after_aspirate}')
+
+                    # switch valve and dispense; run_syringe_until_idle updates self.syringe_position
+                    logging.debug(f'{self.name}: smart dispense dispensing all at V {V_dispense}')
+                    await self.run_until_idle(self.move_valve(self.valve.dispense_position))
+                    await self.run_until_idle(self.set_speed(dispense_flow_rate))
+                    await self.run_syringe_until_idle(self.move_absolute(0, interrupt_index))
+                    position_change = position_after_aspirate - self.syringe_position
+                    total_steps_dispensed += position_change
+
+                    if (stroke == position_change):
+                        # update current position and go to next step
+                        current_position = copy.copy(self.syringe_position)
+                    else:
+                        # stop! do not do continued strokes because the interrupt was triggered
+                        break
+
+        logging.debug(f'{self.name}: smart dispense complete')
+
+        return total_steps_dispensed
 
 if __name__ == '__main__':
 
@@ -995,18 +1425,21 @@ if __name__ == '__main__':
                         level=logging.DEBUG)
 
     from valve import SyringeLValve
+    from webview import run_socket_app
 
-    ser = HamiltonSerial(port='COM5', baudrate=38400)
-    sp = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve'), 5000, False, name='syringe_pump')
-    sp.max_flow_rate = 5 * 1000 / 60
 
     async def main():
+        sp = SimulatedHamiltonSyringePump(SyringeLValve(4, name='syringe_LValve'), 5000, False, name='syringe_pump')
+        app = sp.create_web_app()
+        runner = await run_socket_app(app, 'localhost', 5013)
         await sp.initialize()
-        #await sp.query('ZR')
-        #await asyncio.sleep(3)
-#        await sp.move_valve(sp.valve.aspirate_position)
-        #await sp.run_until_idle(sp.move_absolute(120, sp._speed_code(10 * 1000 / 60)))
-        await sp.smart_dispense(200, 10 * 1000 / 60)
+        #await sp.smart_dispense(200, 10 * 1000 / 60)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            logging.info('Cleaning up...')
+            asyncio.gather(
+                           runner.cleanup())
 
     asyncio.run(main(), debug=True)
 

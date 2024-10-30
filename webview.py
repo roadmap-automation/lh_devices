@@ -29,8 +29,8 @@ class WebNodeBase:
     id: str = ''
     name: str = ''
 
-    def create_web_app(self, template: str) -> web.Application:
-        """Creates a web application for this specific assembly by creating a webpage per device
+    def create_web_app(self, template: str = 'roadmap.html') -> web.Application:
+        """Creates a web application for this specific web node by creating a webpage per device
 
         Args:
             template (str | None): template for root path. Required.

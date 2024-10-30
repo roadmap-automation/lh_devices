@@ -1,9 +1,18 @@
 import logging
 import svg
 import math
+from dataclasses import dataclass
 from typing import List
 from connections import Port, Node
 from components import ComponentBase
+
+@dataclass
+class ValveState:
+    name: str
+    valve_position: int
+    number_positions: int
+    number_ports: int
+    valve_svg: str
 
 class ValveBase(ComponentBase):
     """
@@ -98,21 +107,27 @@ class ValveBase(ComponentBase):
             return False
         
         return True
-    
-    def get_info(self) -> dict:
-        """Dictionary of valve status information
 
-        Returns:
-            dict: valve status information
+    @property
+    def state(self) -> ValveState:
+        """Gets the current state
         """
 
-        return {
-                'name': self.name,
-                'valve_position': self.position,
-                'number_positions': self.n_positions,
-                'number_ports': self.n_ports,
-                'valve_svg': self._render_valve()
-        }
+        return ValveState(name=self.name,
+                          valve_position=self.position,
+                          number_positions=self.n_positions,
+                          number_ports=self.n_ports,
+                          valve_svg=self._render_valve())
+
+
+    def get_info(self) -> ValveState:
+        """Valve status information
+
+        Returns:
+            ValveState: valve status information dataclass
+        """
+
+        return self.state
 
     def _render_valve(self, through_center=True, highlight_zero=True, half_rotate=False):
 

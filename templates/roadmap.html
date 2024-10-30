@@ -156,15 +156,15 @@
                                     }
                             });
                             }
-                            if ('valve' in data['state']) {
+                            if ('valve_state' in data['state']) {
                                 let valvestatecontainer = $('<div>').text('Valve position: ').appendTo(statediv)
-                                $('<text>').addClass("valve_position").text(data['state']['valve']['valve_position']).appendTo(valvestatecontainer)
-                                $('<div>').addClass("valve_svg").html(data['state']['valve']['valve_svg']).appendTo(statediv)
+                                $('<text>').addClass("valve_position").text(data['state']['valve_state']['valve_position']).appendTo(valvestatecontainer)
+                                $('<div>').addClass("valve_svg").html(data['state']['valve_state']['valve_svg']).appendTo(statediv)
                             }
-                            if ('syringe' in data['state']) {
-                                statediv.append(progressbar(data['state']['syringe']['position'], data['state']['syringe']['syringe_volume']))
+                            if ('syringe_state' in data['state']) {
+                                statediv.append(progressbar(data['state']['syringe_state']['position'], data['state']['syringe_state']['syringe_volume']))
                                 syringespeedcontainer = $('<div>').text('Syringe speed (mL /min): ').appendTo(statediv)
-                                $('<text>').addClass("syringe_speed").text(data['state']['syringe']['speed']).appendTo(syringespeedcontainer)
+                                $('<text>').addClass("syringe_speed").text(data['state']['syringe_state']['speed']).appendTo(syringespeedcontainer)
                             }
                             if ('plot' in data['state']) {
                                 if (data['state']['plot'] != null) {
