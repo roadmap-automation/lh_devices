@@ -5,9 +5,10 @@ from uuid import uuid4
 from copy import deepcopy
 from aiohttp import web
 from typing import List, Tuple, Dict, Coroutine
+from dataclasses import asdict
 
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
-from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
+from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump, DeviceError
 from connections import Port, Node, connect_nodes
 from methods import MethodBase
 from components import ComponentBase
@@ -256,7 +257,17 @@ class AssemblyBase(WebNodeBase):
             bool: True if any devices are reserved
         """
         return any(dev.reserved for dev in self.devices)
-    
+
+    @property
+    def error(self) -> DeviceError | None:
+        """Error exists if any device has an error
+
+        Returns:
+            DeviceError: first error from any of the devices
+        """
+
+        return next((dev.error for dev in self.devices if dev.error.error is not None), None)
+
     def create_web_app(self, template='roadmap.html') -> web.Application:
         """Creates a web application for this specific assembly by creating a webpage per device
 
@@ -300,7 +311,8 @@ class AssemblyBase(WebNodeBase):
                     'assemblies': {},
                     'controls': {},
                     'state': {'idle': self.idle,
-                              'reserved': self.reserved}})
+                              'reserved': self.reserved,
+                              'error': asdict(self.error) if self.error is not None else None}})
         
         return d
 

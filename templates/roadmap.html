@@ -106,6 +106,13 @@
         }
 
         function set_border(thisdiv, data) {
+            thisdiv.removeClass("has_error")
+            if (data["error"] != null) {
+                console.log(data["error"])
+                if (data["error"]["error"] != null) {
+                    thisdiv.addClass("has_error")
+                }
+            }            
             if (data["idle"] == true) {
                 thisdiv.addClass("idle").removeClass("busy")
             }
@@ -491,6 +498,11 @@
     }
     .idle {
         border-style:solid
+    }
+    .has_error {
+        border-style:solid;
+        border-width:thick !important;
+        border-color:darkred;
     }
     .reserved {
         border-width:thick

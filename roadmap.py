@@ -732,7 +732,7 @@ if __name__=='__main__':
                     ],
                     format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S',
-                    level=logging.INFO)
+                    level=logging.DEBUG)
 
     if True:
         async def main():

@@ -11,15 +11,20 @@ from valve import ValveState, ValveBase
 class DeviceError:
     error: str | None = None
     retry: bool = False
-    _clear_error_event: asyncio.Event = asyncio.Event()
+
+    def __post_init__(self):
+        self._clear_error_event: asyncio.Event = asyncio.Event()
 
     async def pause_until_clear(self) -> None:
-        self._clear_error_event.wait()
+        await self._clear_error_event.wait()
 
-    def clear(self) -> None:
+    def clear(self, retry: bool | None = None) -> None:
+        self.error = None
+        if retry is not None:
+            self.retry = retry
+
         self._clear_error_event.set()
         self._clear_error_event.clear()
-        self.error = None
 
     def __repr__(self):
         return f'DeviceError: {self.error}'
@@ -31,7 +36,7 @@ class DeviceState:
     idle: bool
     initialized: bool
     reserved: bool
-    error: str
+    error: DeviceError
 
 class DeviceBase:
     """Base device class
