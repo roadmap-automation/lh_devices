@@ -10,7 +10,8 @@ from HamiltonComm import HamiltonSerial
 from device import (DeviceBase, DeviceState, ValvePositionerBase,
                     ValvePositionerState, PollTimer,
                     SyringePumpValvePositionerState,
-                    SyringePumpValvePositioner, SyringeState)
+                    SyringePumpValvePositioner, SyringeState,
+                    DeviceError)
 from valve import ValveBase, SyringeValveBase
 from webview import WebNodeBase
 
@@ -78,40 +79,41 @@ class HamiltonBase(DeviceBase, WebNodeBase):
         if response:
             response = response[2:-1]
             response, error = self.parse_status_byte(response)
+            if error is not None:
+                logging.error(f'{self}: Error in update_status: {error}')
+                await error.pause_until_clear()
+                if error.retry:
+                    response, error = self.query(cmd)
+
             return response, error
         else:
-            return None, None
+            return None, DeviceError('No response to query', retry=True)
 
     async def update_status(self) -> None:
         """
         Polls the status of the device using 'Q'
         """
 
-        _, error = await self.query('Q')
+        await self.query('Q')
 
-        # TODO: Handle error
-        if error:
-            logging.error(f'{self}: Error in update_status: {error}')
-
-    def parse_status_byte(self, response: str) -> str | None:
+    def parse_status_byte(self, response: str) -> Tuple[str | None, DeviceError | None]:
         """
         Parses status byte
         """
         c = response[0]
 
-        error = None
+        error = DeviceError()
         match c:
             case self.busy_code:
                 self.idle = False
             case self.idle_code:
                 self.idle = True
             case 'b':
-                error = 'Bad command'
+                error = DeviceError(error='Bad command',
+                                    retry=False)
             case _ :
-                error = f'Error code: {c}'
-
-        if error:
-            self.idle = True
+                error = DeviceError(error=f'Error code: {c}',
+                                    retry=True)
 
         return response.split(c, 1)[1], error
 
@@ -195,7 +197,9 @@ class HamiltonBase(DeviceBase, WebNodeBase):
                            'com_port': self.serial.port,
                            'address': self.address},
                 'state': asdict(self.state),
-                'controls': {'reset': {'type': 'button',
+                'controls': {'clear error': {'type': 'button',
+                                             'text': 'Clear Error'},
+                             'reset': {'type': 'button',
                                      'text': 'Reset'},
                              'stop': {'type': 'button',
                                      'text': 'Stop'},
@@ -217,6 +221,8 @@ class HamiltonBase(DeviceBase, WebNodeBase):
         if command == 'reset':
             await self.run_until_idle(self.reset())
             await self.initialize()
+        elif command == 'clear error':
+            self.error.clear()
         elif command == 'stop':
             await self.run_until_idle(self.stop())
         elif command == 'resume':
