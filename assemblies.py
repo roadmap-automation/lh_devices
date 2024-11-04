@@ -266,7 +266,7 @@ class AssemblyBase(WebNodeBase):
             DeviceError: first error from any of the devices
         """
 
-        return next((dev.error for dev in self.devices if dev.error.error is not None), None)
+        return next((dev.error for dev in self.devices if dev.error.error is not None), DeviceError())
 
     def create_web_app(self, template='roadmap.html') -> web.Application:
         """Creates a web application for this specific assembly by creating a webpage per device
@@ -312,7 +312,7 @@ class AssemblyBase(WebNodeBase):
                     'controls': {},
                     'state': {'idle': self.idle,
                               'reserved': self.reserved,
-                              'error': asdict(self.error) if self.error is not None else None}})
+                              'error': asdict(self.error)}})
         
         return d
 
