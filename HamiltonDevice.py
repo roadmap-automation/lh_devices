@@ -66,7 +66,7 @@ class HamiltonBase(DeviceBase, WebNodeBase):
     async def initialize_device(self) -> None:
         pass
 
-    async def query(self, cmd: str) -> Tuple[str | None, str | None]:
+    async def query(self, cmd: str) -> Tuple[str | None, DeviceError | None]:
         """Adds command to command queue and waits for response"""
         
         # push command to command queue
@@ -78,16 +78,21 @@ class HamiltonBase(DeviceBase, WebNodeBase):
         # process response
         if response:
             response = response[2:-1]
-            response, error = self.parse_status_byte(response)
-            if error is not None:
-                logging.error(f'{self}: Error in update_status: {error}')
-                await error.pause_until_clear()
-                if error.retry:
-                    response, error = self.query(cmd)
+            response = self.parse_status_byte(response)
+            if self.error.error is not None:
+                logging.error(f'{self} error: {self.error}, waiting for clear, retry = {self.error.retry}')
+                await self.trigger_update()
+                await self.error.pause_until_clear()
+                logging.info(f'{self} error cleared')
+                if self.error.retry:
+                    logging.info(f'{self} error: retrying command {cmd}')
+                    response, error = await self.query(cmd)
 
-            return response, error
+            return response, self.error
         else:
-            return None, DeviceError('No response to query', retry=True)
+            self.error.error = 'No response to query'
+            self.error.retry = True
+            return None, self.error
 
     async def update_status(self) -> None:
         """
@@ -109,13 +114,13 @@ class HamiltonBase(DeviceBase, WebNodeBase):
             case self.idle_code:
                 self.idle = True
             case 'b':
-                error = DeviceError(error='Bad command',
-                                    retry=False)
+                self.error.error = 'Bad command'
+                self.error.retry = False
             case _ :
-                error = DeviceError(error=f'Error code: {c}',
-                                    retry=True)
+                self.error.error = f'Error code: {c}'
+                self.error.retry = True
 
-        return response.split(c, 1)[1], error
+        return response.split(c, 1)[1]
 
     async def get_digital_input(self, digital_input: int) -> bool:
         """Gets value of a digital input.
@@ -197,14 +202,20 @@ class HamiltonBase(DeviceBase, WebNodeBase):
                            'com_port': self.serial.port,
                            'address': self.address},
                 'state': asdict(self.state),
-                'controls': {'clear error': {'type': 'button',
-                                             'text': 'Clear Error'},
+                'controls': {
+                             #'test error': {'type': 'textbox',
+                             #               'text': 'test error'},
                              'reset': {'type': 'button',
-                                     'text': 'Reset'},
+                                       'text': 'Reset'},
                              'stop': {'type': 'button',
-                                     'text': 'Stop'},
+                                      'text': 'Stop'},
                              'resume': {'type': 'button',
-                                     'text': 'Resume Next'}}})
+                                        'text': 'Resume Next'},
+                             'clear error': {'type': 'button',
+                                             'text': 'Clear Error'},
+                             #'retry': {'type': 'button',
+                             #          'text': 'Clear Error and Retry'},
+                                       }})
         
         return d
 
@@ -223,6 +234,11 @@ class HamiltonBase(DeviceBase, WebNodeBase):
             await self.initialize()
         elif command == 'clear error':
             self.error.clear()
+        elif command == 'retry':
+            self.error.clear(retry=True)
+        elif command == 'test error':
+            await self.query(data['value'])
+            await self.trigger_update()
         elif command == 'stop':
             await self.run_until_idle(self.stop())
         elif command == 'resume':
@@ -446,7 +462,7 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
         """Initialize the device"""
 
         _, error = await self.query('ZR')
-        if error:
+        if error.error is not None:
             logging.error(f'{self}: Initialization error {error}')
         else:
             self.initialized = True
@@ -487,7 +503,7 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
         if code is not None:
             _, error = await self.query(f'h2100{code}R')
             await self.poll_until_idle()
-            if not error:
+            if error.error is None:
                 await self.get_valve_code()
             else:
                 logging.error(f'{self}: Valve code could not be set, got error {error}')
@@ -499,7 +515,7 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
         """
 
         response, error = await self.query('?21000')
-        if not error:
+        if error.error is None:
             code = int(response)
             if code != self.valve.hamilton_valve_code:
                 logging.error(f'{self}: Valve code {code} from instrument does not match expected {self.valve.hamilton_valve_code}')
@@ -511,7 +527,7 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
         """
 
         response, error = await self.query('?25000')
-        if not error:
+        if error.error is None:
             angle = int(response)
 
             # convert to position
@@ -554,7 +570,7 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
 
             _, error = await self.query(f'h29{angle:03.0f}R')
             await self.poll_until_idle()
-            if error:
+            if error.error is not None:
                 logging.error(f'{self}: Move error {error}')
 
             # check that valve actually moved
@@ -807,7 +823,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         """
 
         response, error = await self.query('zR')
-        if error:
+        if error.error is not None:
             logging.error(f'{self}: Soft reset error {error}')
 
         await self.update_syringe_status()
@@ -833,7 +849,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         """
         
         response, error = await self.query(f'N{int(high_resolution)}R')
-        if error:
+        if error.error is not None:
             logging.error(f'{self}: Error setting resolution: {error}')
         else:
             self._high_resolution = high_resolution
@@ -941,7 +957,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         
         self.syringe_position = int(response)
 
-        if error:
+        if error.error is not None:
             logging.error(f'{self}: Error in update_syringe_status: {error}')
         await self.update_status()
 
@@ -958,7 +974,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
 
         self._speed = int(response)
         
-        if error:
+        if error.error is not None:
             logging.error(f'{self}: Error in get_speed: {error}')
 
         return error
@@ -976,7 +992,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         response, error = await self.query(f'V{V}R')
         await self.run_async(self.get_speed())
 
-        if error:
+        if error.error is not None:
             logging.error(f'{self}: Syringe move error {error}')
 
         return error
@@ -1030,7 +1046,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         else:
             await self.run_until_idle(self.set_speed(flow_rate))
             response, error = await self.query(f'P{stroke_length}R')
-            if error:
+            if error.error is not None:
                 logging.error(f'{self}: Syringe move error {error}')
 
     async def dispense(self, volume: float, flow_rate: float) -> None:
@@ -1052,7 +1068,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         else:
             await self.run_until_idle(self.set_speed(flow_rate))
             response, error = await self.query(f'D{stroke_length}R')
-            if error:
+            if error.error is not None:
                 logging.error(f'{self}: Syringe move error {error}')
 
     async def smart_dispense(self, volume: float, dispense_flow_rate: float, interrupt_index: int | None = None) -> float:
@@ -1150,7 +1166,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         interrupt_string = '' if interrupt_index is None else f'i{interrupt_index}'
 
         response, error = await self.query(interrupt_string + f'A{position}R')
-        if error:
+        if error.error is not None:
             logging.error(f'{self}: Syringe move error {error} for move to position {position} with V {self._speed}')
 
     async def home(self) -> None:
@@ -1519,7 +1535,7 @@ class SmoothFlowSyringePump(HamiltonSyringePump):
         response, error = await self.query(f'u{V}R')
         await self.run_async(self.get_speed())
 
-        if error:
+        if error.error is not None:
             logging.error(f'{self}: Syringe move error {error}')
 
         return error
