@@ -1,11 +1,22 @@
 import asyncio
 import json
 import logging
+import traceback
 from typing import List
 from dataclasses import dataclass, field
 
-from HamiltonDevice import HamiltonBase
+from HamiltonDevice import HamiltonBase, DeviceError
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
+
+@dataclass
+class MethodError(DeviceError):
+    ...
+
+class MethodException(Exception):
+    
+    def __init__(self, *args, retry: bool = False):
+        super().__init__(*args)
+        self.retry = retry
 
 class MethodBase:
     """Base class for defining a method for LH serial devices. Contains information about:
@@ -17,6 +28,7 @@ class MethodBase:
 
     def __init__(self, devices: List[HamiltonBase] = []) -> None:
         self.devices = devices
+        self.error = MethodError()
         self.dead_volume_node: str | None = None
 
     def is_ready(self) -> bool:
@@ -55,6 +67,42 @@ class MethodBase:
         """
 
         pass
+
+    async def start(self, **kwargs) -> None:
+        """Starts a method run with error handling
+        """
+
+        try:
+            await self.run(**kwargs)
+        except asyncio.CancelledError:
+            logging.info(f'{self.__class__} canceled')
+            self.error.retry = False
+        except MethodException as e:
+            # these are critical errors
+            self.error.error = e
+            self.error.retry = e.retry
+            self.error.pause_until_clear()
+            if self.error.retry:
+                # try again!
+                await self.start(**kwargs)
+
+    async def throw_error(self, error: str, critical: bool = False, retry: bool = False) -> None:
+        """Populates the method error. If a critical error, stops method execution. If not critical,
+            pauses until error is cleared.
+
+        Args:
+            error (str): error description
+            critical(bool, optional): critical error flag. If True, ends method execution. If False, waits for a clear error signal before continuing. Defaults to False.
+            retry (bool, optional): retry flag. If True, method is restarted from the beginning. Only applies to critical errors. Defaults to False.
+        """
+
+        if critical:
+            raise MethodException(error, retry=retry)
+        
+        else:
+            self.error.error = error
+            self.error.retry = retry
+            await self.error.pause_until_clear()
 
 class MethodBasewithGSIOC(MethodBase):
 
