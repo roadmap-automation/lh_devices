@@ -8,6 +8,23 @@ from dataclasses import dataclass
 from valve import ValveState, ValveBase
 
 @dataclass
+class DeviceError:
+    error: str | None = None
+    retry: bool = False
+    _clear_error_event: asyncio.Event = asyncio.Event()
+
+    async def pause_until_clear(self) -> None:
+        self._clear_error_event.wait()
+
+    def clear(self) -> None:
+        self._clear_error_event.set()
+        self._clear_error_event.clear()
+        self.error = None
+
+    def __repr__(self):
+        return f'DeviceError: {self.error}'
+
+@dataclass
 class DeviceState:
     id: str
     name: str
@@ -28,7 +45,7 @@ class DeviceBase:
         self.idle: bool = True
         self.initialized: bool = False
         self.reserved = False   # like a lock; allows reserving the device before running a method
-        self.error: str | None = None
+        self.error: DeviceError = DeviceError()
         self.poll_delay = 0.1
 
     def __repr__(self):
@@ -71,7 +88,9 @@ class DeviceBase:
             await self.run_until_idle(self.initialize_device())
 
     async def initialize_device(self) -> None:
-        pass
+        
+        self.idle = True
+        self.initialized = True
 
     async def update_status(self) -> None:
         """
@@ -137,12 +156,6 @@ class DeviceBase:
         """
 
         pass
-
-    async def clear_error(self) -> None:
-        """Clears error state
-        """
-
-        self.error = None
 
     async def trigger_update(self):
         """Sends signal for update"""
@@ -364,6 +377,10 @@ class SyringePumpBase(DeviceBase):
         await self.set_speed(self.max_dispense_flow_rate)
         await self.move_absolute(0)
 
+@dataclass
+class SyringePumpValvePositionerState(SyringePumpState, ValvePositionerState):
+    ...
+
 class SyringePumpValvePositioner(ValvePositionerBase, SyringePumpBase):
 
     def __init__(self, valve, syringe_volume: float, id=None, name=None):
@@ -389,6 +406,3 @@ class SyringePumpValvePositioner(ValvePositionerBase, SyringePumpBase):
                                            )
                 )
 
-@dataclass
-class SyringePumpValvePositionerState(SyringePumpState, ValvePositionerState):
-    ...
