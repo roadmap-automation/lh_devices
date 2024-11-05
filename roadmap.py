@@ -21,8 +21,8 @@ from bubblesensor import BubbleSensorBase, SMDSensoronHamiltonDevice
 
 class RoadmapChannelBase(InjectionChannelBase):
 
-    def __init__(self, loop_valve: ValvePositionerBase,
-                       syringe_pump: SyringePumpBase,
+    def __init__(self, loop_valve: HamiltonValvePositioner,
+                       syringe_pump: HamiltonSyringePump,
                        flow_cell: FlowCell,
                        sample_loop: FlowCell,
                        injection_node: Node | None = None,
