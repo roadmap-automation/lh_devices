@@ -5,7 +5,7 @@ import traceback
 from typing import List
 from dataclasses import dataclass, field
 
-from HamiltonDevice import HamiltonBase, DeviceError
+from device import DeviceBase, DeviceError
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 
 @dataclass
@@ -26,7 +26,7 @@ class MethodBase:
         4. locks, signals, controls
     """
 
-    def __init__(self, devices: List[HamiltonBase] = []) -> None:
+    def __init__(self, devices: List[DeviceBase] = []) -> None:
         self.devices = devices
         self.error = MethodError()
         self.dead_volume_node: str | None = None
@@ -81,6 +81,7 @@ class MethodBase:
             # these are critical errors
             self.error.error = e
             self.error.retry = e.retry
+            logging.error(f'Error in {self.__class__}: {e}, retry is {e.retry}')
             self.error.pause_until_clear()
             if self.error.retry:
                 # try again!
@@ -106,7 +107,7 @@ class MethodBase:
 
 class MethodBasewithGSIOC(MethodBase):
 
-    def __init__(self, gsioc: GSIOC, devices: List[HamiltonBase] = []) -> None:
+    def __init__(self, gsioc: GSIOC, devices: List[DeviceBase] = []) -> None:
         super().__init__(devices)
 
         self.gsioc = gsioc
@@ -194,7 +195,7 @@ class MethodBasewithGSIOC(MethodBase):
     
 class MethodBaseDeadVolume(MethodBasewithGSIOC):
 
-    def __init__(self, gsioc: GSIOC, devices: List[HamiltonBase] = []) -> None:
+    def __init__(self, gsioc: GSIOC, devices: List[DeviceBase] = []) -> None:
         super().__init__(gsioc, devices)
 
         self.dead_volume: asyncio.Queue = asyncio.Queue(1)
