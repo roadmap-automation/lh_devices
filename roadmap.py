@@ -8,6 +8,7 @@ from aiohttp.web_app import Application as Application
 from aiohttp import web
 
 from autocontrol.status import Status
+from autocontrol.task_struct import TaskData
 
 from device import ValvePositionerBase, SyringePumpBase
 from distribution import DistributionBase, DistributionSingleValve
@@ -666,33 +667,52 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
         await asyncio.gather(*[ch.initialize() for ch in self.channels], self.distribution_system.initialize())
         await self.trigger_update()
 
-    def run_channel_method(self, channel: int, method_name: str, method_data: dict) -> None:
-        return self.channels[channel].run_method(method_name, **method_data)
-    
     def create_web_app(self, template='roadmap.html') -> Application:
         app = super().create_web_app(template=template)
         routes = web.RouteTableDef()
 
         @routes.post('/SubmitTask')
         async def handle_task(request: web.Request) -> web.Response:
-            # TODO: turn task into a dataclass; parsing will change
-            task = await request.json()
+            data = await request.json()
+            task = TaskData(**data)
             logging.info(f'{self.name} received task {task}')
-            channel: int = task['channel']
+            channel: int = task.channel
             if channel > len(self.channels) - 1:
                 return web.Response(text=str(Status.INVALID), status=400)
 
-            if len(task['method_data']['method_list']) > 1:
+            if len(task.method_data['method_list']) > 1:
                 return web.Response(text=str(Status.INVALID), status=400)
 
-            method = task['method_data']['method_list'][0]
-            method_name: str = method['method_name']
-            method_data: dict = method['method_data']
-            if self.channels[channel].is_ready(method_name):
-                self.run_channel_method(channel, method_name, method_data)
-                return web.Response(text=str(Status.SUCCESS), status=200)
+            success = True
+            for method in task.method_data['method_list']:
+                method_name: str = method['method_name']
+                method_data: dict = method['method_data']
+                if self.channels[channel].is_ready(method_name):
+                    self.channels[channel].run_method(method_name, method_data, id=task.id)
+                else:
+                    success = False
+                    break
+
+            # if batch submission not successful, cancel methods
+            if not success:
+                self.channels[channel].cancel_methods_by_id(task.id)
+                return web.Response(text=str(Status.BUSY), status=503)
+
+            return web.Response(text=str(Status.SUCCESS), status=200)
+
+        @routes.post('/CancelTask')
+        async def cancel_task(request: web.Request) -> web.Response:
+            data = await request.json()
+            task = TaskData(**data)
+            logging.info(f'{self.name} received cancel request for task {task}')
+            channel: int = task.channel
             
-            return web.Response(text=str(Status.BUSY), status=503)
+            # cancel if any tasks match the request
+            if any(v['id'] == task.id for v in self.channels[channel].running_tasks.values()):
+                self.channels[channel].cancel_methods_by_id(task.id)
+                return web.Response(text=str(Status.SUCCESS), status=200)
+
+            return web.Response(text=str(Status.INVALID), status=400)
 
         @routes.get('/GetTaskData')
         async def get_task(request: web.Request) -> web.Response:
