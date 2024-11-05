@@ -2,23 +2,22 @@ import json
 import asyncio
 import logging
 from uuid import uuid4
-from copy import deepcopy
 from aiohttp import web
-from typing import List, Tuple, Dict, Coroutine
+from typing import List, Dict, Coroutine
 from dataclasses import asdict
 
+from device import DeviceBase, DeviceError, ValvePositionerBase
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
-from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump, DeviceError
 from connections import Port, Node, connect_nodes
 from methods import MethodBase
 from components import ComponentBase
-from webview import sio, WebNodeBase
+from webview import WebNodeBase
 
 class Network:
     """Representation of a node network
     """
 
-    def __init__(self, devices: List[HamiltonBase | ComponentBase]) -> None:
+    def __init__(self, devices: List[DeviceBase | ComponentBase]) -> None:
         self.devices = devices
         self._port_to_node_map: dict[Port, Node] = {}
         self.nodes: List[Node] = []
@@ -31,7 +30,7 @@ class Network:
         self._port_to_node_map = {n.base_port: n for n in nodes}
         self.nodes = nodes
 
-    def add_device(self, device: HamiltonBase | ComponentBase) -> None:
+    def add_device(self, device: DeviceBase | ComponentBase) -> None:
         """Adds a device to node network and updates it"""
         self.devices.append(device)
         self.update()
@@ -104,7 +103,7 @@ class Mode:
     """Define assembly configuration. Contains a dictionary of valves of the current
         assembly to move. Also defines final node for dead volume tracing"""
     
-    def __init__(self, valves: Dict[HamiltonValvePositioner, int] = {}, final_node: Node | None = None) -> None:
+    def __init__(self, valves: Dict[ValvePositionerBase, int] = {}, final_node: Node | None = None) -> None:
 
         self.valves = valves
         self.final_node = final_node
@@ -120,10 +119,10 @@ class Mode:
         return '; '.join(f'{valve.name} -> {position}' for valve, position in self.valves.items())
 
 class AssemblyBase(WebNodeBase):
-    """Assembly of Hamilton LH devices
+    """Assembly of liquid handling devices
     """
 
-    def __init__(self, devices: List[HamiltonBase], name='') -> None:
+    def __init__(self, devices: List[DeviceBase], name='') -> None:
         
         self.name = name
         self.id = str(uuid4())
@@ -155,11 +154,11 @@ class AssemblyBase(WebNodeBase):
         else:
             logging.error(f'Mode {mode} not in modes dictionary {self.modes}')
 
-    async def move_valves(self, valve_config: Dict[HamiltonValvePositioner, int]) -> None:
+    async def move_valves(self, valve_config: Dict[ValvePositionerBase, int]) -> None:
         """Batch change valve conditions. Enables predefined valve modes.
 
         Args:
-            valve_config (Dict[HamiltonBase, int]): dict with valve positioner as key and valve
+            valve_config (Dict[ValvePositionerBase, int]): dict with valve positioner as key and valve
                                                         position as value
         """
 
@@ -185,7 +184,7 @@ class AssemblyBase(WebNodeBase):
 
             if (source_node is not None) & (final_node is not None):
 
-                valve_config: Dict[HamiltonValvePositioner, int] = self.modes[mode].valves
+                valve_config: Dict[ValvePositionerBase, int] = self.modes[mode].valves
 
                 # this isn't optimal because it temporarily changes state
                 current_positions = []
@@ -321,7 +320,7 @@ class AssemblyMode(Mode):
         Modes override conflicts with existing valves (no attempt at conflict resolution)
     """
 
-    def __init__(self, modes: Dict[AssemblyBase, Mode] = {}, valves: Dict[HamiltonValvePositioner, int] = {}, final_node: Node | None = None) -> None:
+    def __init__(self, modes: Dict[AssemblyBase, Mode] = {}, valves: Dict[ValvePositionerBase, int] = {}, final_node: Node | None = None) -> None:
         super().__init__(valves, final_node)
 
         for mode in modes.values():
@@ -331,7 +330,7 @@ class AssemblyBasewithGSIOC(AssemblyBase):
     """Assembly with support for GSIOC commands
     """
 
-    def __init__(self, devices: List[HamiltonBase], name='') -> None:
+    def __init__(self, devices: List[DeviceBase], name='') -> None:
         super().__init__(devices, name=name)
 
         # enables triggering
@@ -436,7 +435,7 @@ class NestedAssemblyBase(AssemblyBase):
     """Nested assembly class that allows specification of sub-assemblies
     """
 
-    def __init__(self, devices: List[HamiltonBase], assemblies: List[AssemblyBase], name='') -> None:
+    def __init__(self, devices: List[DeviceBase], assemblies: List[AssemblyBase], name='') -> None:
         unique_devices = set([dev for assembly in assemblies for dev in assembly.devices] + devices)
         super().__init__(list(unique_devices), name)
 
@@ -462,7 +461,7 @@ class NestedAssemblyBase(AssemblyBase):
 
 class InjectionChannelBase(AssemblyBase):
 
-    def __init__(self, devices: List[HamiltonBase],
+    def __init__(self, devices: List[DeviceBase],
                        injection_node: Node | None = None,
                        name: str = '') -> None:
         

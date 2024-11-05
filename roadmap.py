@@ -7,21 +7,22 @@ from dataclasses import dataclass
 from aiohttp.web_app import Application as Application
 from aiohttp import web
 
+from autocontrol.status import Status
+
+from device import ValvePositionerBase, SyringePumpBase
 from distribution import DistributionBase, DistributionSingleValve
-from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
-from gsioc import GSIOC, GSIOCMessage
+from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
+from gsioc import GSIOC
 from components import InjectionPort, FlowCell
 from assemblies import AssemblyBase, InjectionChannelBase, Network, NestedAssemblyBase, Mode, AssemblyMode
 from connections import connect_nodes, Node
 from methods import MethodBase, MethodBaseDeadVolume
 from bubblesensor import BubbleSensorBase, SMDSensoronHamiltonDevice
 
-from autocontrol.status import Status
-
 class RoadmapChannelBase(InjectionChannelBase):
 
-    def __init__(self, loop_valve: HamiltonValvePositioner,
-                       syringe_pump: HamiltonSyringePump,
+    def __init__(self, loop_valve: ValvePositionerBase,
+                       syringe_pump: SyringePumpBase,
                        flow_cell: FlowCell,
                        sample_loop: FlowCell,
                        injection_node: Node | None = None,
@@ -605,7 +606,7 @@ class RoadmapChannel(RoadmapChannelBase):
     """Roadmap channel with populated methods
     """
 
-    def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump, flow_cell: FlowCell, sample_loop: FlowCell, injection_node: Node | None = None, name: str = '') -> None:
+    def __init__(self, loop_valve: ValvePositionerBase, syringe_pump: SyringePumpBase, flow_cell: FlowCell, sample_loop: FlowCell, injection_node: Node | None = None, name: str = '') -> None:
         super().__init__(loop_valve, syringe_pump, flow_cell, sample_loop, injection_node, name)
 
         # add standalone methods
@@ -616,7 +617,7 @@ class RoadmapChannelBubbleSensor(RoadmapChannel):
     """Roadmap channel with populated methods
     """
 
-    def __init__(self, loop_valve: HamiltonValvePositioner, syringe_pump: HamiltonSyringePump, flow_cell: FlowCell, sample_loop: FlowCell, inlet_bubble_sensor: BubbleSensorBase, outlet_bubble_sensor: BubbleSensorBase, injection_node: Node | None = None, name: str = '') -> None:
+    def __init__(self, loop_valve: ValvePositionerBase, syringe_pump: SyringePumpBase, flow_cell: FlowCell, sample_loop: FlowCell, inlet_bubble_sensor: BubbleSensorBase, outlet_bubble_sensor: BubbleSensorBase, injection_node: Node | None = None, name: str = '') -> None:
         super().__init__(loop_valve, syringe_pump, flow_cell, sample_loop, injection_node, name)
 
         self.inlet_bubble_sensor = inlet_bubble_sensor
