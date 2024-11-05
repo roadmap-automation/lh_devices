@@ -81,7 +81,7 @@ class MethodBase:
             # these are critical errors
             self.error.error = e
             self.error.retry = e.retry
-            logging.error(f'Error in {self.__class__}: {e}, retry is {e.retry}')
+            logging.error(f'Critical error in {self.__class__}: {e}, retry is {e.retry}, waiting for error to be cleared')
             self.error.pause_until_clear()
             if self.error.retry:
                 # try again!
@@ -101,6 +101,7 @@ class MethodBase:
             raise MethodException(error, retry=retry)
         
         else:
+            logging.error(f'Non-critical error in {self.__class__}: {error}, waiting for error to be cleared')
             self.error.error = error
             self.error.retry = retry
             await self.error.pause_until_clear()
