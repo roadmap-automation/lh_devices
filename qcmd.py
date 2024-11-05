@@ -8,10 +8,11 @@ import logging
 import json
 from uuid import uuid4
 from urllib.parse import urlsplit
+from device import ValvePositionerBase
 from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial, PollTimer
 from valve import LoopFlowValve, SyringeLValve, DistributionValve
 from components import InjectionPort, FlowCell, Node
-from distribution import DistributionBase, DistributionSingleValve
+from distribution import DistributionSingleValve
 from gsioc import GSIOC, GSIOCMessage
 from assemblies import AssemblyBasewithGSIOC, AssemblyBase, InjectionChannelBase, Network, connect_nodes, Mode, NestedAssemblyBase, AssemblyMode
 from liquid_handler import SimLiquidHandler
@@ -738,7 +739,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         distribution valve is set once at the beginning of the method and syringe pump smart
         dispense takes care of aspirate/dispense"""
 
-    def __init__(self, loop_valve: HamiltonValvePositioner,
+    def __init__(self, loop_valve: ValvePositionerBase,
                        syringe_pump: SyringePumpwithBubbleSensor,
                        flow_cell: FlowCell,
                        sample_loop: FlowCell,
@@ -1220,7 +1221,7 @@ class QCMDSystem(NestedAssemblyBase, AssemblyBasewithGSIOC):
     """QCMD System comprising one QCMD loop and one distribution valve
         (unnecessarily complex but testbed for ROADMAP multichannel assembly)"""
     
-    def __init__(self, distribution_valve: HamiltonValvePositioner, qcmd_loop: QCMDLoop, injection_port: InjectionPort, name: str = 'QCMDSystem') -> None:
+    def __init__(self, distribution_valve: ValvePositionerBase, qcmd_loop: QCMDLoop, injection_port: InjectionPort, name: str = 'QCMDSystem') -> None:
         NestedAssemblyBase.__init__(self, [distribution_valve], [qcmd_loop], name)
         AssemblyBasewithGSIOC.__init__(self, self.devices, name)
 
