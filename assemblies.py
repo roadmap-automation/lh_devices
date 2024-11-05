@@ -130,7 +130,7 @@ class AssemblyBase(WebNodeBase):
         self.network = Network(self.devices)
         self.modes: Dict[str, Mode] = {}
         self.current_mode = None
-        self.running_tasks = set()
+        self.running_tasks: Dict[asyncio.Task, Dict[str, str]] = {}
 
         # Event that is triggered when all methods are completed
         self.event_finished: asyncio.Event = asyncio.Event()
@@ -219,22 +219,27 @@ class AssemblyBase(WebNodeBase):
             result (Any): calling method
         """
 
-        self.running_tasks.discard(result)
+        self.running_tasks.pop(result)
 
         # if this was the last method to finish, set event_finished
         if len(self.running_tasks) == 0:
             self.event_finished.set()
 
-    def run_method(self, method: Coroutine) -> None:
+    def run_method(self, method: Coroutine, id: str | None = None, name: str = '') -> None:
         """Runs a coroutine method. Designed for complex operations with assembly hardware"""
 
         # clear finished event because something is now running
         self.event_finished.clear()
 
+        # create unique ID if one is not provided
+        if id is None:
+            id = str(uuid4())
+
         # create a task and add to set to avoid garbage collection
         task = asyncio.create_task(method)
         logging.debug(f'Running task {task} from method {method}')
-        self.running_tasks.add(task)
+        self.running_tasks.update({task: dict(id=id,
+                                              name=name)})
 
         # register callback upon task completion
         task.add_done_callback(self.method_complete_callback)
@@ -478,12 +483,19 @@ class InjectionChannelBase(AssemblyBase):
     def get_dead_volume(self, mode: str | None = None) -> float:
         return super().get_dead_volume(self.injection_node, mode)
 
-    def run_method(self, method_name: str, **method_kwargs) -> None:
+    def run_method(self, method_name: str, method_data: dict, id: str | None = None) -> None:
 
         if not self.methods[method_name].is_ready():
             logging.error(f'{self.name}: not all devices in {method_name} are available')
         else:
-            super().run_method(self.methods[method_name].run(**method_kwargs))
+            super().run_method(self.methods[method_name].start(**method_data), id, method_name)
+
+    def cancel_methods_by_id(self, id: str) -> None:
+
+        for task, iinfo in self.running_tasks.items():
+            if id == iinfo['id']:
+                logging.info(f'Canceling task {iinfo['name']}')
+                task.cancel()
 
     def is_ready(self, method_name: str) -> bool:
         """Checks if all devices are unreserved for method
