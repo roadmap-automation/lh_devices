@@ -680,6 +680,7 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
             if channel > len(self.channels) - 1:
                 return web.Response(text=str(Status.INVALID), status=400)
 
+            # TODO: remove this to enable batch submission. For now, only one job at a time is allowed
             if len(task.method_data['method_list']) > 1:
                 return web.Response(text=str(Status.INVALID), status=400)
 
@@ -688,14 +689,14 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
                 method_name: str = method['method_name']
                 method_data: dict = method['method_data']
                 if self.channels[channel].is_ready(method_name):
-                    self.channels[channel].run_method(method_name, method_data, id=task.id)
+                    self.channels[channel].run_method(method_name, method_data, id=str(task.id))
                 else:
                     success = False
                     break
 
             # if batch submission not successful, cancel methods
             if not success:
-                self.channels[channel].cancel_methods_by_id(task.id)
+                self.channels[channel].cancel_methods_by_id(str(task.id))
                 return web.Response(text=str(Status.BUSY), status=503)
 
             return web.Response(text=str(Status.SUCCESS), status=200)
@@ -708,8 +709,8 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
             channel: int = task.channel
             
             # cancel if any tasks match the request
-            if any(v['id'] == task.id for v in self.channels[channel].running_tasks.values()):
-                self.channels[channel].cancel_methods_by_id(task.id)
+            if any(v['id'] == str(task.id) for v in self.channels[channel].running_tasks.values()):
+                self.channels[channel].cancel_methods_by_id(str(task.id))
                 return web.Response(text=str(Status.SUCCESS), status=200)
 
             return web.Response(text=str(Status.INVALID), status=400)

@@ -72,20 +72,31 @@ class MethodBase:
         """Starts a method run with error handling
         """
 
+        async def on_cancel():
+            logging.info(f'{self.__class__.__name__} canceled, releasing and updating all devices')
+            self.error.retry = False
+            self.release_all()
+            for device in self.devices:
+                await device.trigger_update()
+
         try:
             await self.run(**kwargs)
         except asyncio.CancelledError:
-            logging.info(f'{self.__class__} canceled')
-            self.error.retry = False
+            await on_cancel()
+
         except MethodException as e:
             # these are critical errors
             self.error.error = e
             self.error.retry = e.retry
             logging.error(f'Critical error in {self.__class__}: {e}, retry is {e.retry}, waiting for error to be cleared')
-            self.error.pause_until_clear()
-            if self.error.retry:
-                # try again!
-                await self.start(**kwargs)
+            try:
+                await self.error.pause_until_clear()
+                if self.error.retry:
+                    # try again!
+                    await self.start(**kwargs)
+            except asyncio.CancelledError:
+                await on_cancel()
+
 
     async def throw_error(self, error: str, critical: bool = False, retry: bool = False) -> None:
         """Populates the method error. If a critical error, stops method execution. If not critical,

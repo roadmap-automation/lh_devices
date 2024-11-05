@@ -494,7 +494,7 @@ class InjectionChannelBase(AssemblyBase):
 
         for task, iinfo in self.running_tasks.items():
             if id == iinfo['id']:
-                logging.info(f'Canceling task {iinfo['name']}')
+                logging.info(f'Cancelling task {iinfo["name"]}')
                 task.cancel()
 
     def is_ready(self, method_name: str) -> bool:
