@@ -2,11 +2,48 @@ import asyncio
 import json
 import logging
 import traceback
-from typing import List
+from typing import List, Dict, Any
 from dataclasses import dataclass, field
 
 from device import DeviceBase, DeviceError
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
+
+# ======== Logging for collecting metadata from method classes ========
+# adapted from https://github.com/madzak/python-json-logger/blob/master/src/pythonjsonlogger/jsonlogger.py
+class JsonFormatter(logging.Formatter):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.default_msec_format = '%s.%03d'
+
+    def format(self, record: logging.LogRecord):
+        """Formats a log record and serializes to json"""
+
+        record.asctime = self.formatTime(record)
+
+        log_record: Dict[str, Any] = dict(time=record.asctime,
+                                          level=record.levelname,
+                                          message=record.message)
+
+        return json.dumps(log_record)
+
+# https://stackoverflow.com/questions/37944111/python-rolling-log-to-a-variable
+class MethodLogHandler(logging.Handler):
+
+    def __init__(self, log_queue: list, formatter: JsonFormatter = JsonFormatter()):
+        logging.Handler.__init__(self)
+        self.log_queue = log_queue
+        self.setFormatter(formatter)
+
+    def emit(self, record):
+        self.log_queue.append(self.format(record))
+
+    def pop(self):
+        rval = [v for v in self.log_queue]
+        self.log_queue = []
+        return rval
+
+# ======== Method base classes ==========
 
 @dataclass
 class MethodError(DeviceError):
@@ -30,6 +67,10 @@ class MethodBase:
         self.devices = devices
         self.error = MethodError()
         self.dead_volume_node: str | None = None
+
+    @property
+    def name(self):
+        return self.MethodDefinition.name
 
     def is_ready(self) -> bool:
         """Gets ready status of method. Requires all devices to be idle
@@ -79,10 +120,15 @@ class MethodBase:
         """
 
         async def on_cancel():
-            logging.info(f'{self.MethodDefinition.name} canceled, releasing and updating all devices')
+            logging.info(f'{self.name} canceled, releasing and updating all devices')
             self.error.retry = False
             self.release_all()
             await self.trigger_update()
+
+        method_metadata = []
+        logger = logging.getLogger(__name__)
+        log_handler = MethodLogHandler(method_metadata)
+        logger.addHandler(log_handler)
 
         try:
             self.error.clear()
@@ -94,18 +140,22 @@ class MethodBase:
             # these are critical errors
             self.error.error = str(e)
             self.error.retry = e.retry
-            logging.error(f'Critical error in {self.MethodDefinition.name}: {e}, retry is {e.retry}, waiting for error to be cleared')
+            logging.error(f'Critical error in {self.name}: {e}, retry is {e.retry}, waiting for error to be cleared')
             try:
                 await self.trigger_update()
                 await self.error.pause_until_clear()
                 if self.error.retry:
                     # try again!
-                    logging.info(f'{self.MethodDefinition.name} retrying')
+                    logging.info(f'{self.name} retrying')
                     await self.start(**kwargs)
             except asyncio.CancelledError:
                 await on_cancel()
+        finally:
+            logging.info(f'{self.name} finished')
+            logger.removeHandler(log_handler)
+            logging.info(f'Metadata: {method_metadata}')
 
-        logging.info(f'{self.MethodDefinition.name} finished')
+        return {'result': method_metadata}
 
     async def throw_error(self, error: str, critical: bool = False, retry: bool = False) -> None:
         """Populates the method error. If a critical error, stops method execution. If not critical,
@@ -232,3 +282,24 @@ class MethodBaseDeadVolume(MethodBasewithGSIOC):
             response = await super().handle_gsioc(data)
         
         return response
+
+
+if __name__=='__main__':
+
+    logging_stuff = []
+    mlh = MethodLogHandler(logging_stuff)
+
+    logging.basicConfig(handlers=[
+                        logging.StreamHandler(),
+                        mlh
+                    ],
+                    format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S',
+                    level=logging.INFO)
+    
+    mlh.setFormatter(JsonFormatter(datefmt='%Y-%m-%d %H:%M:%S'))
+
+    logging.info('I logged this')
+    logging.info({'meta_data': {'I did something': 'result was this'}})
+
+    print(logging_stuff)
