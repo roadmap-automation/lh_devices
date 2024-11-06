@@ -79,6 +79,7 @@
             newdiv.append(new $('<div>').addClass("assembly_name"))
             newdiv.append(new $('<div>').addClass("assembly_id"))
             newdiv.append(new $('<div>').addClass("assembly_modes"))
+            newdiv.append(new $('<div>').addClass("assembly_active_methods"))
             newdiv.append(new $('<div>').addClass("assembly_controls"))
             let assembliesdiv = new $('<div>')
                 .addClass('sub_assemblies')
@@ -211,6 +212,7 @@
                             $(this).children(".assembly_name").empty().append(data['name']);
                             $(this).children(".assembly_id").empty().append(new $("<a>").attr("href", data['id'] + "/").text(data['id']));
                             update_modes($(this).children(".assembly_modes"), id, data['modes'], data['current_mode'])
+                            update_active_methods($(this).children(".assembly_active_methods"), id, data['active_methods'])
                             update_controls($(this).children(".assembly_controls"), id, data['controls'])
                         }
                         set_border($(this), data['state'])
@@ -238,6 +240,23 @@
                     }
                 })
                 modediv.append(newselect)
+            }
+        }
+
+        function update_active_methods(methoddiv, id, active_methods) {
+            methoddiv.empty()
+            if (active_methods.length) {
+                methoddiv.append("Active methods: ")
+            Object.entries(active_methods).forEach(
+                ([method_name, active_method]) => {
+                    const newdiv = $('<div>').text(method_name).appendTo(methoddiv)
+                    const newctrl = $('<button>')
+                                        .text('Clear Error')
+                                        .on('click', function () {
+                                            issue_command(id, 'clear error', {'method': method_name})
+                                        })
+                                        .appendTo(newdiv);
+                    })
             }
         }
 
@@ -425,6 +444,9 @@
         flex: auto;
     }
     .assembly_modes {
+        padding: 10px;
+    }
+    .assembly_active_methods {
         padding: 10px;
     }
     .monitortext {

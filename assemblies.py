@@ -3,7 +3,7 @@ import asyncio
 import logging
 from uuid import uuid4
 from aiohttp import web
-from typing import List, Dict, Coroutine
+from typing import List, Dict, Coroutine, Literal, TypedDict
 from dataclasses import asdict
 
 from device import DeviceBase, DeviceError, ValvePositionerBase
@@ -237,12 +237,20 @@ class AssemblyBase(WebNodeBase):
 
         # create a task and add to set to avoid garbage collection
         task = asyncio.create_task(method)
-        logging.debug(f'Running task {task} from method {method}')
+        logging.debug(f'Running task {task} from method {method} with id {id}')
         self.running_tasks.update({task: dict(id=id,
-                                              name=name)})
+                                              method_name=name)})
 
         # register callback upon task completion
         task.add_done_callback(self.method_complete_callback)
+
+    def cancel_methods_by_id(self, id: str) -> None:
+        """Cancel a running method by searching for its id"""
+
+        for task, iinfo in self.running_tasks.items():
+            if id == iinfo['id']:
+                logging.info(f'Cancelling task {iinfo["name"]}')
+                task.cancel()
 
     @property
     def idle(self) -> bool:
@@ -464,6 +472,10 @@ class NestedAssemblyBase(AssemblyBase):
         d.update({'assemblies': {assembly.id: assembly.name for assembly in self.assemblies}})
         return d
 
+class ActiveMethod(TypedDict):
+    method: MethodBase
+    method_data: dict
+
 class InjectionChannelBase(AssemblyBase):
 
     def __init__(self, devices: List[DeviceBase],
@@ -474,6 +486,7 @@ class InjectionChannelBase(AssemblyBase):
         self.injection_node = injection_node
         super().__init__(devices, name=name)
         self.methods: Dict[str, MethodBase] = {}
+        self.active_methods: Dict[str, ActiveMethod] = {}
 
         # Define node connections for dead volume estimations
         self.network = Network(self.devices)
@@ -483,19 +496,31 @@ class InjectionChannelBase(AssemblyBase):
     def get_dead_volume(self, mode: str | None = None) -> float:
         return super().get_dead_volume(self.injection_node, mode)
 
+    def method_complete_callback(self, result):
+        self.active_methods.pop(self.running_tasks[result]['method_name'])
+        return super().method_complete_callback(result)
+
     def run_method(self, method_name: str, method_data: dict, id: str | None = None) -> None:
 
         if not self.methods[method_name].is_ready():
             logging.error(f'{self.name}: not all devices in {method_name} are available')
         else:
+            self.active_methods.update({method_name: ActiveMethod(method=self.methods[method_name],
+                                                          method_data=method_data)})
             super().run_method(self.methods[method_name].start(**method_data), id, method_name)
 
-    def cancel_methods_by_id(self, id: str) -> None:
-
+    def cancel_methods_by_name(self, method_name: str):
         for task, iinfo in self.running_tasks.items():
-            if id == iinfo['id']:
-                logging.info(f'Cancelling task {iinfo["name"]}')
+            if method_name == iinfo['method_name']:
+                logging.info(f'Cancelling task {iinfo["method_name"]}')
                 task.cancel()
+
+    def clear_method_error(self, method_name: str, retry: bool | None = None):
+        """Looks for an active method with method_name and clears its error"""
+
+        active_method = self.active_methods.get(method_name, None)
+        if active_method is not None:
+            active_method['method'].error.clear(retry)
 
     def is_ready(self, method_name: str) -> bool:
         """Checks if all devices are unreserved for method
@@ -508,3 +533,17 @@ class InjectionChannelBase(AssemblyBase):
         """
 
         return self.methods[method_name].is_ready()
+    
+    async def get_info(self) -> Dict:
+        """Updates base class information with 
+
+        Returns:
+            Dict: _description_
+        """
+        d = await super().get_info()
+        d.update({'active methods': {method_name: dict(method_data=active_method['method_data'],
+                                                       has_error=(active_method['method'].error.error is not None))
+                                      for method_name, active_method in self.active_methods.items()}
+                 }
+                )
+        return d
