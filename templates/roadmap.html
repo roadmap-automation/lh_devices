@@ -252,18 +252,18 @@
                     Object.entries(active_methods).forEach(
                         ([method_name, active_method]) => {
                         const newdiv = $('<div>').text(method_name + ' ').appendTo(methoddiv)
+                        $('<button>')
+                            .text('Cancel')
+                            .on('click', function () {
+                                issue_command(id, 'cancel_method', {'method': method_name})
+                            })
+                            .appendTo(newdiv);
                         if (active_method['has_error']) {
                             newdiv.addClass("error_text")
                             $('<button>')
                                 .text('Retry')
                                 .on('click', function () {
                                     issue_command(id, 'clear_error', {'method': method_name, 'retry': true})
-                                })
-                                .appendTo(newdiv);
-                            $('<button>')
-                                .text('Cancel')
-                                .on('click', function () {
-                                    issue_command(id, 'cancel_method', {'method': method_name})
                                 })
                                 .appendTo(newdiv);
                             }
