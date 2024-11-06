@@ -82,7 +82,7 @@ class MethodBase:
             logging.info(f'{self.MethodDefinition.name} canceled, releasing and updating all devices')
             self.error.retry = False
             self.release_all()
-            self.trigger_update()
+            await self.trigger_update()
 
         try:
             self.error.clear()
@@ -96,7 +96,7 @@ class MethodBase:
             self.error.retry = e.retry
             logging.error(f'Critical error in {self.MethodDefinition.name}: {e}, retry is {e.retry}, waiting for error to be cleared')
             try:
-                self.trigger_update()
+                await self.trigger_update()
                 await self.error.pause_until_clear()
                 if self.error.retry:
                     # try again!
