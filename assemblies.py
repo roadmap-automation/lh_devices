@@ -533,7 +533,19 @@ class InjectionChannelBase(AssemblyBase):
         """
 
         return self.methods[method_name].is_ready()
-    
+
+    @property
+    def error(self) -> DeviceError | None:
+        """Error exists if any device or method has an error
+
+        Returns:
+            DeviceError: first error from any of the devices or methods
+        """
+
+        active_methods = [method['method'] for method in self.active_methods.values()]
+
+        return next((dev.error for dev in self.devices + active_methods if dev.error.error is not None), DeviceError())
+
     async def get_info(self) -> Dict:
         """Updates base class information with 
 
@@ -541,9 +553,28 @@ class InjectionChannelBase(AssemblyBase):
             Dict: _description_
         """
         d = await super().get_info()
-        d.update({'active methods': {method_name: dict(method_data=active_method['method_data'],
+        d.update({'active_methods': {method_name: dict(method_data=active_method['method_data'],
                                                        has_error=(active_method['method'].error.error is not None))
                                       for method_name, active_method in self.active_methods.items()}
                  }
                 )
         return d
+    
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        await super().event_handler(command, data)
+        if command == 'clear_error':
+            target_method = self.active_methods.get(data['method'], None)
+            if target_method is not None:
+                target_method['method'].error.clear(retry=data['retry'])
+                await self.trigger_update()
+        elif command == 'cancel_method':
+            target_method = self.active_methods.get(data['method'], None)
+            if target_method is not None:
+                self.cancel_methods_by_name(data['method'])

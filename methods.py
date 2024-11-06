@@ -56,6 +56,12 @@ class MethodBase:
         for dev in self.devices:
             dev.reserved = False
 
+    async def trigger_update(self) -> None:
+        """Triggers update of all devices
+        """
+        for dev in self.devices:
+            await dev.trigger_update()
+
     @dataclass
     class MethodDefinition:
         """Subclass containing the method definition and schema"""
@@ -73,30 +79,33 @@ class MethodBase:
         """
 
         async def on_cancel():
-            logging.info(f'{self.__class__.__name__} canceled, releasing and updating all devices')
+            logging.info(f'{self.MethodDefinition.name} canceled, releasing and updating all devices')
             self.error.retry = False
             self.release_all()
-            for device in self.devices:
-                await device.trigger_update()
+            self.trigger_update()
 
         try:
+            self.error.clear()
             await self.run(**kwargs)
         except asyncio.CancelledError:
             await on_cancel()
 
         except MethodException as e:
             # these are critical errors
-            self.error.error = e
+            self.error.error = str(e)
             self.error.retry = e.retry
-            logging.error(f'Critical error in {self.__class__}: {e}, retry is {e.retry}, waiting for error to be cleared')
+            logging.error(f'Critical error in {self.MethodDefinition.name}: {e}, retry is {e.retry}, waiting for error to be cleared')
             try:
+                self.trigger_update()
                 await self.error.pause_until_clear()
                 if self.error.retry:
                     # try again!
+                    logging.info(f'{self.MethodDefinition.name} retrying')
                     await self.start(**kwargs)
             except asyncio.CancelledError:
                 await on_cancel()
 
+        logging.info(f'{self.MethodDefinition.name} finished')
 
     async def throw_error(self, error: str, critical: bool = False, retry: bool = False) -> None:
         """Populates the method error. If a critical error, stops method execution. If not critical,

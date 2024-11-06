@@ -109,7 +109,6 @@
         function set_border(thisdiv, data) {
             thisdiv.removeClass("has_error")
             if (data["error"] != null) {
-                console.log(data["error"])
                 if (data["error"]["error"] != null) {
                     thisdiv.addClass("has_error")
                 }
@@ -135,6 +134,7 @@
                     }).then(function (data) {
                         //console.log(data)
                         $('.' + id).each(function (index) {
+                            update_active_methods($(this).children(".assembly_active_methods"), id, data['active_methods'])
                             set_border($(this), data['state'])
                         })
                     })
@@ -212,6 +212,7 @@
                             $(this).children(".assembly_name").empty().append(data['name']);
                             $(this).children(".assembly_id").empty().append(new $("<a>").attr("href", data['id'] + "/").text(data['id']));
                             update_modes($(this).children(".assembly_modes"), id, data['modes'], data['current_mode'])
+                            console.log(data)
                             update_active_methods($(this).children(".assembly_active_methods"), id, data['active_methods'])
                             update_controls($(this).children(".assembly_controls"), id, data['controls'])
                         }
@@ -245,18 +246,32 @@
 
         function update_active_methods(methoddiv, id, active_methods) {
             methoddiv.empty()
-            if (active_methods.length) {
-                methoddiv.append("Active methods: ")
-            Object.entries(active_methods).forEach(
-                ([method_name, active_method]) => {
-                    const newdiv = $('<div>').text(method_name).appendTo(methoddiv)
-                    const newctrl = $('<button>')
-                                        .text('Clear Error')
-                                        .on('click', function () {
-                                            issue_command(id, 'clear error', {'method': method_name})
-                                        })
-                                        .appendTo(newdiv);
-                    })
+            if (active_methods != null) {
+                if (Object.keys(active_methods).length) {
+                    methoddiv.append("Active methods: ")
+                    Object.entries(active_methods).forEach(
+                        ([method_name, active_method]) => {
+                        const newdiv = $('<div>').text(method_name + ' ').appendTo(methoddiv)
+                        if (active_method['has_error']) {
+                            newdiv.addClass("error_text")
+                            $('<button>')
+                                .text('Retry')
+                                .on('click', function () {
+                                    issue_command(id, 'clear_error', {'method': method_name, 'retry': true})
+                                })
+                                .appendTo(newdiv);
+                            $('<button>')
+                                .text('Cancel')
+                                .on('click', function () {
+                                    issue_command(id, 'cancel_method', {'method': method_name})
+                                })
+                                .appendTo(newdiv);
+                            }
+                        else {
+                            newdiv.addClass("active_text")
+                        }
+                        })
+                }
             }
         }
 
@@ -520,6 +535,12 @@
     }
     .idle {
         border-style:solid
+    }
+    .active_text {
+        color: green
+    }
+    .error_text {
+        color: darkred
     }
     .has_error {
         border-style:solid;
