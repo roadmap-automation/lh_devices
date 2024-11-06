@@ -13,7 +13,8 @@ from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 class JsonFormatter(logging.Formatter):
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(fmt = '%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
+                         *args, **kwargs)
         self.default_msec_format = '%s.%03d'
 
     def format(self, record: logging.LogRecord):
@@ -23,17 +24,16 @@ class JsonFormatter(logging.Formatter):
 
         log_record: Dict[str, Any] = dict(time=record.asctime,
                                           level=record.levelname,
-                                          message=record.message)
+                                          message=record.msg)
 
         return json.dumps(log_record)
 
 # https://stackoverflow.com/questions/37944111/python-rolling-log-to-a-variable
 class MethodLogHandler(logging.Handler):
 
-    def __init__(self, log_queue: list, formatter: JsonFormatter = JsonFormatter()):
+    def __init__(self, log_queue: list):
         logging.Handler.__init__(self)
         self.log_queue = log_queue
-        self.setFormatter(formatter)
 
     def emit(self, record):
         self.log_queue.append(self.format(record))
@@ -55,6 +55,14 @@ class MethodException(Exception):
         super().__init__(*args)
         self.retry = retry
 
+@dataclass
+class MethodResult:
+    """Method result information"""
+
+    name: str
+    method_data: dict
+    result: dict
+
 class MethodBase:
     """Base class for defining a method for LH serial devices. Contains information about:
         1. dead volume calculations
@@ -67,6 +75,16 @@ class MethodBase:
         self.devices = devices
         self.error = MethodError()
         self.dead_volume_node: str | None = None
+
+        self.metadata = []
+
+        # set up a unique logger for this method instance
+        logger = logging.getLogger(str(id(self)))
+        logger.setLevel(logging.INFO)
+        log_handler = MethodLogHandler(self.metadata)
+        log_handler.setFormatter(JsonFormatter())
+        logger.addHandler(log_handler)
+        self.logger = logger
 
     @property
     def name(self):
@@ -115,20 +133,20 @@ class MethodBase:
 
         pass
 
-    async def start(self, **kwargs) -> None:
+    async def start(self, **kwargs) -> MethodResult:
         """Starts a method run with error handling
         """
 
         async def on_cancel():
-            logging.info(f'{self.name} canceled, releasing and updating all devices')
+            self.logger.info(f'{self.name} canceled, releasing and updating all devices')
             self.error.retry = False
             self.release_all()
             await self.trigger_update()
 
-        method_metadata = []
-        logger = logging.getLogger(__name__)
-        log_handler = MethodLogHandler(method_metadata)
-        logger.addHandler(log_handler)
+        # clear metadata before starting
+        self.metadata = []
+
+        self.logger.info(f'{self.name} starting')
 
         try:
             self.error.clear()
@@ -140,22 +158,22 @@ class MethodBase:
             # these are critical errors
             self.error.error = str(e)
             self.error.retry = e.retry
-            logging.error(f'Critical error in {self.name}: {e}, retry is {e.retry}, waiting for error to be cleared')
+            self.logger.error(f'Critical error in {self.name}: {e}, retry is {e.retry}, waiting for error to be cleared')
             try:
                 await self.trigger_update()
                 await self.error.pause_until_clear()
                 if self.error.retry:
                     # try again!
-                    logging.info(f'{self.name} retrying')
+                    self.logger.info(f'{self.name} retrying')
                     await self.start(**kwargs)
             except asyncio.CancelledError:
                 await on_cancel()
         finally:
-            logging.info(f'{self.name} finished')
-            logger.removeHandler(log_handler)
-            logging.info(f'Metadata: {method_metadata}')
+            self.logger.info(f'{self.name} finished')
 
-        return {'result': method_metadata}
+        return MethodResult(name=self.name,
+                            method_data=kwargs,
+                            result=self.metadata)
 
     async def throw_error(self, error: str, critical: bool = False, retry: bool = False) -> None:
         """Populates the method error. If a critical error, stops method execution. If not critical,
