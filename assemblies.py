@@ -9,7 +9,7 @@ from dataclasses import asdict
 from device import DeviceBase, DeviceError, ValvePositionerBase
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from connections import Port, Node, connect_nodes
-from methods import MethodBase
+from methods import MethodBase, MethodBasewithGSIOC
 from components import ComponentBase
 from webview import WebNodeBase
 
@@ -555,7 +555,8 @@ class InjectionChannelBase(AssemblyBase):
         """
         d = await super().get_info()
         d.update({'active_methods': {method_name: dict(method_data=active_method['method_data'],
-                                                       has_error=(active_method['method'].error.error is not None))
+                                                       has_error=(active_method['method'].error.error is not None),
+                                                       has_gsioc=isinstance(active_method['method'], MethodBasewithGSIOC))
                                       for method_name, active_method in self.active_methods.items()}
                  }
                 )
@@ -575,6 +576,10 @@ class InjectionChannelBase(AssemblyBase):
             if target_method is not None:
                 target_method['method'].error.clear(retry=data['retry'])
                 await self.trigger_update()
+        elif command == 'send_trigger':
+            target_method: MethodBasewithGSIOC = self.active_methods.get(data['method'], None)
+            if target_method is not None:
+                target_method.activate_trigger()
         elif command == 'cancel_method':
             target_method = self.active_methods.get(data['method'], None)
             if target_method is not None:
