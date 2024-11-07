@@ -19,7 +19,7 @@ from webview import WebNodeBase
 class HamiltonDeviceState(DeviceState):
     digital_outputs: Tuple[bool, bool, bool]
 
-class HamiltonBase(DeviceBase, WebNodeBase):
+class HamiltonBase(DeviceBase):
     """Base class for Hamilton multi-valve positioner (MVP) and syringe pump (PSD) devices.
 
         Requires:
@@ -271,7 +271,7 @@ class HamiltonBase(DeviceBase, WebNodeBase):
 
         return await WebNodeBase.trigger_update(self)
 
-class SimulatedHamiltonBase(DeviceBase, WebNodeBase):
+class SimulatedHamiltonBase(DeviceBase):
     """Base class for Hamilton multi-valve positioner (MVP) and syringe pump (PSD) devices.
        """
 
