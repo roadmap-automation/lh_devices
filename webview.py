@@ -5,6 +5,8 @@ import socketio
 from pathlib import Path
 from aiohttp import web
 
+from logutils import Loggable
+
 """
 Code to automatically generate a web application with:
 1. Individual device status
@@ -24,7 +26,7 @@ TEMPLATE_PATH = Path(__file__).parent / 'templates'
 
 sio = socketio.AsyncServer()
 
-class WebNodeBase:
+class WebNodeBase(Loggable):
 
     id: str = ''
     name: str = ''
