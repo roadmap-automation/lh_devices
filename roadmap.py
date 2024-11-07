@@ -628,8 +628,8 @@ class RoadmapChannel(RoadmapChannelBase):
         super().__init__(loop_valve, syringe_pump, flow_cell, sample_loop, injection_node, name)
 
         # add standalone methods
-        self.methods = {'InjectLoop': InjectLoop(self),
-                        'RoadmapChannelInit': RoadmapChannelInit(self)}
+        self.methods.update({'InjectLoop': InjectLoop(self),
+                        'RoadmapChannelInit': RoadmapChannelInit(self)})
 
 class RoadmapChannelBubbleSensor(RoadmapChannel):
     """Roadmap channel with populated methods
@@ -705,7 +705,7 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
             for method in task.method_data['method_list']:
                 method_name: str = method['method_name']
                 method_data: dict = method['method_data']
-                if self.channels[channel].is_ready(method_name):
+                if self.channels[channel].method_runner.is_ready(method_name):
                     self.channels[channel].run_method(method_name, method_data, id=str(task.id))
                 else:
                     success = False
