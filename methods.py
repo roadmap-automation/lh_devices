@@ -197,18 +197,18 @@ class MethodBasewithGSIOC(MethodBase):
             listening to a GSIOC device at a time.
         """
 
-        logging.debug('Starting GSIOC monitor')
+        self.logger.debug('Starting GSIOC monitor')
         async with self.gsioc.client_lock:
-            logging.debug('Got GSIOC client lock...')
+            self.logger.debug('Got GSIOC client lock...')
             try:
                 while True:
                     data: GSIOCMessage = await self.gsioc.message_queue.get()
-                    logging.debug(f'GSIOC got data {data}')
+                    self.logger.debug(f'GSIOC got data {data}')
                     response = await self.handle_gsioc(data)
                     if data.messagetype == GSIOCCommandType.IMMEDIATE:
                         await self.gsioc.response_queue.put(response)
             except asyncio.CancelledError:
-                logging.debug("Stopping GSIOC monitor...")
+                self.logger.debug("Stopping GSIOC monitor...")
             except Exception:
                 raise
 
@@ -227,6 +227,13 @@ class MethodBasewithGSIOC(MethodBase):
         await self.trigger.wait()
         self.waiting.clear()
         self.trigger.clear()
+
+    def activate_trigger(self):
+        """Activates the trigger
+        """
+
+        self.waiting.clear()
+        self.trigger.set()
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
         """Handles GSIOC messages. Put actions into gsioc_command_queue for async processing.
@@ -251,8 +258,7 @@ class MethodBasewithGSIOC(MethodBase):
 
         # set trigger
         elif data.data == 'T':
-            self.waiting.clear()
-            self.trigger.set()
+            self.activate_trigger()
             response = 'ok'
 
         else:
@@ -272,30 +278,9 @@ class MethodBaseDeadVolume(MethodBasewithGSIOC):
         # overwrites base class handling of dead volume
         if data.data == 'V':
             dead_volume = await self.dead_volume.get()
-            #logging.info(f'Sending dead volume {dead_volume}')
+            #self.logger.info(f'Sending dead volume {dead_volume}')
             response = f'{dead_volume:0.0f}'
         else:
             response = await super().handle_gsioc(data)
         
         return response
-
-
-if __name__=='__main__':
-
-    logging_stuff = []
-    mlh = MethodLogHandler(logging_stuff)
-
-    logging.basicConfig(handlers=[
-                        logging.StreamHandler(),
-                        mlh
-                    ],
-                    format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S',
-                    level=logging.INFO)
-    
-    mlh.setFormatter(JsonFormatter(datefmt='%Y-%m-%d %H:%M:%S'))
-
-    logging.info('I logged this')
-    logging.info({'meta_data': {'I did something': 'result was this'}})
-
-    print(logging_stuff)
