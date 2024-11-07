@@ -16,18 +16,21 @@ from distribution import DistributionSingleValve
 from gsioc import GSIOC, GSIOCMessage
 from assemblies import AssemblyBasewithGSIOC, AssemblyBase, InjectionChannelBase, Network, connect_nodes, Mode, NestedAssemblyBase, AssemblyMode
 from liquid_handler import SimLiquidHandler
+from logutils import Loggable
 from bubblesensor import SyringePumpwithBubbleSensor, BubbleSensorBase, SMDSensoronHamiltonDevice
 from webview import run_socket_app, WebNodeBase
 from methods import MethodBaseDeadVolume
 
 from autocontrol.status import Status
 
-class Timer:
+class Timer(Loggable):
     """Basic timer. Essentially serves as a sleep but only allows one instance to run."""
 
     def __init__(self, name='Timer') -> None:
         self.name = name
         self.timer_running: asyncio.Event = asyncio.Event()
+
+        Loggable.__init__(self)
 
     async def start(self, wait_time: float = 0.0) -> bool:
         """Executes timer.
@@ -43,7 +46,7 @@ class Timer:
             self.timer_running.clear()
             return True
         else:
-            logging.warning(f'{self.name}: Timer is already running, ignoring start command')
+            self.logger.warning(f'{self.name}: Timer is already running, ignoring start command')
             return False
 
 class QCMDRecorder(Timer):
@@ -73,15 +76,15 @@ class QCMDRecorder(Timer):
                         'value': {'tag': tag_name,
                                 'delta_t': record_time}}
 
-            logging.info(f'{self.session._base_url}{self.url_path} => {post_data}')
+            self.logger.info(f'{self.session._base_url}{self.url_path} => {post_data}')
 
             # send an http request to QCMD server
             try:
                 async with self.session.post(self.url_path, json=post_data, timeout=10) as resp:
                     response_json = await resp.json()
-                    logging.info(f'{self.session._base_url}{self.url_path} <= {response_json}')
+                    self.logger.info(f'{self.session._base_url}{self.url_path} <= {response_json}')
             except (ConnectionRefusedError, ClientConnectionError):
-                logging.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
+                self.logger.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
 
 class QCMDRecorderDevice(AssemblyBasewithGSIOC):
     """QCMD recording device."""
@@ -152,9 +155,9 @@ class QCMDMeasurementChannel(WebNodeBase):
                 await timer.wait_until_set()
                 await asyncio.gather(timer.cycle(), self.trigger_update())
             
-            logging.debug(f'{timer.address} ended')
+            self.logger.debug(f'{timer.address} ended')
         except asyncio.CancelledError:
-            logging.debug(f'{timer.address} cancelled')
+            self.logger.debug(f'{timer.address} cancelled')
         finally:
             await self.trigger_update()
 
@@ -172,7 +175,7 @@ class QCMDMeasurementChannel(WebNodeBase):
         try:
             await self._active_sleep_task
         except asyncio.CancelledError:
-            logging.info(f'{self.name} interrupted')
+            self.logger.info(f'{self.name} interrupted')
         finally:
             # cancel the monitor
             monitor.cancel()
@@ -199,16 +202,16 @@ class QCMDMeasurementChannel(WebNodeBase):
             dict: response JSON
         """
 
-        logging.info(f'{self.session._base_url}{self.url_path} => {post_data}')
+        self.logger.info(f'{self.session._base_url}{self.url_path} => {post_data}')
 
         # send an http request to QCMD server
         try:
             async with self.session.post(self.url_path, json=post_data, timeout=self.timeout) as resp:
                 response_json = await resp.json()
-                logging.info(f'{self.session._base_url}{self.url_path} <= {response_json}')
+                self.logger.info(f'{self.session._base_url}{self.url_path} <= {response_json}')
                 return response_json
         except (ConnectionRefusedError, ClientConnectionError):
-            logging.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
+            self.logger.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
 
     def _reset_state(self):
         self._tag = None
@@ -268,13 +271,13 @@ class QCMDMeasurementChannel(WebNodeBase):
         """Initialization command
         """
 
-        logging.info(f'{self.name}: Received Init command')
+        self.logger.info(f'{self.name}: Received Init command')
 
     async def QCMDStop(self):
         """Stop data collection
         """
 
-        logging.info(f'{self.name}: Received Stop command')
+        self.logger.info(f'{self.name}: Received Stop command')
 
         self.reserve()
         self.idle = False
@@ -290,7 +293,7 @@ class QCMDMeasurementChannel(WebNodeBase):
         """Accept transfer
         """
 
-        logging.info(f'{self.name}: Received transfer of material {contents}')
+        self.logger.info(f'{self.name}: Received transfer of material {contents}')
 
     async def QCMDSleep(self, sleep_time: float = 0.0) -> None:
         """Sleep
@@ -426,7 +429,7 @@ class QCMDMultiChannelMeasurementDevice(AssemblyBase):
             # TODO: turn task into a dataclass; parsing will change
             # testing: curl -X POST http://localhost:5003/SubmitTask -d "{\"channel\": 0, \"method_name\": \"DirectInjectBubbleSensor\", \"method_data\": {}}"
             task = await request.json()
-            logging.info(f'{self.name} received task {task}')
+            self.logger.info(f'{self.name} received task {task}')
             channel: int = task['channel']
             if channel < len(self.channels):
                 method = task['method_data']['method_list'][0]
@@ -512,10 +515,10 @@ class QCMDDirectInject(MethodBaseDeadVolume):
         method = self.MethodDefinition(**kwargs)
 
         # Connect to GSIOC communications and wait for trigger
-        logging.info(f'{self.channel.name}.{method.name}: Connecting to GSIOC')
+        self.logger.info(f'{self.channel.name}.{method.name}: Connecting to GSIOC')
         self.connect_gsioc()
 
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
         await self.wait_for_trigger()
 
         # Set dead volume and wait for method to ask for it (might need brief wait in the calling
@@ -524,34 +527,34 @@ class QCMDDirectInject(MethodBaseDeadVolume):
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
-        logging.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
+        self.logger.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
 
         # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
-        logging.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
         await self.channel.change_mode('Waste')
 
         # Wait for trigger to switch to {method.name} mode (LH performs injection)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
         await self.wait_for_trigger()
 
-        logging.info(f'{self.channel.name}.{method.name}: Switching to Inject mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Inject mode')
         await self.channel.change_mode('Inject')
 
         # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
         await self.wait_for_trigger()
 
-        logging.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
         await self.channel.change_mode('Waste')
 
         # Wait for trigger to switch to Standby mode (this may not be necessary)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
         await self.wait_for_trigger()
 
         # switch to standby mode
-        logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
         await self.channel.change_mode('Standby')
 
         # At this point, liquid handler is done, release communications
@@ -582,10 +585,10 @@ class QCMDDirectInjectBubbleSensor(MethodBaseDeadVolume):
         method = self.MethodDefinition(**kwargs)
 
         # Connect to GSIOC communications and wait for trigger
-        logging.info(f'{self.channel.name}.{method.name}: Connecting to GSIOC')
+        self.logger.info(f'{self.channel.name}.{method.name}: Connecting to GSIOC')
         self.connect_gsioc()
 
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
         await self.wait_for_trigger()
 
         # Set dead volume and wait for method to ask for it (might need brief wait in the calling
@@ -594,19 +597,19 @@ class QCMDDirectInjectBubbleSensor(MethodBaseDeadVolume):
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
-        logging.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
+        self.logger.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
 
         # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
-        logging.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
         await self.channel.change_mode('Waste')
 
         # Wait for another trigger, which indicates that the LH is going to start asking after the bubble status
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for trigger to traverse air gap')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for trigger to traverse air gap')
         await self.wait_for_trigger()
         await self.outlet_bubble_sensor.initialize()
-        logging.info(f'{self.channel.name}.{method.name}: Traversing air gap...')
+        self.logger.info(f'{self.channel.name}.{method.name}: Traversing air gap...')
         
         # make sure there's always something there to read
         liquid_in_line = False
@@ -615,7 +618,7 @@ class QCMDDirectInjectBubbleSensor(MethodBaseDeadVolume):
         # traverse air gap
         while not liquid_in_line:
             liquid_in_line = await self.outlet_bubble_sensor.read()
-            logging.info(f'{self.channel.name}.{method.name}:     Outlet bubble sensor value: {int(liquid_in_line)}')
+            self.logger.info(f'{self.channel.name}.{method.name}:     Outlet bubble sensor value: {int(liquid_in_line)}')
             # if end condition reached, remove old queue value and put in current one
             if liquid_in_line:
                 if self.dead_volume.qsize():
@@ -623,25 +626,25 @@ class QCMDDirectInjectBubbleSensor(MethodBaseDeadVolume):
             await self.dead_volume.put(int(liquid_in_line))
 
         # Wait for trigger to switch to {method.name} mode (LH performs injection)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
         await self.wait_for_trigger()
 
-        logging.info(f'{self.channel.name}.{method.name}: Switching to Inject mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Inject mode')
         await self.channel.change_mode('Inject')
 
         # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
         await self.wait_for_trigger()
 
-        logging.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Waste mode')
         await self.channel.change_mode('Waste')
 
         # Wait for trigger to switch to Standby mode (this may not be necessary)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
         await self.wait_for_trigger()
 
         # switch to standby mode
-        logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
         await self.channel.change_mode('Standby')
 
         # At this point, liquid handler is done, release communications
@@ -824,7 +827,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
         # overwrites base class handling of dead volume
         if data.data == 'V':
             dead_volume = await self.dead_volume.get()
-            #logging.info(f'Sending dead volume {dead_volume}')
+            #self.logger.info(f'Sending dead volume {dead_volume}')
             response = f'{dead_volume:0.0f}'
         else:
             response = await super().handle_gsioc(data)
@@ -899,49 +902,49 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
-        logging.info(f'{self.name}.LoopInject: dead volume set to {dead_volume}')
+        self.logger.info(f'{self.name}.LoopInject: dead volume set to {dead_volume}')
 
         # locks the channel so any additional calling processes have to wait
         async with self.channel_lock:
 
             # switch to standby mode
-            logging.info(f'{self.name}.LoopInject: Switching to Standby mode')            
+            self.logger.info(f'{self.name}.LoopInject: Switching to Standby mode')            
             await self.change_mode('Standby')
 
             # Wait for trigger to switch to LoadLoop mode
-            logging.info(f'{self.name}.LoopInject: Waiting for first trigger')
+            self.logger.info(f'{self.name}.LoopInject: Waiting for first trigger')
             await self.wait_for_trigger()
-            logging.info(f'{self.name}.LoopInject: Switching to LoadLoop mode')
+            self.logger.info(f'{self.name}.LoopInject: Switching to LoadLoop mode')
             await self.change_mode('LoadLoop')
 
             # Wait for trigger to switch to PumpAspirate mode
-            logging.info(f'{self.name}.LoopInject: Waiting for second trigger')
+            self.logger.info(f'{self.name}.LoopInject: Waiting for second trigger')
             await self.wait_for_trigger()
 
             # At this point, liquid handler is done
             self.release_liquid_handler.set()
 
-            logging.info(f'{self.name}.LoopInject: Switching to PumpPrimeLoop mode')
+            self.logger.info(f'{self.name}.LoopInject: Switching to PumpPrimeLoop mode')
             await self.change_mode('PumpPrimeLoop')
 
             # smart dispense the volume required to move plug quickly through loop
-            logging.info(f'{self.name}.LoopInject: Moving plug through loop, total injection volume {self.sample_loop.get_volume() - (pump_volume + excess_volume)} uL')
+            self.logger.info(f'{self.name}.LoopInject: Moving plug through loop, total injection volume {self.sample_loop.get_volume() - (pump_volume + excess_volume)} uL')
             await self.syringe_pump.smart_dispense(self.sample_loop.get_volume() - (pump_volume + excess_volume), self.syringe_pump.max_dispense_flow_rate)
 
             # waits until any current measurements are complete. Note that this could be done with
             # "async with measurement_lock" but then QCMDRecord would have to grab the lock as soon as it
             # was released, and there may be a race condition with other subroutines.
             # This function allows QCMDRecord to release the lock when it is done.
-            logging.info(f'{self.name}.LoopInject: Waiting to acquire measurement lock')
+            self.logger.info(f'{self.name}.LoopInject: Waiting to acquire measurement lock')
             await self.measurement_lock.acquire()
 
             # change to inject mode
             await self.change_mode('PumpInject')
-            logging.info(f'{self.name}.LoopInject: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
+            self.logger.info(f'{self.name}.LoopInject: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
             await self.syringe_pump.smart_dispense(pump_volume, pump_flow_rate)
 
             # start QCMD timer
-            logging.info(f'{self.name}.LoopInject: Starting QCMD timer for {sleep_time + record_time} seconds')
+            self.logger.info(f'{self.name}.LoopInject: Starting QCMD timer for {sleep_time + record_time} seconds')
 
             # spawn new measurement task that will release measurement lock when complete
             self.run_method(self.record(tag_name, record_time, sleep_time))
@@ -973,7 +976,7 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
-        logging.info(f'{self.name}.LoopInjectwithBubble: dead volume set to {dead_volume}')
+        self.logger.info(f'{self.name}.LoopInjectwithBubble: dead volume set to {dead_volume}')
 
         # locks the channel so any additional calling processes have to wait
         async with self.channel_lock:
@@ -982,29 +985,29 @@ class QCMDLoop(AssemblyBasewithGSIOC):
             await self.syringe_pump.set_digital_output(1, True)
 
             # switch to standby mode
-            logging.info(f'{self.name}.LoopInjectwithBubble: Switching to Standby mode')            
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Switching to Standby mode')            
             await self.change_mode('Standby')
 
             # Wait for trigger to switch to LoadLoop mode
-            logging.info(f'{self.name}.LoopInjectwithBubble: Waiting for first trigger')
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Waiting for first trigger')
             await self.wait_for_trigger()
-            logging.info(f'{self.name}.LoopInjectwithBubble: Switching to LoadLoop mode')
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Switching to LoadLoop mode')
             await self.change_mode('LoadLoop')
 
             # Wait for trigger to switch to PumpAspirate mode
-            logging.info(f'{self.name}.LoopInjectwithBubble: Waiting for second trigger')
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Waiting for second trigger')
             await self.wait_for_trigger()
 
             # At this point, liquid handler is done
             self.release_liquid_handler.set()
 
-            logging.info(f'{self.name}.LoopInjectwithBubble: Switching to PumpPrimeLoop mode')
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Switching to PumpPrimeLoop mode')
             await self.change_mode('PumpPrimeLoop')
 
             # smart dispense the volume required to move plug quickly through loop, interrupting if sensor 1 goes low
-            logging.info(f'{self.name}.LoopInjectwithBubble: Moving plug through loop until air gap detected, total injection volume {self.sample_loop.get_volume() - (pump_volume)} uL')
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Moving plug through loop until air gap detected, total injection volume {self.sample_loop.get_volume() - (pump_volume)} uL')
             actual_volume = await self.syringe_pump.smart_dispense(self.sample_loop.get_volume() - pump_volume, self.syringe_pump.max_dispense_flow_rate, 5)
-            logging.info(f'{self.name}.LoopInjectwithBubble: Actually injected {actual_volume} uL')
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Actually injected {actual_volume} uL')
 
             async def traverse_air_gap(nominal_air_gap: float, flow_rate: float = self.syringe_pump.max_dispense_flow_rate, volume_step: float = 10) -> float:
                 
@@ -1017,31 +1020,31 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
             # dispense air gap + bubble offset without interruption
             #await self.syringe_pump.smart_dispense(air_gap + self.bubble_sensor_offset, self.syringe_pump.max_dispense_flow_rate)
-            logging.info(f'{self.name}.LoopInjectwithBubble: Traversing air gap...')
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Traversing air gap...')
             total_air_gap_volume = await traverse_air_gap(air_gap, self.syringe_pump.max_dispense_flow_rate)
-            logging.info(f'{self.name}.LoopInjectwithBubble: Total air gap volume: {total_air_gap_volume} uL')
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Total air gap volume: {total_air_gap_volume} uL')
             actual_volume = await self.syringe_pump.smart_dispense(self.bubble_sensor_offset + 30, self.syringe_pump.max_dispense_flow_rate)
-            logging.info(f'{self.name}.LoopInjectwithBubble: Bubble sensor offset dispensed: {actual_volume} uL')
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Bubble sensor offset dispensed: {actual_volume} uL')
 
             # waits until any current measurements are complete. Note that this could be done with
             # "async with measurement_lock" but then QCMDRecord would have to grab the lock as soon as it
             # was released, and there may be a race condition with other subroutines.
             # This function allows QCMDRecord to release the lock when it is done.
-            logging.info(f'{self.name}.LoopInjectwithBubble: Waiting to acquire measurement lock')
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Waiting to acquire measurement lock')
             await self.measurement_lock.acquire()
 
             # change to inject mode
-            logging.info(f'{self.name}.LoopInjectwithBubble: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
             await self.change_mode('PumpInject')
             actual_volume = await self.syringe_pump.smart_dispense(pump_volume, pump_flow_rate, 5)
             # TODO: Replace 20 with a bubble_sensor_offset buffer value (+ for initial injection, - for this one)
             extra_volume = min(pump_volume - actual_volume, self.bubble_sensor_offset - 20)
             if extra_volume > 0:
                 await self.syringe_pump.smart_dispense(extra_volume, pump_flow_rate)
-            logging.info(f'{self.name}.LoopInjectwithBubble: Injected {actual_volume} uL at flow rate {pump_flow_rate} uL / s, plus extra_volume {extra_volume}')
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Injected {actual_volume} uL at flow rate {pump_flow_rate} uL / s, plus extra_volume {extra_volume}')
 
             # start QCMD timer
-            logging.info(f'{self.name}.LoopInjectwithBubble: Starting QCMD timer for {sleep_time + record_time} seconds')
+            self.logger.info(f'{self.name}.LoopInjectwithBubble: Starting QCMD timer for {sleep_time + record_time} seconds')
 
             # spawn new measurement task that will release measurement lock when complete
             self.run_method(self.record(tag_name, record_time, sleep_time))
@@ -1072,59 +1075,59 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
-        logging.info(f'{self.name}.LHInject: dead volume set to {dead_volume}')
+        self.logger.info(f'{self.name}.LHInject: dead volume set to {dead_volume}')
 
         # locks the channel so any additional calling processes have to wait
         async with self.channel_lock:
 
              # switch to standby mode
-            logging.info(f'{self.name}.LHInject: Switching to Standby mode')            
+            self.logger.info(f'{self.name}.LHInject: Switching to Standby mode')            
             await self.change_mode('Standby')
 
             # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
-            logging.info(f'{self.name}.LHInject: Waiting for first trigger')
+            self.logger.info(f'{self.name}.LHInject: Waiting for first trigger')
             await self.wait_for_trigger()
-            logging.info(f'{self.name}.LHInject: Switching to LHPrime mode')
+            self.logger.info(f'{self.name}.LHInject: Switching to LHPrime mode')
             await self.change_mode('LHPrime')
 
             # waits until any current measurements are complete. Note that this could be done with
             # "async with measurement_lock" but then QCMDRecord would have to grab the lock as soon as it
             # was released, and there may be a race condition with other subroutines.
             # This function allows QCMDRecord to release the lock when it is done.
-            logging.info(f'{self.name}.LHInject: Waiting to acquire measurement lock')
+            self.logger.info(f'{self.name}.LHInject: Waiting to acquire measurement lock')
             await self.measurement_lock.acquire()
 
             # Wait for trigger to switch to LHInject mode (LH performs injection)
-            logging.info(f'{self.name}.LHInject: Waiting for second trigger')
+            self.logger.info(f'{self.name}.LHInject: Waiting for second trigger')
             await self.wait_for_trigger()
 
-            logging.info(f'{self.name}.LHInject: Switching to LHInject mode')
+            self.logger.info(f'{self.name}.LHInject: Switching to LHInject mode')
             await self.change_mode('LHInject')
 
             # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
-            logging.info(f'{self.name}.LHInject: Waiting for third trigger')
+            self.logger.info(f'{self.name}.LHInject: Waiting for third trigger')
             await self.wait_for_trigger()
 
-            logging.info(f'{self.name}.LHInject: Switching to LHPrime mode')
+            self.logger.info(f'{self.name}.LHInject: Switching to LHPrime mode')
             await self.change_mode('LHPrime')
 
             # start QCMD timer
-            logging.info(f'{self.name}.LHInject: Starting QCMD timer for {sleep_time + record_time} seconds')
+            self.logger.info(f'{self.name}.LHInject: Starting QCMD timer for {sleep_time + record_time} seconds')
 
             # spawn new measurement task that will release measurement lock when complete
             self.run_method(self.record(tag_name, record_time, sleep_time))
 
             # Wait for trigger to switch to Standby mode (this may not be necessary)
-            logging.info(f'{self.name}.LHInject: Waiting for fourth trigger')
+            self.logger.info(f'{self.name}.LHInject: Waiting for fourth trigger')
             await self.wait_for_trigger()
 
             # Clear liquid handler event if it isn't already cleared
             self.release_liquid_handler.set()
 
-            logging.info(f'{self.name}.LHInject: Switching to Standby mode')            
+            self.logger.info(f'{self.name}.LHInject: Switching to Standby mode')            
             await self.change_mode('Standby')
 
-            #logging.info(f'{self.name}.LHInject: Priming loop')
+            #self.logger.info(f'{self.name}.LHInject: Priming loop')
 
             # Prime loop
             #await self.primeloop()
@@ -1160,59 +1163,59 @@ class QCMDLoop(AssemblyBasewithGSIOC):
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
-        logging.info(f'{self.name}.LHInject: dead volume set to {dead_volume}')
+        self.logger.info(f'{self.name}.LHInject: dead volume set to {dead_volume}')
 
         # locks the channel so any additional calling processes have to wait
         async with self.channel_lock:
 
              # switch to standby mode
-            logging.info(f'{self.name}.LHInject: Switching to Standby mode')            
+            self.logger.info(f'{self.name}.LHInject: Switching to Standby mode')            
             await self.change_mode('Standby')
 
             # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
-            logging.info(f'{self.name}.LHInject: Waiting for first trigger')
+            self.logger.info(f'{self.name}.LHInject: Waiting for first trigger')
             await self.wait_for_trigger()
-            logging.info(f'{self.name}.LHInject: Switching to LHPrime mode')
+            self.logger.info(f'{self.name}.LHInject: Switching to LHPrime mode')
             await self.change_mode('LHPrime')
 
             # waits until any current measurements are complete. Note that this could be done with
             # "async with measurement_lock" but then QCMDRecord would have to grab the lock as soon as it
             # was released, and there may be a race condition with other subroutines.
             # This function allows QCMDRecord to release the lock when it is done.
-            logging.info(f'{self.name}.LHInject: Waiting to acquire measurement lock')
+            self.logger.info(f'{self.name}.LHInject: Waiting to acquire measurement lock')
             await self.measurement_lock.acquire()
 
             # Wait for trigger to switch to LHInject mode (LH performs injection)
-            logging.info(f'{self.name}.LHInject: Waiting for second trigger')
+            self.logger.info(f'{self.name}.LHInject: Waiting for second trigger')
             await self.wait_for_trigger()
 
-            logging.info(f'{self.name}.LHInject: Switching to LHInject mode')
+            self.logger.info(f'{self.name}.LHInject: Switching to LHInject mode')
             await self.change_mode('LHInject')
 
             # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
-            logging.info(f'{self.name}.LHInject: Waiting for third trigger')
+            self.logger.info(f'{self.name}.LHInject: Waiting for third trigger')
             await self.wait_for_trigger()
 
-            logging.info(f'{self.name}.LHInject: Switching to LHPrime mode')
+            self.logger.info(f'{self.name}.LHInject: Switching to LHPrime mode')
             await self.change_mode('LHPrime')
 
             # start QCMD timer
-            logging.info(f'{self.name}.LHInject: Starting QCMD timer for {sleep_time + record_time} seconds')
+            self.logger.info(f'{self.name}.LHInject: Starting QCMD timer for {sleep_time + record_time} seconds')
 
             # spawn new measurement task that will release measurement lock when complete
             self.run_method(self.record(tag_name, record_time, sleep_time))
 
             # Wait for trigger to switch to Standby mode (this may not be necessary)
-            logging.info(f'{self.name}.LHInject: Waiting for fourth trigger')
+            self.logger.info(f'{self.name}.LHInject: Waiting for fourth trigger')
             await self.wait_for_trigger()
 
             # Clear liquid handler event if it isn't already cleared
             self.release_liquid_handler.set()
 
-            logging.info(f'{self.name}.LHInject: Switching to Standby mode')            
+            self.logger.info(f'{self.name}.LHInject: Switching to Standby mode')            
             await self.change_mode('Standby')
 
-            #logging.info(f'{self.name}.LHInject: Priming loop')
+            #self.logger.info(f'{self.name}.LHInject: Priming loop')
 
             # Prime loop
             #await self.primeloop()
@@ -1252,7 +1255,7 @@ class QCMDSystem(NestedAssemblyBase, AssemblyBasewithGSIOC):
         # defers dead volume calculation to qcmd_loop
         if data.data == 'V':
             dead_volume = await self.qcmd_loop.dead_volume.get()
-            #logging.info(f'Sending dead volume {dead_volume}')
+            #self.logger.info(f'Sending dead volume {dead_volume}')
             response = f'{dead_volume:0.0f}'
         elif data.data.startswith('{'):
             response = await super().handle_gsioc(data)

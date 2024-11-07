@@ -677,7 +677,7 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
         async def handle_task(request: web.Request) -> web.Response:
             data = await request.json()
             task = TaskData(**data)
-            logging.info(f'{self.name} received task {task}')
+            self.logger.info(f'{self.name} received task {task}')
             channel: int = task.channel
             if channel > len(self.channels) - 1:
                 return web.Response(text=str(Status.INVALID), status=400)
@@ -707,7 +707,7 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
         async def cancel_task(request: web.Request) -> web.Response:
             data = await request.json()
             task = TaskData(**data)
-            logging.info(f'{self.name} received cancel request for task {task}')
+            self.logger.info(f'{self.name} received cancel request for task {task}')
             channel: int = task.channel
             
             # cancel if any tasks match the request
