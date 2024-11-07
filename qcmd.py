@@ -145,6 +145,7 @@ class QCMDMeasurementDevice(DeviceBase):
         self.result: dict | None = None
 
         self._heartbeat_task: asyncio.Task = None
+        self._updating: bool = False
 
     async def initialize_device(self):
 
@@ -317,12 +318,14 @@ class QCMDMeasurementDevice(DeviceBase):
         return await self._post(post_data)
 
     async def trigger_update(self):
-        await self.update_qcmd_status()
+        if not self._updating:
+            asyncio.create_task(self.update_qcmd_status())
         return await super().trigger_update()
 
     async def update_qcmd_status(self) -> None:
         """Updates status from QCM server
         """
+        self._updating = True
         post_data = {'command': 'get_status',
                      'value': None}
         
@@ -331,6 +334,7 @@ class QCMDMeasurementDevice(DeviceBase):
             self.qcmd_status = QCMDState.DISCONNECTED
 
         self.qcmd_status = result['result']
+        self._updating = False
 
     async def sleep(self, sleep_time: float = 0.0) -> float:
         """Sleep
