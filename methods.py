@@ -3,7 +3,8 @@ import copy
 import json
 import logging
 import traceback
-from typing import List, Dict, Any
+from uuid import uuid4
+from typing import List, Dict, Any, Callable, TypedDict, Coroutine
 from dataclasses import dataclass, field
 
 from device import DeviceBase, DeviceError
@@ -284,3 +285,89 @@ class MethodBaseDeadVolume(MethodBasewithGSIOC):
             response = await super().handle_gsioc(data)
         
         return response
+
+class ActiveMethod(TypedDict):
+    method: MethodBase
+    method_data: dict
+
+class MethodRunner:
+
+    def __init__(self):
+        
+        self.methods: Dict[str, MethodBase] = {}
+        self.active_methods: Dict[str, ActiveMethod] = {}
+        self.callbacks: List[Callable] = [self.remove_active_method,
+                                          self.remove_running_task]
+        self._running_tasks: Dict[asyncio.Task, Dict[str, str]] = {}
+
+        # Event that is triggered when all methods are completed
+        self.event_finished: asyncio.Event = asyncio.Event()
+
+    def remove_running_task(self, result: asyncio.Future) -> None:
+        """Callback when method is complete. Should generally be done last
+
+        Args:
+            result (Any): calling method
+        """
+
+        self._running_tasks.pop(result)
+
+        # if this was the last method to finish, set event_finished
+        if len(self._running_tasks) == 0:
+            self.event_finished.set()
+
+    def run_method(self, method: Coroutine, id: str | None = None, name: str = '') -> None:
+        """Runs a coroutine method. Designed for complex operations with assembly hardware"""
+
+        # clear finished event because something is now running
+        self.event_finished.clear()
+
+        # create unique ID if one is not provided
+        if id is None:
+            id = str(uuid4())
+
+        # create a task and add to set to avoid garbage collection
+        task = asyncio.create_task(method)
+        logging.debug(f'Running task {task} from method {method} with id {id}')
+        self._running_tasks.update({task: dict(id=id,
+                                              method_name=name)})
+
+        # register callbacks upon task completion
+        for callback in self.callbacks:
+            task.add_done_callback(callback)
+
+    def cancel_methods_by_id(self, id: str) -> None:
+        """Cancel a running method by searching for its id"""
+
+        for task, iinfo in self._running_tasks.items():
+            if id == iinfo['id']:
+                logging.info(f'Cancelling task {iinfo["name"]}')
+                task.cancel()
+
+    def remove_active_method(self, result):
+        self.active_methods.pop(self._running_tasks[result]['method_name'])
+
+    def cancel_methods_by_name(self, method_name: str):
+        for task, iinfo in self._running_tasks.items():
+            if method_name == iinfo['method_name']:
+                logging.info(f'Cancelling task {iinfo["method_name"]}')
+                task.cancel()
+
+    def clear_method_error(self, method_name: str, retry: bool | None = None):
+        """Looks for an active method with method_name and clears its error"""
+
+        active_method = self.active_methods.get(method_name, None)
+        if active_method is not None:
+            active_method['method'].error.clear(retry)
+
+    def is_ready(self, method_name: str) -> bool:
+        """Checks if all devices are unreserved for method
+
+        Args:
+            method_name (str): name of method to check
+
+        Returns:
+            bool: True if all devices are unreserved
+        """
+
+        return self.methods[method_name].is_ready()
