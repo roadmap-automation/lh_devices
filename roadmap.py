@@ -595,13 +595,14 @@ class RoadmapChannelSleep(MethodBase):
     async def run(self, **kwargs) -> None:
         
         method = self.MethodDefinition(**kwargs)
-        logging.info(f'{self.channel.name} sleeping {method.sleep_time} min')
+        self.logger.info(f'{self.channel.name} sleeping {method.sleep_time} min')
         self.reserve_all()
         await self.channel.trigger_update()
         await asyncio.sleep(method.sleep_time * 60)
+        #await self.throw_error('test error', critical=True)
         self.release_all()
         await self.channel.trigger_update()
-        logging.info(f'{self.channel.name} sleep complete')
+        self.logger.info(f'{self.channel.name} sleep complete')
 
 class RoadmapChannel(RoadmapChannelBase):
     """Roadmap channel with populated methods

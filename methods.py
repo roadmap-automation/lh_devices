@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import logging
 import traceback
@@ -144,7 +145,7 @@ class MethodBase:
             await self.trigger_update()
 
         # clear metadata before starting
-        self.metadata = []
+        self.metadata.clear()
 
         self.logger.info(f'{self.name} starting')
 
@@ -165,15 +166,19 @@ class MethodBase:
                 if self.error.retry:
                     # try again!
                     self.logger.info(f'{self.name} retrying')
+                    retry_metadata = copy.copy(self.metadata)
                     await self.start(**kwargs)
+                    self.metadata = retry_metadata + self.metadata
             except asyncio.CancelledError:
                 await on_cancel()
         finally:
             self.logger.info(f'{self.name} finished')
+        
+        logging.info(self.metadata)
 
         return MethodResult(name=self.name,
                             method_data=kwargs,
-                            result=self.metadata)
+                            result=copy.copy(self.metadata))
 
     async def throw_error(self, error: str, critical: bool = False, retry: bool = False) -> None:
         """Populates the method error. If a critical error, stops method execution. If not critical,
@@ -189,7 +194,7 @@ class MethodBase:
             raise MethodException(error, retry=retry)
         
         else:
-            logging.error(f'Non-critical error in {self.__class__}: {error}, waiting for error to be cleared')
+            self.logger.error(f'Non-critical error in {self.__class__}: {error}, waiting for error to be cleared')
             self.error.error = error
             self.error.retry = retry
             await self.error.pause_until_clear()
