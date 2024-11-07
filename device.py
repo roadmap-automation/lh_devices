@@ -47,8 +47,7 @@ class DeviceBase(WebNodeBase):
 
     def __init__(self, device_id: str | None = None, name: str | None = None) -> None:
 
-        if device_id is None:
-            self.id = str(uuid4())
+        self.id = str(uuid4()) if device_id is None else device_id
         WebNodeBase.__init__(self, id=self.id, name=name)
 
         self.idle: bool = True
