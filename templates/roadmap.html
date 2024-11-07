@@ -252,6 +252,14 @@
                     Object.entries(active_methods).forEach(
                         ([method_name, active_method]) => {
                         const newdiv = $('<div>').text(method_name + ' ').appendTo(methoddiv)
+                        if (active_method['has_gsioc']) {
+                            $('<button>')
+                                .text('Send trigger')
+                                .on('click', function () {
+                                    issue_command(id, 'send_trigger', {'method': method_name})
+                                })
+                                .appendTo(newdiv);
+                            }
                         $('<button>')
                             .text('Cancel')
                             .on('click', function () {
