@@ -42,9 +42,9 @@ class DeviceBase:
     """Base device class
     """
 
-    def __init__(self, id: str | None = None, name: str | None = None) -> None:
+    def __init__(self, device_id: str | None = None, name: str | None = None) -> None:
         
-        if id is None:
+        if device_id is None:
             self.id = str(uuid4())
         self.name=name
         self.idle: bool = True
@@ -222,8 +222,8 @@ class ValvePositionerState(DeviceState):
 
 class ValvePositionerBase(DeviceBase):
 
-    def __init__(self, valve: ValveBase, id = None, name = None):
-        DeviceBase.__init__(self, id=id, name=name)
+    def __init__(self, valve: ValveBase, device_id = None, name = None):
+        DeviceBase.__init__(self, device_id=device_id, name=name)
 
         self.valve = valve
 
@@ -392,8 +392,8 @@ class SyringePumpValvePositionerState(SyringePumpState, ValvePositionerState):
 
 class SyringePumpValvePositioner(ValvePositionerBase, SyringePumpBase):
 
-    def __init__(self, valve, syringe_volume: float, id=None, name=None):
-        ValvePositionerBase.__init__(self, valve, id=id, name=name)
+    def __init__(self, valve, syringe_volume: float, device_id=None, name=None):
+        ValvePositionerBase.__init__(self, valve, device_id=device_id, name=name)
         SyringePumpBase.__init__(self, syringe_volume, id=self.id, name=self.name)
 
     @property

@@ -30,9 +30,9 @@ class HamiltonBase(DeviceBase, WebNodeBase):
      
        """
 
-    def __init__(self, serial_instance: HamiltonSerial, address: str, id=None, name=None) -> None:
+    def __init__(self, serial_instance: HamiltonSerial, address: str, device_id: str = None, name: str = None) -> None:
 
-        DeviceBase.__init__(self, id=id, name=name)        
+        DeviceBase.__init__(self, device_id=device_id, name=name)        
         self.serial = serial_instance
         self.digital_outputs: Tuple[bool, bool, bool] = (False, False, False)
         self.busy_code = '@'
@@ -275,9 +275,9 @@ class SimulatedHamiltonBase(DeviceBase, WebNodeBase):
     """Base class for Hamilton multi-valve positioner (MVP) and syringe pump (PSD) devices.
        """
 
-    def __init__(self, speed_multiplier: float = 1.0, id=None, name=None) -> None:
+    def __init__(self, speed_multiplier: float = 1.0, device_id=None, name=None) -> None:
 
-        DeviceBase.__init__(self, id=id, name=name)        
+        DeviceBase.__init__(self, device_id=device_id, name=name)        
         self.digital_outputs: Tuple[bool, bool, bool] = (False, False, False)
         self.digital_inputs: Tuple[bool, bool] = (False, False)
         self.speed_multiplier = speed_multiplier
@@ -435,8 +435,8 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
     """Hamilton MVP4 device
     """
 
-    def __init__(self, serial_instance: HamiltonSerial, address: str, valve: ValveBase, id=None, name=None) -> None:
-        HamiltonBase.__init__(self, serial_instance, address, id=id, name=name)
+    def __init__(self, serial_instance: HamiltonSerial, address: str, valve: ValveBase, device_id=None, name=None) -> None:
+        HamiltonBase.__init__(self, serial_instance, address, device_id=device_id, name=name)
         ValvePositionerBase.__init__(self, valve, self.id, self.name)
 
     @property
@@ -614,9 +614,9 @@ class SimulatedHamiltonValvePositioner(SimulatedHamiltonBase, ValvePositionerBas
     """Simulated Hamilton MVP4 device
     """
 
-    def __init__(self, valve: ValveBase, id=None, name=None) -> None:
-        SimulatedHamiltonBase.__init__(self, id=id, name=name)
-        ValvePositionerBase.__init__(self, valve, id=self.id, name=self.name)
+    def __init__(self, valve: ValveBase, device_id=None, name=None) -> None:
+        SimulatedHamiltonBase.__init__(self, device_id=device_id, name=name)
+        ValvePositionerBase.__init__(self, valve, device_id=self.id, name=self.name)
 
     @property
     def state(self) -> HamiltonValvePositionerState:
@@ -1187,8 +1187,8 @@ class SimulatedHamiltonSyringePump(SimulatedHamiltonValvePositioner, SyringePump
                  id: str = None,
                  name: str = None,
                  ) -> None:
-        SimulatedHamiltonValvePositioner.__init__(self, valve, id=id, name=name)
-        SyringePumpValvePositioner.__init__(self, valve, syringe_volume, id=self.id, name=self.name)
+        SimulatedHamiltonValvePositioner.__init__(self, valve, device_id=id, name=name)
+        SyringePumpValvePositioner.__init__(self, valve, syringe_volume, device_id=self.id, name=self.name)
 
         # Syringe poll delay
         self.syringe_poll_delay = 0.2
