@@ -212,7 +212,6 @@
                             $(this).children(".assembly_name").empty().append(data['name']);
                             $(this).children(".assembly_id").empty().append(new $("<a>").attr("href", data['id'] + "/").text(data['id']));
                             update_modes($(this).children(".assembly_modes"), id, data['modes'], data['current_mode'])
-                            console.log(data)
                             update_active_methods($(this).children(".assembly_active_methods"), id, data['active_methods'])
                             update_controls($(this).children(".assembly_controls"), id, data['controls'])
                         }
