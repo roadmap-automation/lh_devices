@@ -5,6 +5,8 @@ from uuid import uuid4
 from typing import List, Literal
 from connections import Node
 from dataclasses import dataclass
+
+from logutils import Loggable
 from valve import ValveState, ValveBase
 
 @dataclass
@@ -38,7 +40,7 @@ class DeviceState:
     reserved: bool
     error: DeviceError
 
-class DeviceBase:
+class DeviceBase(Loggable):
     """Base device class
     """
 
@@ -53,10 +55,8 @@ class DeviceBase:
         self.error: DeviceError = DeviceError()
         self.poll_delay = 0.1
 
-        logger = logging.getLogger(str(id(self)))
-        logger.setLevel(logging.INFO)
-        self.logger = logger
-
+        Loggable.__init__(self)
+        
     def __repr__(self):
 
         if self.name:
