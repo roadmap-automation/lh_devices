@@ -8,41 +8,7 @@ from dataclasses import dataclass, field
 
 from device import DeviceBase, DeviceError
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
-
-# ======== Logging for collecting metadata from method classes ========
-# adapted from https://github.com/madzak/python-json-logger/blob/master/src/pythonjsonlogger/jsonlogger.py
-class JsonFormatter(logging.Formatter):
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(fmt = '%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
-                         *args, **kwargs)
-        self.default_msec_format = '%s.%03d'
-
-    def format(self, record: logging.LogRecord):
-        """Formats a log record and serializes to json"""
-
-        record.asctime = self.formatTime(record)
-
-        log_record: Dict[str, Any] = dict(time=record.asctime,
-                                          level=record.levelname,
-                                          message=record.msg)
-
-        return json.dumps(log_record)
-
-# https://stackoverflow.com/questions/37944111/python-rolling-log-to-a-variable
-class MethodLogHandler(logging.Handler):
-
-    def __init__(self, log_queue: list):
-        logging.Handler.__init__(self)
-        self.log_queue = log_queue
-
-    def emit(self, record):
-        self.log_queue.append(self.format(record))
-
-    def pop(self):
-        rval = [v for v in self.log_queue]
-        self.log_queue = []
-        return rval
+from logutils import Loggable, MethodLogHandler, JsonFormatter
 
 # ======== Method base classes ==========
 
@@ -64,7 +30,7 @@ class MethodResult:
     method_data: dict
     result: dict
 
-class MethodBase:
+class MethodBase(Loggable):
     """Base class for defining a method for LH serial devices. Contains information about:
         1. dead volume calculations
         2. required configurations
@@ -80,12 +46,10 @@ class MethodBase:
         self.metadata = []
 
         # set up a unique logger for this method instance
-        logger = logging.getLogger(str(id(self)))
-        logger.setLevel(logging.INFO)
+        Loggable.__init__(self)
         log_handler = MethodLogHandler(self.metadata)
         log_handler.setFormatter(JsonFormatter())
-        logger.addHandler(log_handler)
-        self.logger = logger
+        self.logger.addHandler(log_handler)
         self.log_handler = log_handler
 
     @property

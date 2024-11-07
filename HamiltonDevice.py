@@ -80,12 +80,12 @@ class HamiltonBase(DeviceBase, WebNodeBase):
             response = response[2:-1]
             response = self.parse_status_byte(response)
             if self.error.error is not None:
-                logging.error(f'{self} error: {self.error}, waiting for clear, retry = {self.error.retry}')
+                self.logger.error(f'{self} error: {self.error}, waiting for clear, retry = {self.error.retry}')
                 await self.trigger_update()
                 await self.error.pause_until_clear()
-                logging.info(f'{self} error cleared')
+                self.logger.info(f'{self} error cleared')
                 if self.error.retry:
-                    logging.info(f'{self} error: retrying command {cmd}')
+                    self.logger.info(f'{self} error: retrying command {cmd}')
                     response, error = await self.query(cmd)
 
             return response, self.error
@@ -463,7 +463,7 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
 
         _, error = await self.query('ZR')
         if error.error is not None:
-            logging.error(f'{self}: Initialization error {error}')
+            self.logger.error(f'{self}: Initialization error {error}')
         else:
             self.initialized = True
 
@@ -506,9 +506,9 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
             if error.error is None:
                 await self.get_valve_code()
             else:
-                logging.error(f'{self}: Valve code could not be set, got error {error}')
+                self.logger.error(f'{self}: Valve code could not be set, got error {error}')
         else:
-            logging.error(f'{self}: Unknown Hamilton valve code {code}')
+            self.logger.error(f'{self}: Unknown Hamilton valve code {code}')
 
     async def get_valve_code(self) -> None:
         """Reads the valve code from the device and checks against internal value
@@ -518,9 +518,9 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
         if error.error is None:
             code = int(response)
             if code != self.valve.hamilton_valve_code:
-                logging.error(f'{self}: Valve code {code} from instrument does not match expected {self.valve.hamilton_valve_code}')
+                self.logger.error(f'{self}: Valve code {code} from instrument does not match expected {self.valve.hamilton_valve_code}')
         else:
-            logging.error(f'{self}: Valve code could not be read, got response {response} and error {error}')
+            self.logger.error(f'{self}: Valve code could not be read, got response {response} and error {error}')
 
     async def get_valve_position(self) -> None:
         """Reads the valve position from the device and updates the internal value
@@ -539,16 +539,16 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
                 if angle == (delta_angle // 6) * 3:
                     position = 0
                 else:
-                    logging.error(f'{self}: valve is at unknown position {position} with angle {angle}')
+                    self.logger.error(f'{self}: valve is at unknown position {position} with angle {angle}')
                     position = None
             else:
                 position = int(position)
 
             # record position
-            logging.debug(f'{self}: Valve is at position {position}')
+            self.logger.debug(f'{self}: Valve is at position {position}')
             self.valve.move(position)
         else:
-            logging.error(f'{self}: Valve position could not be read, got response {response} and error {error}')
+            self.logger.error(f'{self}: Valve position could not be read, got response {response} and error {error}')
 
     async def move_valve(self, position: int) -> None:
         """Moves to a particular valve position. See specific valve documentation.
@@ -571,14 +571,14 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
             _, error = await self.query(f'h29{angle:03.0f}R')
             await self.poll_until_idle()
             if error.error is not None:
-                logging.error(f'{self}: Move error {error}')
+                self.logger.error(f'{self}: Move error {error}')
 
             # check that valve actually moved
             await self.get_valve_position()
             if self.valve.position != position:
-                logging.error(f'{self}: Valve did not move to new position {position}, actually at {self.valve.position}')
+                self.logger.error(f'{self}: Valve did not move to new position {position}, actually at {self.valve.position}')
             else:
-                logging.debug(f'{self}: Move successful to position {position}')
+                self.logger.debug(f'{self}: Move successful to position {position}')
 
     async def get_info(self) -> dict:
         """Gets information about valve positioner
@@ -824,7 +824,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
 
         response, error = await self.query('zR')
         if error.error is not None:
-            logging.error(f'{self}: Soft reset error {error}')
+            self.logger.error(f'{self}: Soft reset error {error}')
 
         await self.update_syringe_status()
 
@@ -850,7 +850,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         
         response, error = await self.query(f'N{int(high_resolution)}R')
         if error.error is not None:
-            logging.error(f'{self}: Error setting resolution: {error}')
+            self.logger.error(f'{self}: Error setting resolution: {error}')
         else:
             self._high_resolution = high_resolution
 
@@ -902,10 +902,10 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         #calcV = float(desired_flow_rate * 6000) / self.syringe_volume
 
         if desired_flow_rate < self._min_flow_rate():
-            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to lowest possible value {self._min_flow_rate()}')
+            self.logger.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to lowest possible value {self._min_flow_rate()}')
             return self.minV
         elif desired_flow_rate > self._max_flow_rate():
-            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to highest possible value {self._max_flow_rate()}')
+            self.logger.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to highest possible value {self._max_flow_rate()}')
             return self.maxV
         else:
             return round(float(desired_flow_rate * 6000) / self.syringe_volume)
@@ -958,7 +958,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         self.syringe_position = int(response)
 
         if error.error is not None:
-            logging.error(f'{self}: Error in update_syringe_status: {error}')
+            self.logger.error(f'{self}: Error in update_syringe_status: {error}')
         await self.update_status()
 
         return error
@@ -975,7 +975,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         self._speed = int(response)
         
         if error.error is not None:
-            logging.error(f'{self}: Error in get_speed: {error}')
+            self.logger.error(f'{self}: Error in get_speed: {error}')
 
         return error
 
@@ -988,12 +988,12 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         """
 
         V = self._speed_code(flow_rate)
-        logging.debug(f'Speed: {V}')
+        self.logger.debug(f'Speed: {V}')
         response, error = await self.query(f'V{V}R')
         await self.run_async(self.get_speed())
 
         if error.error is not None:
-            logging.error(f'{self}: Syringe move error {error}')
+            self.logger.error(f'{self}: Syringe move error {error}')
 
         return error
 
@@ -1036,10 +1036,10 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         syringe_position = self.syringe_position
         stroke_length = self._stroke_length(volume)
         max_position = self._get_max_position()
-        logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._get_max_position()}')
+        self.logger.debug(f'Stroke length: {stroke_length} out of full stroke {self._get_max_position()}')
 
         if max_position < (stroke_length + syringe_position):
-            logging.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and maximum position {max_position}')
+            self.logger.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and maximum position {max_position}')
             
             # TODO: this is a hack to clear the response queue...need to fix this
             #await self.update_status()
@@ -1047,7 +1047,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
             await self.run_until_idle(self.set_speed(flow_rate))
             response, error = await self.query(f'P{stroke_length}R')
             if error.error is not None:
-                logging.error(f'{self}: Syringe move error {error}')
+                self.logger.error(f'{self}: Syringe move error {error}')
 
     async def dispense(self, volume: float, flow_rate: float) -> None:
         """Dispense
@@ -1060,16 +1060,16 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         await self.update_syringe_status()
         syringe_position = self.syringe_position
         stroke_length = self._stroke_length(volume)
-        logging.debug(f'Stroke length: {stroke_length} out of full stroke {self._get_max_position()}')
+        self.logger.debug(f'Stroke length: {stroke_length} out of full stroke {self._get_max_position()}')
 
         if (syringe_position - stroke_length) < 0:
-            logging.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and minimum position 0')
+            self.logger.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and minimum position 0')
             #await self.update_status()
         else:
             await self.run_until_idle(self.set_speed(flow_rate))
             response, error = await self.query(f'D{stroke_length}R')
             if error.error is not None:
-                logging.error(f'{self}: Syringe move error {error}')
+                self.logger.error(f'{self}: Syringe move error {error}')
 
     async def smart_dispense(self, volume: float, dispense_flow_rate: float, interrupt_index: int | None = None) -> float:
         """Smart dispense, including both aspiration at max flow rate, dispensing at specified
@@ -1086,10 +1086,10 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
 
         # check that aspiration and dispense positions are defined
         if (not hasattr(self.valve, 'aspirate_position')) | (not hasattr(self.valve, 'dispense_position')):
-            logging.error(f'{self.name}: valve must have aspirate_position and dispense_position defined to use smart_dispense')
+            self.logger.error(f'{self.name}: valve must have aspirate_position and dispense_position defined to use smart_dispense')
             return 0
         if (self.valve.aspirate_position is None) | (self.valve.dispense_position is None):
-            logging.error(f'{self.name}: aspirate_position and dispense_position must be set to use smart_dispense')
+            self.logger.error(f'{self.name}: aspirate_position and dispense_position must be set to use smart_dispense')
             return 0
         
         # convert speeds to V factors
@@ -1099,9 +1099,9 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
 
         # calculate total volume in steps
         total_steps = self._stroke_length(volume)
-        logging.debug(f'{self.name}: smart dispense requested {total_steps} steps')
+        self.logger.debug(f'{self.name}: smart dispense requested {total_steps} steps')
         if total_steps <= 0:
-            logging.warning(f'{self.name}: volume is not positive, smart_dispense terminating')
+            self.logger.warning(f'{self.name}: volume is not positive, smart_dispense terminating')
             return 0
 
         # calculate max number of steps
@@ -1111,14 +1111,14 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         await self.update_syringe_status()
         syringe_position = self.syringe_position
         current_position = copy.copy(syringe_position)
-        logging.debug(f'{self.name}: smart dispense, syringe at {current_position}')
+        self.logger.debug(f'{self.name}: smart dispense, syringe at {current_position}')
 
         # calculate number of aspirate/dispense operations and volume per operation
         # if there is already enough volume in the syringe, just do a single dispense
         total_steps_dispensed = 0
         if current_position >= total_steps:
             # switch valve and dispense
-            logging.debug(f'{self.name}: smart dispense dispensing {total_steps} at V {V_dispense}')
+            self.logger.debug(f'{self.name}: smart dispense dispensing {total_steps} at V {V_dispense}')
             await self.run_until_idle(self.move_valve(self.valve.dispense_position))
             await self.run_until_idle(self.set_speed(dispense_flow_rate))
             await self.run_syringe_until_idle(self.move_absolute(current_position - total_steps, interrupt_index))
@@ -1129,7 +1129,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
             stroke_steps = [full_stroke] * (total_steps // full_stroke) + [total_steps % full_stroke]
             for stroke in stroke_steps:
                 if stroke > 0:
-                    logging.debug(f'{self.name}: smart dispense aspirating {stroke - current_position} at V {V_aspirate}')
+                    self.logger.debug(f'{self.name}: smart dispense aspirating {stroke - current_position} at V {V_aspirate}')
                     # switch valve and aspirate
                     await self.run_until_idle(self.move_valve(self.valve.aspirate_position))
                     await self.run_until_idle(self.set_speed(aspirate_flow_rate))
@@ -1137,7 +1137,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
                     position_after_aspirate = copy.copy(self.syringe_position)
 
                     # switch valve and dispense; run_syringe_until_idle updates self.syringe_position
-                    logging.debug(f'{self.name}: smart dispense dispensing all at V {V_dispense}')
+                    self.logger.debug(f'{self.name}: smart dispense dispensing all at V {V_dispense}')
                     await self.run_until_idle(self.move_valve(self.valve.dispense_position))
                     await self.run_until_idle(self.set_speed(dispense_flow_rate))
                     await self.run_syringe_until_idle(self.move_absolute(0, interrupt_index))
@@ -1167,7 +1167,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
 
         response, error = await self.query(interrupt_string + f'A{position}R')
         if error.error is not None:
-            logging.error(f'{self}: Syringe move error {error} for move to position {position} with V {self._speed}')
+            self.logger.error(f'{self}: Syringe move error {error} for move to position {position} with V {self._speed}')
 
     async def home(self) -> None:
         """Homes syringe using maximum flow rate
@@ -1330,10 +1330,10 @@ class SimulatedHamiltonSyringePump(SimulatedHamiltonValvePositioner, SyringePump
         syringe_position = self.syringe_position
         stroke_length = volume
         max_position = self.syringe_volume
-        logging.debug(f'Stroke length: {stroke_length} out of full stroke {self.syringe_volume}')
+        self.logger.debug(f'Stroke length: {stroke_length} out of full stroke {self.syringe_volume}')
 
         if max_position < (stroke_length + syringe_position):
-            logging.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and maximum position {max_position}')
+            self.logger.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and maximum position {max_position}')
             
             # TODO: this is a hack to clear the response queue...need to fix this
             #await self.update_status()
@@ -1358,10 +1358,10 @@ class SimulatedHamiltonSyringePump(SimulatedHamiltonValvePositioner, SyringePump
 
         syringe_position = self.syringe_position
         stroke_length = volume
-        logging.debug(f'Stroke length: {stroke_length} out of full stroke {self.syringe_volume}')
+        self.logger.debug(f'Stroke length: {stroke_length} out of full stroke {self.syringe_volume}')
 
         if (syringe_position - stroke_length) < 0:
-            logging.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and minimum position 0')
+            self.logger.error(f'{self}: Invalid syringe move from current position {syringe_position} with stroke length {stroke_length} and minimum position 0')
             #await self.update_status()
         else:
             #await self.set_speed(flow_rate)
@@ -1378,7 +1378,7 @@ class SimulatedHamiltonSyringePump(SimulatedHamiltonValvePositioner, SyringePump
         self.idle = False
         volume = position - self.syringe_position
         total_time = abs(volume / self._speed)
-        logging.debug(f'total time {total_time} for volume {volume} at speed {self._speed   }')
+        self.logger.debug(f'total time {total_time} for volume {volume} at speed {self._speed   }')
         n_steps = total_time // (self.poll_delay / 2.0) + 1
         for _ in range(int(n_steps)):
             await asyncio.sleep(total_time / n_steps)
@@ -1401,10 +1401,10 @@ class SimulatedHamiltonSyringePump(SimulatedHamiltonValvePositioner, SyringePump
 
         # check that aspiration and dispense positions are defined
         if (not hasattr(self.valve, 'aspirate_position')) | (not hasattr(self.valve, 'dispense_position')):
-            logging.error(f'{self.name}: valve must have aspirate_position and dispense_position defined to use smart_dispense')
+            self.logger.error(f'{self.name}: valve must have aspirate_position and dispense_position defined to use smart_dispense')
             return 0
         if (self.valve.aspirate_position is None) | (self.valve.dispense_position is None):
-            logging.error(f'{self.name}: aspirate_position and dispense_position must be set to use smart_dispense')
+            self.logger.error(f'{self.name}: aspirate_position and dispense_position must be set to use smart_dispense')
             return 0
         
         # convert speeds to V factors
@@ -1435,16 +1435,16 @@ class SimulatedHamiltonSyringePump(SimulatedHamiltonValvePositioner, SyringePump
             stroke_steps = [full_stroke] * int(total_steps // full_stroke) + [total_steps % full_stroke]
             for stroke in stroke_steps:
                 if stroke > 0:
-                    logging.debug(f'{self.name}: smart dispense aspirating {stroke - current_position} at V {V_aspirate}')
+                    self.logger.debug(f'{self.name}: smart dispense aspirating {stroke - current_position} at V {V_aspirate}')
                     # switch valve and aspirate
                     await self.run_until_idle(self.move_valve(self.valve.aspirate_position))
                     await self.run_until_idle(self.set_speed(aspirate_flow_rate))
                     await self.run_syringe_until_idle(self.move_absolute(stroke))
                     position_after_aspirate = copy.copy(self.syringe_position)
-                    logging.debug(f'position after aspirate: {position_after_aspirate}')
+                    self.logger.debug(f'position after aspirate: {position_after_aspirate}')
 
                     # switch valve and dispense; run_syringe_until_idle updates self.syringe_position
-                    logging.debug(f'{self.name}: smart dispense dispensing all at V {V_dispense}')
+                    self.logger.debug(f'{self.name}: smart dispense dispensing all at V {V_dispense}')
                     await self.run_until_idle(self.move_valve(self.valve.dispense_position))
                     await self.run_until_idle(self.set_speed(dispense_flow_rate))
                     await self.run_syringe_until_idle(self.move_absolute(0, interrupt_index))
@@ -1458,7 +1458,7 @@ class SimulatedHamiltonSyringePump(SimulatedHamiltonValvePositioner, SyringePump
                         # stop! do not do continued strokes because the interrupt was triggered
                         break
 
-        logging.debug(f'{self.name}: smart dispense complete')
+        self.logger.debug(f'{self.name}: smart dispense complete')
 
         return total_steps_dispensed
 
@@ -1503,10 +1503,10 @@ class SmoothFlowSyringePump(HamiltonSyringePump):
         #calcV = float(desired_flow_rate * 6000) / self.syringe_volume
 
         if desired_flow_rate < self._min_flow_rate():
-            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to lowest possible value {self._min_flow_rate()}')
+            self.logger.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to lowest possible value {self._min_flow_rate()}')
             return self.minV
         elif desired_flow_rate > self._max_flow_rate():
-            logging.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to highest possible value {self._max_flow_rate()}')
+            self.logger.warning(f'{self}: Warning: clipping desired flow rate {desired_flow_rate} to highest possible value {self._max_flow_rate()}')
             return self.maxV
         else:
             return round(float(desired_flow_rate * 60 * 192000) / self.syringe_volume)
@@ -1531,12 +1531,12 @@ class SmoothFlowSyringePump(HamiltonSyringePump):
         """
 
         V = self._speed_code(flow_rate)
-        logging.info(f'Speed: {V}')
+        self.logger.info(f'Speed: {V}')
         response, error = await self.query(f'u{V}R')
         await self.run_async(self.get_speed())
 
         if error.error is not None:
-            logging.error(f'{self}: Syringe move error {error}')
+            self.logger.error(f'{self}: Syringe move error {error}')
 
         return error
 

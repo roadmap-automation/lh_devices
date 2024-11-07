@@ -145,18 +145,18 @@ class LoadLoop(MethodBaseDeadVolume):
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
-        logging.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
+        self.logger.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
 
         # Wait for trigger to switch to LoadLoop mode
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
-        logging.info(f'{self.channel.name}.{method.name}: Switching to LoadLoop mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to LoadLoop mode')
 
         # Move all valves
         await asyncio.gather(self.distribution_mode.activate(), self.channel.change_mode('LoadLoop'))
 
         # Wait for trigger to switch to PumpAspirate mode
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
         await self.wait_for_trigger()
 
         # At this point, liquid handler is done, release communications
@@ -166,15 +166,15 @@ class LoadLoop(MethodBaseDeadVolume):
             await valve.trigger_update()
         #self.release_liquid_handler.set()
 
-        logging.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
         await self.channel.change_mode('PumpPrimeLoop')
 
         # smart dispense the volume required to move plug quickly through loop
-        logging.info(f'{self.channel.name}.{method.name}: Moving plug through loop, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume + excess_volume)} uL')
+        self.logger.info(f'{self.channel.name}.{method.name}: Moving plug through loop, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume + excess_volume)} uL')
         await self.channel.syringe_pump.smart_dispense(self.channel.sample_loop.get_volume() - (pump_volume + excess_volume), self.channel.syringe_pump.max_dispense_flow_rate)
 
         # switch to standby mode
-        logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
         await self.channel.change_mode('Standby')
 
         self.release_all()
@@ -217,7 +217,7 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         # Power the bubble sensor
         await self.channel.syringe_pump.set_digital_output(1, True)
 
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
         await self.distribution_mode.activate()
         await self.wait_for_trigger()
 
@@ -227,18 +227,18 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
-        logging.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
+        self.logger.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
 
         # Wait for trigger to switch to LoadLoop mode
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
-        logging.info(f'{self.channel.name}.{method.name}: Switching to LoadLoop mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to LoadLoop mode')
 
         # Move all valves
         await self.channel.change_mode('LoadLoop')
 
         # Wait for trigger to switch to PumpAspirate mode
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
         await self.wait_for_trigger()
 
         # At this point, liquid handler is done, release communications
@@ -247,17 +247,17 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
             valve.reserved = False
             await valve.trigger_update()
         
-        logging.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
         await self.channel.change_mode('PumpPrimeLoop')
 
         # smart dispense the volume required to move plug quickly through loop, interrupting if sensor 2 goes low (air detected)
-        logging.info(f'{self.channel.name}.{method.name}: Moving plug through loop until air gap detected, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume)} uL with minimum volume {min_pump_volume} uL')
+        self.logger.info(f'{self.channel.name}.{method.name}: Moving plug through loop until air gap detected, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume)} uL with minimum volume {min_pump_volume} uL')
         if min_pump_volume > 0:
             actual_volume0 = await self.channel.syringe_pump.smart_dispense(min_pump_volume, self.channel.syringe_pump.max_dispense_flow_rate)
         else:
             actual_volume0 = 0.0
         actual_volume = await self.channel.syringe_pump.smart_dispense(self.channel.sample_loop.get_volume() - pump_volume - min_pump_volume, self.channel.syringe_pump.max_dispense_flow_rate, 6)
-        logging.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume + actual_volume0} uL')
+        self.logger.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume + actual_volume0} uL')
 
         async def traverse_air_gap(nominal_air_gap: float, flow_rate: float = self.channel.syringe_pump.max_dispense_flow_rate, volume_step: float = 10) -> float:
             
@@ -269,12 +269,12 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
             return total_air_gap_volume
 
         # traverse the air gap until fluid is detected at sensor 2 again
-        logging.info(f'{self.channel.name}.{method.name}: Traversing air gap...')
+        self.logger.info(f'{self.channel.name}.{method.name}: Traversing air gap...')
         total_air_gap_volume = await traverse_air_gap(air_gap, self.channel.syringe_pump.max_dispense_flow_rate)
-        logging.info(f'{self.channel.name}.{method.name}: Total air gap volume: {total_air_gap_volume} uL')
+        self.logger.info(f'{self.channel.name}.{method.name}: Total air gap volume: {total_air_gap_volume} uL')
 
         # switch to standby mode
-        logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
         await self.channel.change_mode('Standby')
 
         self.release_all()
@@ -307,7 +307,7 @@ class InjectLoop(MethodBase):
 
         # change to inject mode
         await self.channel.change_mode('PumpInject')
-        logging.info(f'{self.channel.name}.{method.name}: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
+        self.logger.info(f'{self.channel.name}.{method.name}: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
         await self.channel.syringe_pump.smart_dispense(pump_volume, pump_flow_rate)
 
         # Prime loop
@@ -351,7 +351,7 @@ class InjectLoopBubbleSensor(MethodBase):
 
         # change to inject mode
         await self.channel.change_mode('PumpInject')
-        logging.info(f'{self.channel.name}.{method.name}: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
+        self.logger.info(f'{self.channel.name}.{method.name}: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
 
         # inject, interrupting if sensor 1 goes low (air detected at end of sample loop)
         if min_pump_volume > 0:
@@ -359,7 +359,7 @@ class InjectLoopBubbleSensor(MethodBase):
         else:
             actual_volume0 = 0.0
         actual_volume = await self.channel.syringe_pump.smart_dispense(pump_volume - min_pump_volume, pump_flow_rate, 5)
-        logging.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume + actual_volume0} uL')
+        self.logger.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume + actual_volume0} uL')
 
         # Switch to prime loop mode and flush
         await self.channel.primeloop()
@@ -401,34 +401,34 @@ class DirectInject(MethodBaseDeadVolume):
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
-        logging.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
+        self.logger.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
 
         # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
-        logging.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await asyncio.gather(self.channel.change_mode('LHPrime'), self.distribution_mode.activate())
 
         # Wait for trigger to switch to {method.name} mode (LH performs injection)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
         await self.wait_for_trigger()
 
-        logging.info(f'{self.channel.name}.{method.name}: Switching to LHInject mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHInject mode')
         await self.channel.change_mode('LHInject')
 
         # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
         await self.wait_for_trigger()
 
-        logging.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await self.channel.change_mode('LHPrime')
 
         # Wait for trigger to switch to Standby mode (this may not be necessary)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
         await self.wait_for_trigger()
 
         # switch to standby mode    
-        logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
         await self.channel.change_mode('Standby')
 
         # At this point, liquid handler is done, release communications
@@ -473,7 +473,7 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         await self.inlet_bubble_sensor.initialize()
         await self.outlet_bubble_sensor.initialize()
 
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
         await self.distribution_mode.activate()
         await self.wait_for_trigger()
 
@@ -483,18 +483,18 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
 
         # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
-        logging.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
+        self.logger.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
 
         # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
-        logging.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await asyncio.gather(self.channel.change_mode('LHPrime'), self.distribution_mode.activate())
 
         # Wait for another trigger, which indicates that the LH is going to start asking after the bubble status
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for trigger to traverse air gap')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for trigger to traverse air gap')
         await self.wait_for_trigger()
-        logging.info(f'{self.channel.name}.{method.name}: Traversing air gap...')
+        self.logger.info(f'{self.channel.name}.{method.name}: Traversing air gap...')
         
         # make sure there's always something there to read
         liquid_in_line = False
@@ -503,7 +503,7 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         # traverse air gap
         while not liquid_in_line:
             liquid_in_line = await self.outlet_bubble_sensor.read()
-            logging.info(f'{self.channel.name}.{method.name}:     Outlet bubble sensor value: {int(liquid_in_line)}')
+            self.logger.info(f'{self.channel.name}.{method.name}:     Outlet bubble sensor value: {int(liquid_in_line)}')
             # if end condition reached, remove old queue value and put in current one
             if liquid_in_line:
                 if self.dead_volume.qsize():
@@ -511,33 +511,33 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
             await self.dead_volume.put(int(liquid_in_line))
 
         # Wait for trigger to switch to LHInject mode (LH performs injection)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
         await self.wait_for_trigger()
 
-        logging.info(f'{self.channel.name}.{method.name}: Switching to LHInject mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHInject mode')
         await self.channel.change_mode('LHInject')
 
         # monitor the process for air in the line
-        logging.info(f'{self.channel.name}.{method.name}: Starting air monitor on inlet bubble sensor with delay {min_pump_volume/pump_flow_rate: 0.2f} s...')
+        self.logger.info(f'{self.channel.name}.{method.name}: Starting air monitor on inlet bubble sensor with delay {min_pump_volume/pump_flow_rate: 0.2f} s...')
         monitor_task = asyncio.create_task(self.detect_air_gap(delay=min_pump_volume/pump_flow_rate, callback=self.channel.change_mode('LHPrime')))
 
         # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
         await self.wait_for_trigger()
 
         # cancel monitor task if it hasn't already been triggered by air in line
         if not monitor_task.done():
             monitor_task.cancel()
 
-        logging.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await self.channel.change_mode('LHPrime')
 
         # Wait for trigger to switch to Standby mode (this may not be necessary)
-        logging.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
         await self.wait_for_trigger()
 
         # switch to standby mode    
-        logging.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
         await self.channel.change_mode('Standby')
 
         # At this point, liquid handler is done, release communications
@@ -549,13 +549,13 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         """
 
         liquid_in_line = True
-        logging.info(f'{self.channel.name}.detect_air_gap: Waiting {delay} s')
+        self.logger.info(f'{self.channel.name}.detect_air_gap: Waiting {delay} s')
         await asyncio.sleep(delay)
         try:
             while liquid_in_line:
                 _, liquid_in_line = await asyncio.gather(asyncio.sleep(poll_interval), self.inlet_bubble_sensor.read())
 
-            logging.info(f'{self.channel.name}.detect_air_gap: Air detected, activating callback')            
+            self.logger.info(f'{self.channel.name}.detect_air_gap: Air detected, activating callback')            
             await callback
         except asyncio.CancelledError:
             callback.close()
@@ -576,7 +576,7 @@ class RoadmapChannelInit(MethodBase):
     async def run(self, **kwargs) -> None:
         
         method = self.MethodDefinition(**kwargs)
-        logging.info(f'{self.channel.name} received Init method')
+        self.logger.info(f'{self.channel.name} received Init method')
 
 class RoadmapChannelSleep(MethodBase):
     """Roadmap Channel Sleep. Used for simulating other operations
@@ -599,6 +599,7 @@ class RoadmapChannelSleep(MethodBase):
         self.reserve_all()
         await self.channel.trigger_update()
         await asyncio.sleep(method.sleep_time * 60)
+        #await self.channel.syringe_pump.move_valve(0)
         #await self.throw_error('test error', critical=True)
         self.release_all()
         await self.channel.trigger_update()
