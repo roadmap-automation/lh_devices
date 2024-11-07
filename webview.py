@@ -28,8 +28,10 @@ sio = socketio.AsyncServer()
 
 class WebNodeBase(Loggable):
 
-    id: str = ''
-    name: str = ''
+    def __init__(self, id: str = '', name: str = ''):
+        self.id = id
+        self.name = name
+        Loggable.__init__(self)
 
     def create_web_app(self, template: str = 'roadmap.html') -> web.Application:
         """Creates a web application for this specific web node by creating a webpage per device

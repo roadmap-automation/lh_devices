@@ -126,6 +126,7 @@ class AssemblyBase(WebNodeBase):
         
         self.name = name
         self.id = str(uuid4())
+        WebNodeBase.__init__(self, self.id, self.name)
         self.devices = devices
         self.network = Network(self.devices)
         self.modes: Dict[str, Mode] = {}
