@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from logutils import Loggable
 from valve import ValveState, ValveBase
+from webview import WebNodeBase
 
 @dataclass
 class DeviceError:
@@ -40,23 +41,22 @@ class DeviceState:
     reserved: bool
     error: DeviceError
 
-class DeviceBase(Loggable):
+class DeviceBase(WebNodeBase):
     """Base device class
     """
 
     def __init__(self, device_id: str | None = None, name: str | None = None) -> None:
-        
+
         if device_id is None:
             self.id = str(uuid4())
-        self.name=name
+        WebNodeBase.__init__(self, id=self.id, name=name)
+
         self.idle: bool = True
         self.initialized: bool = False
         self.reserved = False   # like a lock; allows reserving the device before running a method
         self.error: DeviceError = DeviceError()
         self.poll_delay = 0.1
 
-        Loggable.__init__(self)
-        
     def __repr__(self):
 
         if self.name:
@@ -163,11 +163,6 @@ class DeviceBase(Loggable):
     async def resume(self) -> None:
         """Resumes the device from next unexecuted command
         """
-
-        pass
-
-    async def trigger_update(self):
-        """Sends signal for update"""
 
         pass
 

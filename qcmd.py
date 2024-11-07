@@ -8,7 +8,7 @@ import logging
 import json
 from uuid import uuid4
 from urllib.parse import urlsplit
-from device import ValvePositionerBase
+from device import ValvePositionerBase, DeviceBase
 from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial, PollTimer
 from valve import LoopFlowValve, SyringeLValve, DistributionValve
 from components import InjectionPort, FlowCell, Node
@@ -114,14 +114,11 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
         # wait the full time
         await self.recorder.record(tag_name, record_time, sleep_time)
 
-class QCMDMeasurementChannel(WebNodeBase):
+class QCMDMeasurementChannel(DeviceBase):
     
-    def __init__(self, http_address: str = 'http://localhost:5011/QCMD/0/', name='QCMDRecorder') -> None:
+    def __init__(self, http_address: str = 'http://localhost:5011/QCMD/0/', device_id: str = None, name='QCMDRecorder') -> None:
 
-        self.id = str(uuid4())
-        self.name = name        
-        self.idle = True
-        self.reserved = False
+        DeviceBase.__init__(self, device_id=device_id, name=name)
         self.poll_interval = 1.0
 
         url_parts = urlsplit(http_address)
