@@ -86,6 +86,7 @@ class MethodBase:
         log_handler.setFormatter(JsonFormatter())
         logger.addHandler(log_handler)
         self.logger = logger
+        self.log_handler = log_handler
 
     @property
     def name(self):
@@ -149,6 +150,10 @@ class MethodBase:
 
         self.logger.info(f'{self.name} starting')
 
+        # add method handler to device loggers
+        for device in self.devices:
+            device.logger.addHandler(self.log_handler)
+
         try:
             self.error.clear()
             await self.run(**kwargs)
@@ -173,6 +178,10 @@ class MethodBase:
                 await on_cancel()
         finally:
             self.logger.info(f'{self.name} finished')
+            
+            # remove method handler from device loggers
+            for device in self.devices:
+                device.logger.removeHandler(self.log_handler)
         
         logging.info(self.metadata)
 

@@ -53,6 +53,10 @@ class DeviceBase:
         self.error: DeviceError = DeviceError()
         self.poll_delay = 0.1
 
+        logger = logging.getLogger(str(id(self)))
+        logger.setLevel(logging.INFO)
+        self.logger = logger
+
     def __repr__(self):
 
         if self.name:
