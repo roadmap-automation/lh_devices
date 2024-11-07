@@ -294,10 +294,13 @@ class MethodRunner:
 
     def __init__(self):
         
+        # Dictionary of known methods
         self.methods: Dict[str, MethodBase] = {}
+
+        # Active method with its initialization data
         self.active_methods: Dict[str, ActiveMethod] = {}
-        self.callbacks: List[Callable] = [self.remove_active_method,
-                                          self.remove_running_task]
+
+        # Running tasks (used to prevent garbage collection)
         self._running_tasks: Dict[asyncio.Task, Dict[str, str]] = {}
 
         # Event that is triggered when all methods are completed
@@ -316,6 +319,17 @@ class MethodRunner:
         if len(self._running_tasks) == 0:
             self.event_finished.set()
 
+    async def method_from_data(self, method_name: str, method_data: dict, id: str | None = None):
+        """Chain of run tasks to accomplish. Subclass to change the logic"""
+        self.active_methods.update({method_name: ActiveMethod(method=self.methods[method_name],
+                                                        method_data=method_data)})
+        try:
+            await self.methods[method_name].start(**method_data)
+        except asyncio.CancelledError:
+            logging.debug(f'Task {method_name} with id {id} cancelled')
+        finally:
+            self.active_methods.pop(method_name)
+
     def run_method(self, method: Coroutine, id: str | None = None, name: str = '') -> None:
         """Runs a coroutine method. Designed for complex operations with assembly hardware"""
 
@@ -333,24 +347,20 @@ class MethodRunner:
                                               method_name=name)})
 
         # register callbacks upon task completion
-        for callback in self.callbacks:
-            task.add_done_callback(callback)
+        task.add_done_callback(self.remove_running_task)
 
     def cancel_methods_by_id(self, id: str) -> None:
         """Cancel a running method by searching for its id"""
 
         for task, iinfo in self._running_tasks.items():
             if id == iinfo['id']:
-                logging.info(f'Cancelling task {iinfo["name"]}')
+                logging.debug(f'Cancelling task {iinfo["name"]}')
                 task.cancel()
-
-    def remove_active_method(self, result):
-        self.active_methods.pop(self._running_tasks[result]['method_name'])
 
     def cancel_methods_by_name(self, method_name: str):
         for task, iinfo in self._running_tasks.items():
             if method_name == iinfo['method_name']:
-                logging.info(f'Cancelling task {iinfo["method_name"]}')
+                logging.debug(f'Cancelling task {iinfo["method_name"]}')
                 task.cancel()
 
     def clear_method_error(self, method_name: str, retry: bool | None = None):
