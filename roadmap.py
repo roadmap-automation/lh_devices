@@ -150,6 +150,9 @@ class LoadLoop(MethodBaseDeadVolume):
         # Wait for trigger to switch to LoadLoop mode
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
+        if self.dead_volume.qsize():
+            self.dead_volume.get_nowait()
+            self.logger.warning(f'{self.channel.name}.{method.name}: Trigger received but dead volume was not read')
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to LoadLoop mode')
 
         # Move all valves
@@ -232,6 +235,10 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         # Wait for trigger to switch to LoadLoop mode
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
+        if self.dead_volume.qsize():
+            self.dead_volume.get_nowait()
+            self.logger.warning(f'{self.channel.name}.{method.name}: Trigger received but dead volume was not read')
+
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to LoadLoop mode')
 
         # Move all valves
@@ -406,6 +413,10 @@ class DirectInject(MethodBaseDeadVolume):
         # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
+        if self.dead_volume.qsize():
+            self.dead_volume.get_nowait()
+            self.logger.warning(f'{self.channel.name}.{method.name}: Trigger received but dead volume was not read')
+
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await asyncio.gather(self.channel.change_mode('LHPrime'), self.distribution_mode.activate())
 
@@ -488,6 +499,10 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
+        if self.dead_volume.qsize():
+            self.dead_volume.get_nowait()
+            self.logger.warning(f'{self.channel.name}.{method.name}: Trigger received but dead volume was not read')
+
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await asyncio.gather(self.channel.change_mode('LHPrime'), self.distribution_mode.activate())
 
