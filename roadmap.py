@@ -684,6 +684,11 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
         await asyncio.gather(*[ch.initialize() for ch in self.channels], self.distribution_system.initialize())
         await self.trigger_update()
 
+    async def get_info(self):
+        d = await super().get_info()
+        d.update({'devices': {}})
+        return d
+
     def create_web_app(self, template='roadmap.html') -> Application:
         app = super().create_web_app(template=template)
         routes = web.RouteTableDef()
