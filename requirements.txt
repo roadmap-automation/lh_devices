@@ -5,4 +5,5 @@ aioconsole
 python-socketio
 numpy
 scipy
-labjack-ljm
+plotly
+svg.py
