@@ -471,7 +471,8 @@ class InjectionChannelBase(AssemblyBase):
             self.active_methods.pop(method_name)
 
         await asyncio.gather(*[callback(result) for callback in self.method_callbacks])
-
+        await self.trigger_update()
+        
         return result
 
     def run_method(self, method_name: str, method_data: dict, id: str | None = None) -> None:
