@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Any, Coroutine, List, Dict
 from aiohttp import ClientSession, web, ClientConnectionError
 from aiohttp.web import Application
@@ -24,6 +24,7 @@ from methods import MethodBaseDeadVolume, MethodBase, MethodResult
 from history import HistoryDB
 
 from autocontrol.status import Status
+from autocontrol.task_struct import TaskData
 
 class Timer(Loggable):
     """Basic timer. Essentially serves as a sleep but only allows one instance to run."""
@@ -512,7 +513,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
                 record_time (float, optional): Time to record in seconds. Defaults to 0.0.
                 sleep_time (float, optional): Time to sleep before recording in seconds. Defaults to 0.0.
             """
-            name: str = 'QCMDRecord'
+            name: str = 'QCMDRecordTag'
             tag_name: str = ''
             record_time: float = 0.0
             sleep_time: float = 0.0
@@ -626,17 +627,28 @@ class QCMDMultiChannelMeasurementDevice(NestedAssemblyBase, AssemblyBase):
             self.database_path = database_path
 
     async def save_to_database(self, result: MethodResult):
-        """Saves a method result to the database
+        """Saves a method result to the database, only if a task id is associated with it
 
         Args:
             result (MethodResult): result to save
         """
 
-        if result.id is None:
-            result.id = 'test'
+        if result.id is not None:
+            with HistoryDB(self.database_path) as db:
+                db.smart_insert(result)
+
+    def read_from_database(self, id: str) -> MethodResult | None:
+        """Reads a method result from the database
+
+        Args:
+            id (str): id of record
+
+        Returns:
+            MethodResult | None: MethodResult object if id exists, otherwise None
+        """
 
         with HistoryDB(self.database_path) as db:
-            db.smart_insert(result)
+            return db.search_id(id)
 
     async def initialize(self) -> None:
         """Initialize the loop as a unit and the distribution valve separately"""
@@ -651,11 +663,12 @@ class QCMDMultiChannelMeasurementDevice(NestedAssemblyBase, AssemblyBase):
         async def handle_task(request: web.Request) -> web.Response:
             # TODO: turn task into a dataclass; parsing will change
             # testing: curl -X POST http://localhost:5003/SubmitTask -d "{\"channel\": 0, \"method_name\": \"DirectInjectBubbleSensor\", \"method_data\": {}}"
-            task = await request.json()
+            data = await request.json()
+            task = TaskData(**data)
             self.logger.info(f'{self.name} received task {task}')
-            channel: int = task['channel']
+            channel: int = task.channel
             if channel < len(self.channels):
-                method = task['method_data']['method_list'][0]
+                method = task.method_data['method_list'][0]
                 method_name: str = method['method_name']
                 method_data: dict = method['method_data']
                 if self.channels[channel].method_runner.is_ready(method_name):
@@ -678,13 +691,14 @@ class QCMDMultiChannelMeasurementDevice(NestedAssemblyBase, AssemblyBase):
 
         @routes.get('/GetTaskData')
         async def get_task(request: web.Request) -> web.Response:
-            # TODO: turn task into a dataclass; parsing will change
-            task = await request.json()
-            channel: int = task['channel']
-            if channel < len(self.channels):
-                return web.Response(text=json.dumps(self.channels[channel].result), status=200)
-        
-            return web.Response(text=f'error: channel {channel} does not exist', status=400)
+            data = await request.json()
+            task = TaskData(**data)
+            
+            record = self.read_from_database(task.id)
+            if record is None:
+                return web.Response(text=f'error: id {task.id} does not exist', status=400)
+
+            return web.Response(text=json.dumps(asdict(record)), status=200)
         
         app.add_routes(routes)
 
