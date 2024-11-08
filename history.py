@@ -12,10 +12,10 @@ from methods import MethodResult
 METHOD_HISTORY = Path(__file__).parent / 'history.sqlite'
 
 def json_format(field_value, field_type):
-    return json.dumps(field_value) if field_type is dict else field_value
+    return json.dumps(field_value) if (field_type is dict) | (field_type is list) else field_value
 
 def json_rehydrate(field_value, field_type):
-    return json.loads(field_value) if field_type is dict else field_value
+    return json.loads(field_value) if (field_type is dict) | (field_type is list) else field_value
 
 class HistoryDB:
     table_name = 'completed_methods'
@@ -24,7 +24,7 @@ class HistoryDB:
             id TEXT PRIMARY KEY,
             created_time TIMESTAMP,
             source TEXT,
-            name TEXT,
+            method_name TEXT,
             method_data JSON,
             finished_time TIMESTAMP,
             log JSON,
@@ -67,7 +67,7 @@ class HistoryDB:
 
         self.db.commit()
     
-    def search_id(self, id: str) -> List[MethodResult]:
+    def search_id(self, id: str) -> MethodResult:
         res = self.db.execute(f"SELECT * FROM {self.table_name} WHERE id=?", (id,))
-        records = res.fetchall()
-        return [MethodResult(*[json_rehydrate(f, ftype) for f, ftype in zip(m, self.columns.values())]) for m in records]
+        record = res.fetchone()
+        return MethodResult(*[json_rehydrate(f, ftype) for f, ftype in zip(record, self.columns.values())]) if record is not None else None
