@@ -7,14 +7,14 @@ from aiohttp.web_app import Application as Application
 
 from ..device import ValvePositionerBase, SyringePumpBase
 from ..distribution import DistributionBase, DistributionSingleValve
-from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
+from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, SMDSensoronHamiltonDevice
 from ..gsioc import GSIOC
 from ..components import InjectionPort, FlowCell
 from ..assemblies import InjectionChannelBase, Network,Mode, AssemblyMode
 from ..connections import connect_nodes, Node
 from ..methods import MethodBase, MethodBaseDeadVolume
 from ..multichannel import MultiChannelAssembly
-from ..bubblesensor import BubbleSensorBase, SMDSensoronHamiltonDevice
+from ..bubblesensor import BubbleSensorBase
 
 class RoadmapChannelBase(InjectionChannelBase):
 
