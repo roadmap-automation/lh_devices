@@ -4,7 +4,7 @@ from typing import Dict, Any
 
 # ======== Logging for collecting metadata from method classes ========
 # adapted from https://github.com/madzak/python-json-logger/blob/master/src/pythonjsonlogger/jsonlogger.py
-class JsonFormatter(logging.Formatter):
+class MethodLogFormatter(logging.Formatter):
 
     def __init__(self, *args, **kwargs):
         super().__init__(fmt = '%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
@@ -20,7 +20,7 @@ class JsonFormatter(logging.Formatter):
                                           level=record.levelname,
                                           message=record.msg)
 
-        return json.dumps(log_record)
+        return log_record
 
 # https://stackoverflow.com/questions/37944111/python-rolling-log-to-a-variable
 class MethodLogHandler(logging.Handler):

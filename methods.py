@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 from device import DeviceBase, DeviceError
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
-from logutils import Loggable, MethodLogHandler, JsonFormatter
+from logutils import Loggable, MethodLogHandler, MethodLogFormatter
 
 # ======== Method base classes ==========
 
@@ -33,7 +33,7 @@ class MethodResult:
     method_name: str = ''
     method_data: dict = field(default_factory=dict)
     finished_time: str = ''
-    log: dict = field(default_factory=dict)
+    log: list = field(default_factory=list)
     result: dict = field(default_factory=dict)
 
 class MethodBase(Loggable):
@@ -54,7 +54,7 @@ class MethodBase(Loggable):
         # set up a unique logger for this method instance
         Loggable.__init__(self)
         log_handler = MethodLogHandler(self.metadata)
-        log_handler.setFormatter(JsonFormatter())
+        log_handler.setFormatter(MethodLogFormatter())
         self.logger.addHandler(log_handler)
         self.log_handler = log_handler
 
@@ -158,8 +158,8 @@ class MethodBase(Loggable):
         return MethodResult(method_name=self.name,
                             method_data=kwargs,
                             log=copy.copy(self.metadata),
-                            created_time=json.loads(self.metadata[0])['time'],
-                            finished_time=json.loads(self.metadata[-1])['time'],
+                            created_time=self.metadata[0]['time'],
+                            finished_time=self.metadata[-1]['time'],
                             result=result)
 
     async def throw_error(self, error: str, critical: bool = False, retry: bool = False) -> None:
