@@ -11,20 +11,26 @@ from methods import MethodResult
 
 METHOD_HISTORY = Path(__file__).parent / 'history.sqlite'
 
+def json_format(field_value, field_type):
+    return json.dumps(field_value) if field_type is dict else field_value
+
+def json_rehydrate(field_value, field_type):
+    return json.loads(field_value) if field_type is dict else field_value
+
 class HistoryDB:
     table_name = 'completed_methods'
     table_definition = f"""\
         CREATE TABLE IF NOT EXISTS {table_name}(
             id TEXT PRIMARY KEY,
-            name TEXT
-            source TEXT
-            method_data JSON
-            log JSON
+            created_time TIMESTAMP,
+            source TEXT,
+            name TEXT,
+            method_data JSON,
+            finished_time TIMESTAMP,
+            log JSON,
             result JSON
-            created TIMESTAMP
-            finished TIMESTAMP
         );"""
-    columns = [f.name for f in fields(MethodResult)]
+    columns = {f.name: f.type for f in fields(MethodResult)}
 
     def __init__(self, database_path: str = METHOD_HISTORY) -> None:
         self.db_path = database_path
@@ -54,14 +60,14 @@ class HistoryDB:
         """
 
         res = self.db.execute(f"""\
-            INSERT INTO {self.table_name}({','.join(self.columns)}) VALUES ({','.join(['?']*len(self.columns))})
+            INSERT INTO {self.table_name}({','.join(self.columns.keys())}) VALUES ({','.join(['?']*len(self.columns.keys()))})
             ON CONFLICT(id) DO UPDATE SET 
-                {','.join([f'{c}=excluded.{c}' for c in self.columns if c != 'id'])};
-        """, [getattr(result, c) for c in self.columns])
+                {','.join([f'{c}=excluded.{c}' for c in self.columns.keys() if c != 'id'])};
+        """, [json_format(getattr(result, c), ctype) for c, ctype in self.columns.items()])
 
         self.db.commit()
     
-    def search_id(self, id: str, case_sensitive: bool = False) -> List[MethodResult]:
-        res = self.db.execute(f"SELECT * FROM {self.table_name} WHERE name {'LIKE' if case_sensitive else 'ILIKE'} ?", (f'%{id}%',))
-        materials = res.fetchall()
-        return [MethodResult(*m) for m in materials]
+    def search_id(self, id: str) -> List[MethodResult]:
+        res = self.db.execute(f"SELECT * FROM {self.table_name} WHERE id=?", (id,))
+        records = res.fetchall()
+        return [MethodResult(*[json_rehydrate(f, ftype) for f, ftype in zip(m, self.columns.values())]) for m in records]
