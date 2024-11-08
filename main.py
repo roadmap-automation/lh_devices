@@ -11,7 +11,7 @@ logging.basicConfig(format='%(asctime)s.%(msecs)03d %(message)s',
 
 from HamiltonComm import HamiltonSerial
 from HamiltonDevice import HamiltonBase, HamiltonValvePositioner, HamiltonSyringePump
-from valve import LoopFlowValve, SyringeYValve
+from valve import LoopFlowValve, LValve
 from assemblies import AssemblyTest
 
 class AsyncKeyboard:
@@ -108,7 +108,7 @@ async def main():
     ser = HamiltonSerial(port='COM5', baudrate=38400)
     mvp = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve'), name='loop_valve_positioner')
     #mvp = HamiltonValvePositioner(ser, '1', SyringeYValve(name='syringe_y_valve'), name='loop_valve_positioner')
-    sp = HamiltonSyringePump(ser, '0', SyringeYValve(name='syringe_y_valve'), 5000, False, name='syringe_pump')
+    sp = HamiltonSyringePump(ser, '0', LValve(4, name='syringe_valve'), 5000, False, name='syringe_pump')
     #mvp = HamiltonValvePositioner(ser, '0', DistributionValve(8))
     #mvp = HamiltonBase(ser, '0')
     #await mvp.initialize()
@@ -121,7 +121,7 @@ async def main():
     #at.current_mode='LoopInject'
     #logging.debug(at.network.nodes)
     #logging.debug(at.get_dead_volume())
-    await at.initialize()
+    #await at.initialize()
 
     #await mvp.query('?25000')
     #await asyncio.sleep(2)
@@ -159,12 +159,31 @@ async def main():
     #print(mvp.valve.hamilton_valve_code)
     #await sp.query('?21000')
     #await mvp.query('?21000')
-    await asyncio.sleep(3)
-    await at.change_mode('LHInject')
+    #await asyncio.sleep(3)
+    #await at.change_mode('LHInject')
     #print(at.get_dead_volume())
-    await asyncio.sleep(3)
-    await at.change_mode('LoopInject')
+    #await asyncio.sleep(3)
+    #await at.change_mode('LoopInject')
     #print(at.get_dead_volume())
+    await sp.initialize()
+    await sp.query('?21000')
+    #for i in range(4):
+    await sp.query('I1R')
+    await sp.query('?25000')
+    await asyncio.sleep(4)
+    await sp.query('O1R')
+    await sp.query('?25000')
+    await asyncio.sleep(4)
+    await sp.query('BR')
+    await sp.query('?25000')
+    await asyncio.sleep(4)
+    await sp.query('ER')
+    await sp.query('?25000')
+    await asyncio.sleep(4)
+    #await sp.initialize()
+    #print(sp._flow_rate(4400) * 1000 / 60)
+    #await sp.run_until_idle(sp.aspirate(1000, 10000*60/1000))
+    #await sp.run_until_idle(sp.dispense(1000, 10000*60/1000))
 
     #await asyncio.gather(ser.initialize(), sp.initialize(), ak.initialize())
 

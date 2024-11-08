@@ -1,7 +1,18 @@
 import logging
+import svg
+import math
+from dataclasses import dataclass
 from typing import List
 from connections import Port, Node
 from components import ComponentBase
+
+@dataclass
+class ValveState:
+    name: str
+    valve_position: int
+    number_positions: int
+    number_ports: int
+    valve_svg: str
 
 class ValveBase(ComponentBase):
     """
@@ -96,21 +107,68 @@ class ValveBase(ComponentBase):
             return False
         
         return True
-    
-    def get_info(self) -> dict:
-        """Dictionary of valve status information
 
-        Returns:
-            dict: valve status information
+    @property
+    def state(self) -> ValveState:
+        """Gets the current state
         """
 
-        return {
-                'name': self.name,
-                'valve_position': self.position,
-                'number_positions': self.n_positions,
-                'number_ports': self.n_ports
-        }
-    
+        return ValveState(name=self.name,
+                          valve_position=self.position,
+                          number_positions=self.n_positions,
+                          number_ports=self.n_ports,
+                          valve_svg=self._render_valve())
+
+
+    def get_info(self) -> ValveState:
+        """Valve status information
+
+        Returns:
+            ValveState: valve status information dataclass
+        """
+
+        return self.state
+
+    def _render_valve(self, through_center=True, highlight_zero=True, half_rotate=False):
+
+        pad = 2
+        node_radius = 4
+        stroke_width = 1
+        thick_stroke = 1.5
+        big_radius = 20
+        outer_radius = big_radius + 2 * node_radius
+        centerx, centery = outer_radius + pad, outer_radius + pad
+        angle_offset = 0 if not half_rotate else math.pi / self.n_ports
+        vertices = [(round(-big_radius * math.sin(i * 2 * math.pi / self.n_ports + angle_offset)) + centerx,
+                    round(big_radius * math.cos(i * 2 * math.pi / self.n_ports + angle_offset)) + centery)
+                    for i in range(0, self.n_ports)]
+
+        elements = [svg.Circle(cx=centerx, cy=centery, r=outer_radius, stroke='black', stroke_width=thick_stroke, fill='black', fill_opacity=0, stroke_dasharray=4)]
+        zero_color = 'darkred' if highlight_zero else 'black'
+        v = vertices[0]
+        elements.append(svg.Circle(cx=v[0], cy=v[1], r=node_radius, stroke='black', stroke_width=stroke_width, fill=zero_color, fill_opacity=0.5))
+
+        for v in vertices[1:]:
+            elements.append(svg.Circle(cx=v[0], cy=v[1], r=node_radius, stroke='black', stroke_width=stroke_width, fill='black', fill_opacity=0.5))
+
+        for start, end in self._portmap.items():
+            vs = vertices[start]
+            vn = vertices[end]
+
+            pathdata = [svg.MoveTo(x=vs[0], y=vs[1])]
+            if through_center:
+                pathdata.append(svg.LineTo(x=centerx, y=centery))
+            pathdata.append(svg.LineTo(x=vn[0], y=vn[1]))
+
+            elements.append(svg.Path(stroke="black", stroke_width=thick_stroke, fill_opacity=0, d=pathdata))
+
+        canvas = svg.SVG(
+            viewBox=svg.ViewBoxSpec(0, 0, (outer_radius + pad) * 2, (outer_radius + pad) * 2),
+            elements=elements
+        )
+
+        return canvas.as_str()
+
 class SyringeValveBase(ValveBase):
 
     def __init__(self, n_ports: int, n_positions: int, position: int = 1, ports: List[Port] = [], name: str = '') -> None:
@@ -174,6 +232,39 @@ class LoopFlowValve(ValveBase):
             self._portmap = dict(kv)
         else:
             self._portmap = {}
+
+    def _render_valve(self):
+        half_rotate = True if self.n_ports == 6 else False
+        return super()._render_valve(through_center=False, highlight_zero=False, half_rotate=half_rotate)
+
+class LValve(ValveBase):
+    """L Valve (each position connects two adjacent inlets / outlets). Port 0 is down (syringe),
+        and ports are numbered clockwise from the syringe port.
+    """
+
+    def __init__(self, n_ports: int, position: int = 1, ports: List[Port] = [], name: str = '') -> None:
+        super().__init__(n_ports, n_ports, position, ports, name)
+
+        hamilton_valve_codes = {3: 0, 4: 4}
+        if n_ports in hamilton_valve_codes.keys():
+            self.hamilton_valve_code = hamilton_valve_codes[n_ports]
+
+    def update_map(self):
+        """Updates the port map.
+        """
+        self._portmap = {}
+        if self.position != 0:
+            self._portmap[self.position - 1] = self.position % self.n_ports
+            self._portmap[self.position % self.n_ports] = self.position - 1
+
+    def _render_valve(self):
+        return super()._render_valve(True, False)
+
+class YValve(LValve):
+
+    def __init__(self, position: int = 0, ports: List[Port] = [], name=None) -> None:
+        super().__init__(3, position, ports, name)
+        self.hamilton_valve_code = 0
 
 class SyringeLValve(SyringeValveBase):
     """L Valve (each position connects two adjacent inlets / outlets) that sits atop syringe

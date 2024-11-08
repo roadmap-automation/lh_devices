@@ -1,15 +1,47 @@
 <head>
     <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js" integrity="sha512-q/dWJ3kcmjBLU4Qc47E4A9kTB4m3wuTY7vkFJDTZKjTs8jhyGQnaUrxa0Ytd0ssMZhbNua9hE+E7Qv1j+DyZwA==" crossorigin="anonymous"></script>
     <script>
+
+        var socket = io();
 
         var id = "{{id | safe}}";
         var name = "{{name | safe}}";
-        var devices = JSON.parse('{{devices | safe}}');
+        //var devices = JSON.parse('{{devices | safe}}');
+        //var modes = JSON.parse('{{modes | safe}}');
+        //var current_mode = "{{current_mode | safe}}";
         console.log(id)
 
+        function issue_command(command, data) {
+            console.log('sending', {'command': command,
+                                    'data': data})
+            socket.emit(id, {'command': command,
+                             'data': data})
+        }
+
+        function update() {
+            fetch(window.location.href + 'state')
+                .then(function (response) {
+                    return response.json();
+                }).then(function (data) {
+                    console.log(data)
+                    $("#assembly_name").empty().append(data['name'] + "<br>" + data['id']);
+                    update_devices(data['devices'])
+                    update_modes(data['modes'], data['current_mode'])
+                });
+            }
+
         window.onload = function() {
-            $("#assembly_name").append(name + "<br>");
-            $("#assembly_name").append(id);
+            update()
+            }
+
+        socket.on(id, function () {
+            console.log('Received update signal')
+            update()
+        })
+
+        function update_devices(devices) {
+            $("#devices").empty()
             for (const [device_id, device_name] of Object.entries(devices)) {
                 console.log(device_id, device_name)
                 var newref = new $("<a>")
@@ -20,10 +52,32 @@
             }
         }
 
+        function update_modes(modes, current_mode) {
+            $("#modes").empty().append("Select mode: ")
+            var newselect = $('<select>')
+                                    .attr("id", "mode_select")
+            $("<option>").text("").appendTo(newselect)
+            for (const mode of modes) {
+                $("<option>").text(mode).appendTo(newselect)
+            }
+            if (modes.includes(current_mode)) {
+                newselect.val(current_mode)
+            }
+            newselect.on("change", function () {
+                var val = newselect.val()
+                if (val != "") {
+                    issue_command("change_mode", val)
+                }
+            })
+            $("#modes").append(newselect)
+        }
+
     </script>
 </head>
 <body>
     <div id="assembly_name">
+    </div>
+    <div id="modes">
     </div>
     <div id="devices">
     </div>

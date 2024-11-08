@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<head>
+    <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js" integrity="sha512-q/dWJ3kcmjBLU4Qc47E4A9kTB4m3wuTY7vkFJDTZKjTs8jhyGQnaUrxa0Ytd0ssMZhbNua9hE+E7Qv1j+DyZwA==" crossorigin="anonymous"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script>
+        var socket = io()
+
+        function issue_command(id, command, data) {
+            console.log('sending', {'command': command,
+                                    'data': data})
+            socket.emit(id, {'command': command,
+                            'data': data})
+        }
+
+        function create_device(device_id, parent_div) {
+            let newdevicediv = create_device_div(device_id)
+            parent_div.children(".assembly_devices").append(newdevicediv)
+
+            // Register update function
+            let exist = socket.hasListeners(device_id)
+            if (!exist) {
+                socket.on(device_id, function () {
+                    update(device_id)
+                })
+            }
+
+            // Update controls
+            update(device_id)
+        }
+
+        function gen_assembly_tree(info, parent_div) {
+            if (info['type'] == 'assembly') {
+                for (const [assembly_id, assembly_name] of Object.entries(info['assemblies'])) {
+                    // Recursively create the assembly div tree:
+                    // 1. Create a new div for the assembly
+                    let newdiv = create_assembly_div(assembly_id)
+
+                    // 2. Get info about the div
+                    fetch(window.location.href + assembly_id + '/state')
+                        .then(function (response) {
+                            return response.json();
+                        }).then(function (newinfo) {
+                            // 3. Recursively create new divs for the subassemblies
+                            //console.log(newinfo)
+                            gen_assembly_tree(newinfo, newdiv)
+
+                        });
+                    parent_div.children(".sub_assemblies").append(newdiv)
+                }
+                for (const [device_id, device_name] of Object.entries(info['devices'])) {
+                    // Create device divs
+                    create_device(device_id, parent_div)
+
+                    // Register another listener on the device to update the parent div
+                    socket.on(device_id, function () {
+                        update_assembly_state(info['id'])
+                    })
+                }
+                // Register update function (only once)
+                let exist = socket.hasListeners(info['id'])
+                if (!exist) {
+                    socket.on(info['id'], function () {
+                        update_assembly_state(info['id'])
+                    })
+                }
+                // Update with current mode
+                update(info['id'])
+            }
+            else if (info['type'] == 'device') {
+                create_device(info['id'], parent_div)
+            }
+        }
+
+        function create_assembly_div(assembly_id) {
+            let newdiv = new $('<div>')
+                            .addClass(assembly_id)
+                            .addClass("assembly")
+            newdiv.append(new $('<div>').addClass("assembly_name"))
+            newdiv.append(new $('<div>').addClass("assembly_id"))
+            newdiv.append(new $('<div>').addClass("assembly_modes"))
+            newdiv.append(new $('<div>').addClass("assembly_active_methods"))
+            newdiv.append(new $('<div>').addClass("assembly_controls"))
+            let assembliesdiv = new $('<div>')
+                .addClass('sub_assemblies')
+                .addClass("grid-container")
+                .appendTo(newdiv)
+            let devicesdiv = new $('<div>')
+                .addClass('assembly_devices')
+                .addClass("grid-container")
+                .appendTo(newdiv)
+
+            return newdiv
+        }
+
+        function create_device_div(device_id) {
+            let newdiv = new $('<div>')
+                            .addClass(device_id)
+                            .addClass("devicebox")
+            newdiv.append(new $('<div>').addClass("device_name"))
+            newdiv.append(new $('<div>').addClass("device_id"))
+            newdiv.append(new $('<div>').addClass("device_config"))
+            newdiv.append(new $('<div>').addClass("device_state"))
+            newdiv.append(new $('<div>').addClass("device_controls"))
+
+            return newdiv
+        }
+
+        function set_border(thisdiv, data) {
+            thisdiv.removeClass("has_error")
+            if (data["error"] != null) {
+                if (data["error"]["error"] != null) {
+                    thisdiv.addClass("has_error")
+                }
+            }            
+            if (data["idle"] == true) {
+                thisdiv.addClass("idle").removeClass("busy")
+            }
+            else {
+                thisdiv.addClass("busy").removeClass("idle")
+            }
+            if (data["reserved"] == true) {
+                thisdiv.addClass("reserved").removeClass("free")
+            }
+            else {
+                thisdiv.addClass("free").removeClass("reserved")
+            }
+        }
+
+        function update_assembly_state(id) {
+            fetch(window.location.href + id + "/state")
+                .then(function (response) {
+                        return response.json();
+                    }).then(function (data) {
+                        //console.log(data)
+                        $('.' + id).each(function (index) {
+                            update_active_methods($(this).children(".assembly_active_methods"), id, data['active_methods'])
+                            set_border($(this), data['state'])
+                        })
+                    })
+        }
+
+        function update(id) {
+            fetch(window.location.href + id + "/state")
+                .then(function (response) {
+                    return response.json();
+                }).then(function (data) {
+                    // if a device
+                    $('.' + id).each(function (index) {
+                        if (data['type'] == 'device') {
+                            // select all objects with class corresponding to object's id
+                            $(this).children(".device_name").empty().append(data['name']);
+                            $(this).children(".device_id").empty().append(new $("<a>").attr("href", data['id'] + "/").text(data['id']));
+                            let statediv = $(this).children(".device_state")
+                            statediv.children(".plotcontainer").each(function (index) {
+                                Plotly.purge($(this).get(0))
+                            })
+                            statediv.empty()
+                            if ('display' in data['state']) {
+                                let textstatecontainer = $('<div>').appendTo(statediv)
+                                Object.entries(data['state']['display']).forEach(([label, value]) => {
+                                    if (value != null) {
+                                        $('<div>').text(label + ': ' + value).appendTo(textstatecontainer)
+                                    }
+                            });
+                            }
+                            if ('valve_state' in data['state']) {
+                                let valvestatecontainer = $('<div>').text('Valve position: ').appendTo(statediv)
+                                $('<text>').addClass("valve_position").text(data['state']['valve_state']['valve_position']).appendTo(valvestatecontainer)
+                                $('<div>').addClass("valve_svg").html(data['state']['valve_state']['valve_svg']).appendTo(statediv)
+                            }
+                            if ('syringe_state' in data['state']) {
+                                statediv.append(progressbar(data['state']['syringe_state']['position'], data['state']['syringe_state']['syringe_volume']))
+                                syringespeedcontainer = $('<div>').text('Syringe speed (mL /min): ').appendTo(statediv)
+                                $('<text>').addClass("syringe_speed").text(data['state']['syringe_state']['speed'].toFixed(3)).appendTo(syringespeedcontainer)
+                            }
+                            if ('plot' in data['state']) {
+                                if (data['state']['plot'] != null) {
+                                    let newdiv = $('<div>').addClass('plotcontainer')
+                                    newdiv.appendTo(statediv)
+                                    let plotobj = JSON.parse(data['state']['plot'].replace(new RegExp('\n', 'g'), '<br>'))
+                                    Plotly.react(newdiv.get(0), plotobj['data'], plotobj['layout'], {responsive: true})
+                                }
+                            }
+                            statediv.append($('<hr>'))
+                            if ('digital_outputs' in data['state']) {
+                                let do_container = $('<div>').text('Digital outputs: ')
+                                do_container.appendTo(statediv)
+                                for (let i = 0; i < data['state']['digital_outputs'].length; i++) {
+                                    let newctrl = $('<button>')
+                                        .addClass("digital_button")
+                                        .on('click', function () {
+                                            value = false
+                                            $(this).toggleClass("digital_high digital_low")
+                                            if ($(this).hasClass("digital_high")) {
+                                                value = true
+                                            }
+                                            issue_command(id, "set_digital_output", {'number': i, 'value': value})
+                                        })
+                                        .appendTo(do_container);
+                                        if (data['state']['digital_outputs'][i]) {
+                                            newctrl.addClass("digital_high");
+                                        }
+                                        else {
+                                            newctrl.addClass("digital_low");
+                                        }
+                                    }
+                                }
+                            update_controls($(this).children(".device_controls"), id, data['controls'])
+                        }
+                        else if (data['type'] == 'assembly') {
+                            $(this).children(".assembly_name").empty().append(data['name']);
+                            $(this).children(".assembly_id").empty().append(new $("<a>").attr("href", data['id'] + "/").text(data['id']));
+                            update_modes($(this).children(".assembly_modes"), id, data['modes'], data['current_mode'])
+                            update_active_methods($(this).children(".assembly_active_methods"), id, data['active_methods'])
+                            update_controls($(this).children(".assembly_controls"), id, data['controls'])
+                        }
+                        set_border($(this), data['state'])
+                    });
+
+                });
+            }
+
+        function update_modes(modediv, id, modes, current_mode) {
+            if (modes.length) {
+                modediv.empty().append("Select mode: ")
+                let newselect = $('<select>')
+                                        .addClass("mode_select")
+                $("<option>").text("").appendTo(newselect)
+                for (const mode of modes) {
+                    $("<option>").text(mode).appendTo(newselect)
+                }
+                if (modes.includes(current_mode)) {
+                    newselect.val(current_mode)
+                }
+                newselect.on("change", function () {
+                    let val = newselect.val()
+                    if (val != "") {
+                        issue_command(id, "change_mode", val)
+                    }
+                })
+                modediv.append(newselect)
+            }
+        }
+
+        function update_active_methods(methoddiv, id, active_methods) {
+            methoddiv.empty()
+            if (active_methods != null) {
+                if (Object.keys(active_methods).length) {
+                    methoddiv.append("Active methods: ")
+                    Object.entries(active_methods).forEach(
+                        ([method_name, active_method]) => {
+                        const newdiv = $('<div>').text(method_name + ' ').appendTo(methoddiv)
+                        if (active_method['has_gsioc']) {
+                            $('<button>')
+                                .text('Send trigger')
+                                .on('click', function () {
+                                    issue_command(id, 'send_trigger', {'method': method_name})
+                                })
+                                .appendTo(newdiv);
+                            }
+                        $('<button>')
+                            .text('Cancel')
+                            .on('click', function () {
+                                issue_command(id, 'cancel_method', {'method': method_name})
+                            })
+                            .appendTo(newdiv);
+                        if (active_method['has_error']) {
+                            newdiv.addClass("error_text")
+                            $('<button>')
+                                .text('Retry')
+                                .on('click', function () {
+                                    issue_command(id, 'clear_error', {'method': method_name, 'retry': true})
+                                })
+                                .appendTo(newdiv);
+                            }
+                        else {
+                            newdiv.addClass("active_text")
+                        }
+                        })
+                }
+            }
+        }
+
+        function update_controls(devicediv, device_id, controls) {
+            //console.log(devicediv.contents().length)
+            if (devicediv.contents().length == 0) {
+                for (const [cid, cdata] of Object.entries(controls)) {
+                    //console.log(cid, cdata)
+                    ctype = cdata['type']
+                    let newctrl = null
+                    if (ctype == 'button') {
+                       newctrl = $('<button>')
+                                        .addClass(cid)
+                                        .addClass(ctype)
+                                        .text(cdata['text'])
+                                        .on('click', function () {
+                                            issue_command(device_id, cid, {})
+                                        })
+                                        .appendTo(devicediv);
+                                    }
+                    else if (ctype=='select') {
+                        newctrl = $('<div>')
+                                        .addClass(cid)
+                                        .addClass(ctype)
+                                        .appendTo(devicediv);
+                        var inputcontainer = $('<div>').addClass("textbox_controls")
+                        inputcontainer.appendTo(newctrl)
+                        $('<div>').text(cdata['text']).appendTo(inputcontainer)                                            
+                        let newselect = $('<select>')
+                        newselect.appendTo(inputcontainer)
+                        for (const option of cdata['options']) {
+                            $("<option>").text(option).appendTo(newselect)
+                        }
+                        newselect.val(cdata['current'])
+                        let newselectbutton = $('<button>').addClass('textbutton').text('Go').appendTo(inputcontainer)                    
+                        newselectbutton.on("click", function () {
+                            issue_command(device_id, cid, {'index': newselect.prop('selectedIndex')})
+                        })
+                    }
+                    else if (ctype=='textbox') {
+                        let newctrl = $('<div>')
+                                        .addClass(cid)
+                                        .addClass(ctype)
+                                        .appendTo(devicediv);
+                        $('<div>').text(cdata['text']).appendTo(newctrl)                    
+                        let inputcontainer = $('<div>').addClass("textbox_controls").appendTo(newctrl)
+                        let newtext = $('<input type=text>').addClass('input_text').appendTo(inputcontainer)
+                        let newtextbutton = $('<button>').addClass('textbutton').text('Go').appendTo(inputcontainer)                    
+                        newtextbutton.on("click", function () {
+                            issue_command(device_id, cid, {'value': newtext.val()})
+                        })
+                    }
+                    else if (ctype=='number') {
+                        let newctrl = $('<div>')
+                                        .addClass(cid)
+                                        .addClass(ctype)
+                                        .appendTo(devicediv);
+                        
+                        let inputcontainer = $('<div>').addClass("textbox_controls")
+                        inputcontainer.appendTo(newctrl)
+                        $('<div>').text(cdata['text']).appendTo(inputcontainer)                    
+                        let newtext = $('<input type=number>')
+                                        .addClass('input_number')
+                                        .attr("min", 1)
+                                        .val(1).appendTo(inputcontainer)
+                        let newtextbutton = $('<button>').addClass('textbutton').text('Go')
+                        newtextbutton.appendTo(inputcontainer)                    
+                        newtextbutton.on("click", function () {
+                            issue_command(device_id, cid, {'n_prime': newtext.val()})
+                        })
+                        //newctrl.append(newtextbutton)
+
+                    }
+                    //devicediv.append(newctrl)
+                }
+            }
+        }
+
+        function format_volume(volume) {
+            // volume in mL
+            if (volume < 1.0) {
+                return (volume * 1000).toFixed(1) + ' ' + String.fromCharCode(181) + 'L'
+            }
+            else {
+                return (volume * 1).toFixed(3) + ' mL'
+            }
+        }
+
+        function progressbar(position, volume) {
+            let newprogressbar = $('<div>').addClass("progress_bar").addClass("device_row")
+            $('<div>').addClass("device_column").text("Syringe position: ").appendTo(newprogressbar)
+            let newframe = $('<div>').addClass("progress_bar_frame")
+                                     .addClass("device_column")
+            let newfill = $('<div>').addClass("progress_bar_fill")
+                                    .css('width', position / volume * 100 + '%')
+                                    .appendTo(newframe)
+            let newtext = $('<div>').addClass('progress_bar_text')
+                                    .text(format_volume(position))
+                                    .appendTo(newframe)
+            
+            newprogressbar.append(newframe)
+            $('<div>').addClass("device_column").text(format_volume(volume)).appendTo(newprogressbar)
+            
+            return newprogressbar
+        }
+
+        function refresh_all() {
+            fetch(window.location.href + 'state')
+                .then(function (response) {
+                    return response.json();
+                }).then(function (info) {
+                    //console.log(info)
+                    document.title = info['name'];
+                    let newdiv = create_assembly_div(info['id'])
+                    gen_assembly_tree(info, newdiv)
+                    newdiv.addClass("top-frame")
+                    newdiv.children(".assembly_name").attr("id", "top_assembly_name").addClass("top_assembly_name_text")
+                    newdiv.children(".sub_assemblies").find(".assembly_name").addClass("assembly_name_text")
+                    $("#top_assembly").empty().append(newdiv)
+                });
+            }
+
+        socket.on("connect", () => {
+            refresh_all()
+            $("#top_assembly_name").removeClass("titletext-disconnected")
+        });
+
+        socket.on("disconnect", () => {
+            $("#top_assembly_name").addClass("titletext-disconnected")
+        })
+
+    </script>
+
+<style>
+    div {
+        font-family: sans-serif;
+        box-sizing: border-box;
+    /*display: flex;
+    flex-direction: column;*/
+        /*white-space: pre-wrap;*/
+    }
+    .top_assembly_name_text {
+        text-align: center;
+        font-size: xx-large;
+    }
+    .assembly_name_text {
+        color: #444444;
+        font-size: larger;
+        font-weight: bolder;
+        text-align: center;
+    }
+    .assembly_id {
+        color: #444444;
+        font-size: smaller;
+        font-weight: normal;
+        text-align: center;
+    }
+    .assembly_id a {
+        color: #444444;
+        font-weight: normal;
+        text-align: center;
+    }
+    .device_name {
+        color: #444444;
+        font-size: normal;
+        font-weight: bolder;
+        text-align: center;
+    }
+    .device_id {
+        color: #444444;
+        font-size: smaller;
+        font-weight: normal;
+        text-align: center;
+    }
+    .device_id a {
+        color: #444444;
+        font-weight: normal;
+        text-align: center;
+    }
+    .device_row {
+        box-sizing: border-box;
+        display: flex;
+    }
+    .device_column {
+        flex: auto;
+    }
+    .assembly_modes {
+        padding: 10px;
+    }
+    .assembly_active_methods {
+        padding: 10px;
+    }
+    .monitortext {
+        font-size: large;
+        font-weight: bolder;
+        text-align: right;
+    }
+    .progress_bar_frame {
+        position: relative;
+        width: 100%;
+        border: 2px solid black;
+        background-color: rgba(1, 1, 1, 0.2);
+        margin-right: 5px;
+    }
+    .progress_bar_text {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        text-align: center;
+    }
+    .progress_bar_fill {
+        position: absolute;
+        height: 100%;
+        background-color: rgb(171, 95, 95) !important;
+        margin-right: 5px;
+    }
+    .input_text {
+        min-width: 0;
+    }
+    .input_number {
+        min-width: 0;
+    }
+    .textbox_controls {
+        display: flex;
+    }
+    .valve_position {
+        font-weight: bold;
+    }
+    .titletext-connected {
+        color: green
+    }
+    .titletext-disconnected {
+        color: rgb(171, 95, 95)
+    }
+    .fit-step {
+        border-radius: 10px;
+        border: 2px solid steelblue;
+        background-color: rgb(229, 242, 252);
+        margin: 5px;
+        padding: 10px;
+        /*color: blue*/
+    }        
+    .devicebox {
+        background-color: lightsteelblue;
+        border-radius: 10px;
+        border-color: steelblue;
+        margin: 5px;
+        padding: 10px;
+        /*color: purple*/
+    }
+    .assembly {
+        /*max-height: 30vh;*/
+        /*height:100%;*/
+        border-color: green;
+        border-radius: 10px;
+        background-color: rgb(209, 250, 230);
+        padding: 10px
+    }
+    .busy {
+        border-style:dashed
+    }
+    .idle {
+        border-style:solid
+    }
+    .active_text {
+        color: green
+    }
+    .error_text {
+        color: darkred
+    }
+    .has_error {
+        border-style:solid;
+        border-width:thick !important;
+        border-color:darkred;
+    }
+    .reserved {
+        border-width:thick
+    }
+    .free {
+        border-width:medium
+    }
+    .grid-container {
+        box-sizing: border-box;
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        /*grid-template-columns: repeat(auto-fill, minmax(min(10rem, 100%), 1fr));*/
+        /*grid-template-rows: [row0] minmax(0, 1fr) [row1] minmax(0, 3fr) [row2] minmax(0, 6fr);
+        grid-gap: 20px;
+        height: 95%;*/
+        width: 100%
+    }
+    .plotcontainer {
+        overflow: auto;
+        aspect-ratio: 1/1;
+        height:100%;
+    }
+    .valve_svg {
+        margin:auto;
+        aspect-ratio: 1/1;
+        width: 30%;
+    }    
+    .top-frame {
+        border-radius: 10px;
+        border-color: rgb(107, 70, 180);
+        background-color: rgb(220, 206, 248);
+        margin: 0px;
+        padding: 10px;
+        height: 100%;
+        width: 100%
+    }
+    .btn-container {
+        display: table;
+        width: 100%
+    }
+    .btn {
+        display: table-cell;
+        margin-left: 10px;
+        padding: 5px;
+        border-radius: 5px;
+        min-width: 20%;
+        font-stretch: narrower;
+    }
+    .digital_button {
+        border-radius: 0.6em;
+        width: 1.2em;
+        height: 1.2em;
+    }
+    .digital_high {
+        background-color: rgb(71, 130, 71)
+    }
+    .digital_low {
+        background-color: rgb(180, 92, 92)
+    }
+    .btn-disabled {
+        background-color: gray !important;
+    }
+    #btnStart {
+        color: white;
+        background-color: rgb(71, 130, 71);
+    }
+    #btnStop {
+        color: white;
+        background-color: rgb(180, 92, 92);
+    }
+    #btnTerminateCount {
+        background-color: rgb(206, 200, 143);
+    }
+    #btnTerminateFit {
+        background-color: rgb(206, 200, 143);
+    }
+
+</style>
+</head>
+<body>
+    <div id="top_assembly">
+    </div>
+</body>
