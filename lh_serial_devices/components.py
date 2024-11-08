@@ -1,5 +1,6 @@
 from typing import List
-from connections import Port, Node, connect_nodes, disconnect_nodes
+
+from .connections import Port, Node, connect_nodes, disconnect_nodes
 
 class ComponentBase:
     """Base class for fluid components

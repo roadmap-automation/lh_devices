@@ -6,12 +6,12 @@ from aiohttp import web
 from typing import List, Dict, Coroutine, Literal, TypedDict
 from dataclasses import asdict
 
-from device import DeviceBase, DeviceError, ValvePositionerBase
-from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
-from connections import Port, Node, connect_nodes
-from methods import MethodBase, MethodBasewithGSIOC, MethodRunner, ActiveMethod, MethodResult
-from components import ComponentBase
-from webview import WebNodeBase
+from .device import DeviceBase, DeviceError, ValvePositionerBase
+from .gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
+from .connections import Port, Node, connect_nodes
+from .methods import MethodBase, MethodBasewithGSIOC, MethodRunner, ActiveMethod, MethodResult
+from .components import ComponentBase
+from .webview import WebNodeBase
 
 class Network:
     """Representation of a node network

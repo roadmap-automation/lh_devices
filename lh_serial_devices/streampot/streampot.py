@@ -26,15 +26,15 @@ CB_color_cycle = ['#377eb8', '#ff7f00', '#4daf4a',
                   '#f781bf', '#a65628', '#984ea3',
                   '#999999', '#e41a1c', '#dede00']
 
-from connections import Port
+from ..connections import Port
 
 plt.set_loglevel('warning')
 
-from HamiltonComm import HamiltonSerial
-from HamiltonDevice import SmoothFlowSyringePump, PollTimer, HamiltonValvePositioner
-from assemblies import AssemblyBase, Mode, connect_nodes
-from valve import SyringeLValve, YValve, SyringeValveBase, DistributionValve
-from webview import run_socket_app, WebNodeBase
+from ..hamilton.HamiltonComm import HamiltonSerial
+from ..hamilton.HamiltonDevice import SmoothFlowSyringePump, PollTimer, HamiltonValvePositioner
+from ..assemblies import AssemblyBase, Mode, connect_nodes
+from ..valve import SyringeLValve, YValve, SyringeValveBase, DistributionValve
+from ..webview import run_socket_app, WebNodeBase
 
 from labjack import ljm
 

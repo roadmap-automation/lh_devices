@@ -2,8 +2,8 @@ import datetime
 import logging
 import asyncio
 
-from gsioc import GSIOC
-from qcmd import QCMDRecorderDevice
+from ..gsioc import GSIOC
+from .qcmd import QCMDRecorderDevice
 
 async def main():
     gsioc = GSIOC(62, 'COM13', 19200)
