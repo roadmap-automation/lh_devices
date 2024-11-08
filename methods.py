@@ -27,14 +27,14 @@ class MethodException(Exception):
 class MethodResult:
     """Method result information"""
 
-    name: str
-    source: str
-    method_data: dict
-    log: List[dict]
-    result: dict
-    created_time: str
-    finished_time: str
     id: str | None = None
+    created_time: str = ''
+    source: str = ''
+    method_name: str = ''
+    method_data: dict = field(default_factory=dict)
+    finished_time: str = ''
+    log: dict = field(default_factory=dict)
+    result: dict = field(default_factory=dict)
 
 class MethodBase(Loggable):
     """Base class for defining a method for LH serial devices. Contains information about:
@@ -143,8 +143,9 @@ class MethodBase(Loggable):
                     # try again!
                     self.logger.info(f'{self.name} retrying')
                     retry_metadata = copy.copy(self.metadata)
-                    result = await self.start(**kwargs)
+                    newresult = await self.start(**kwargs)
                     self.metadata = retry_metadata + self.metadata
+                    result = newresult.result
             except asyncio.CancelledError:
                 await on_cancel()
         finally:
@@ -154,11 +155,11 @@ class MethodBase(Loggable):
             for device in self.devices:
                 device.logger.removeHandler(self.log_handler)
         
-        return MethodResult(name=self.name,
+        return MethodResult(method_name=self.name,
                             method_data=kwargs,
                             log=copy.copy(self.metadata),
-                            created_time=self.metadata[0]['time'],
-                            finished_time=self.metadata[-1]['time'],
+                            created_time=json.loads(self.metadata[0])['time'],
+                            finished_time=json.loads(self.metadata[-1])['time'],
                             result=result)
 
     async def throw_error(self, error: str, critical: bool = False, retry: bool = False) -> None:
