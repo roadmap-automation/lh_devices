@@ -762,7 +762,7 @@ if __name__=='__main__':
             qcmd_system = RoadmapChannelAssembly([channel_0, channel_1],
                                                  distribution_system=distribution_system,
                                                  gsioc=gsioc,
-                                                 database_path='roadmap.db',
+                                                 database_path='injection_system.db',
                                                  name='MultiChannel Injection System')
             
             app = qcmd_system.create_web_app(template='roadmap.html')
