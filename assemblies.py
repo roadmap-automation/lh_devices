@@ -9,7 +9,7 @@ from dataclasses import asdict
 from device import DeviceBase, DeviceError, ValvePositionerBase
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from connections import Port, Node, connect_nodes
-from methods import MethodBase, MethodBasewithGSIOC, MethodRunner, ActiveMethod
+from methods import MethodBase, MethodBasewithGSIOC, MethodRunner, ActiveMethod, MethodResult
 from components import ComponentBase
 from webview import WebNodeBase
 
@@ -439,6 +439,7 @@ class InjectionChannelBase(AssemblyBase):
         self.injection_node = injection_node
         super().__init__(devices, name=name)
         self.method_runner = MethodRunner()
+        self.method_callbacks: List[Coroutine] = []
 
         # Define node connections for dead volume estimations
         self.network = Network(self.devices)
@@ -456,12 +457,29 @@ class InjectionChannelBase(AssemblyBase):
     def active_methods(self) -> Dict[str, ActiveMethod]:
         return self.method_runner.active_methods
 
+    async def process_method(self, method_name: str, method_data: dict, id: str | None = None) -> MethodResult:
+        """Chain of run tasks to accomplish. Subclass to change the logic"""
+        self.active_methods.update({method_name: ActiveMethod(method=self.methods[method_name],
+                                                        method_data=method_data)})
+        try:
+            result = await self.methods[method_name].start(**method_data)
+            result.id = id
+            result.source = self.name
+        except asyncio.CancelledError:
+            logging.debug(f'Task {method_name} with id {id} cancelled')
+        finally:
+            self.active_methods.pop(method_name)
+
+        await asyncio.gather(*[callback(result) for callback in self.method_callbacks])
+
+        return result
+
     def run_method(self, method_name: str, method_data: dict, id: str | None = None) -> None:
 
         if not self.methods[method_name].is_ready():
             self.logger.error(f'{self.name}: not all devices in {method_name} are available')
         else:
-            self.method_runner.run_method(self.method_runner.method_from_data(method_name, method_data, id), id, method_name)
+            self.method_runner.run_method(self.process_method(method_name, method_data, id), id, method_name)
 
     @property
     def error(self) -> DeviceError | None:

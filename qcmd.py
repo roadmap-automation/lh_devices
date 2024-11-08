@@ -20,7 +20,8 @@ from liquid_handler import SimLiquidHandler
 from logutils import Loggable
 from bubblesensor import SyringePumpwithBubbleSensor, BubbleSensorBase, SMDSensoronHamiltonDevice
 from webview import run_socket_app, WebNodeBase
-from methods import MethodBaseDeadVolume, MethodBase, MethodRunner, ActiveMethod
+from methods import MethodBaseDeadVolume, MethodBase, MethodResult
+from history import HistoryDB
 
 from autocontrol.status import Status
 
@@ -583,7 +584,13 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 class QCMDMultiChannelMeasurementDevice(NestedAssemblyBase, AssemblyBase):
     """QCMD recording device simultaneously recording on multiple QCMD instruments"""
 
-    def __init__(self, qcmd_address: str = 'localhost', qcmd_port: int = 5011, n_channels: int = 1, qcmd_ids: list | None = None, name='MultiChannel QCMD Measurement Device') -> None:
+    def __init__(self,
+                 qcmd_address: str = 'localhost',
+                 qcmd_port: int = 5011,
+                 n_channels: int = 1,
+                 qcmd_ids: list | None = None,
+                 database_path: str | None = None,
+                 name='MultiChannel QCMD Measurement Device') -> None:
 
         if qcmd_ids is not None:
             self.channels = [QCMDMeasurementChannel(QCMDMeasurementDevice(f'http://{qcmd_address}:{qcmd_port}/QCMD/id/{qcmd_id}/',
@@ -598,8 +605,25 @@ class QCMDMultiChannelMeasurementDevice(NestedAssemblyBase, AssemblyBase):
 
         NestedAssemblyBase.__init__(self, [], assemblies=self.channels, name=name)
         AssemblyBase.__init__(self, self.devices, name)
-        #print([(assy.name, assy.id) for assy in self.assemblies])
-        #print([(assy.name, assy.id) for assy in self.devices])
+        
+        if database_path is not None:
+            for ch in self.channels:
+                ch.method_callbacks.append(self.save_to_database)
+            
+            self.database_path = database_path
+
+    async def save_to_database(self, result: MethodResult):
+        """Saves a method result to the database
+
+        Args:
+            result (MethodResult): result to save
+        """
+
+        if result.id is None:
+            result.id = 'test'
+
+        with HistoryDB(self.database_path) as db:
+            db.smart_insert(result)
 
     async def initialize(self) -> None:
         """Initialize the loop as a unit and the distribution valve separately"""
@@ -621,8 +645,8 @@ class QCMDMultiChannelMeasurementDevice(NestedAssemblyBase, AssemblyBase):
                 method = task['method_data']['method_list'][0]
                 method_name: str = method['method_name']
                 method_data: dict = method['method_data']
-                if not self.channels[channel].reserved:
-                    self.run_method(self.channels[channel].methods[method_name](**method_data))
+                if self.channels[channel].method_runner.is_ready(method_name):
+                    self.channels[channel].run_method(method_name, method_data, id=str(task.id))
                    
                     return web.Response(text='accepted', status=200)
                 
@@ -1689,7 +1713,7 @@ async def qcmd_single_distribution():
 
 async def qcmd_multichannel_measure():
 
-    measurement_system = QCMDMultiChannelMeasurementDevice('localhost', 5011, qcmd_ids=['13117490', '13110090'])
+    measurement_system = QCMDMultiChannelMeasurementDevice('localhost', 5011, qcmd_ids=['13117490', '13110090'], database_path='qcmd.db')
     await measurement_system.initialize()
     app = measurement_system.create_web_app(template='roadmap.html')
     runner = await run_socket_app(app, 'localhost', 5005)

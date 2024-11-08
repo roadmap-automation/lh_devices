@@ -28,8 +28,13 @@ class MethodResult:
     """Method result information"""
 
     name: str
+    source: str
     method_data: dict
+    log: List[dict]
     result: dict
+    created_time: str
+    finished_time: str
+    id: str | None = None
 
 class MethodBase(Loggable):
     """Base class for defining a method for LH serial devices. Contains information about:
@@ -110,8 +115,9 @@ class MethodBase(Loggable):
             self.release_all()
             await self.trigger_update()
 
-        # clear metadata before starting
+        # clear metadata and result before starting
         self.metadata.clear()
+        result = {}
 
         self.logger.info(f'{self.name} starting')
 
@@ -121,7 +127,7 @@ class MethodBase(Loggable):
 
         try:
             self.error.clear()
-            await self.run(**kwargs)
+            result = await self.run(**kwargs)
         except asyncio.CancelledError:
             await on_cancel()
 
@@ -137,7 +143,7 @@ class MethodBase(Loggable):
                     # try again!
                     self.logger.info(f'{self.name} retrying')
                     retry_metadata = copy.copy(self.metadata)
-                    await self.start(**kwargs)
+                    result = await self.start(**kwargs)
                     self.metadata = retry_metadata + self.metadata
             except asyncio.CancelledError:
                 await on_cancel()
@@ -148,11 +154,12 @@ class MethodBase(Loggable):
             for device in self.devices:
                 device.logger.removeHandler(self.log_handler)
         
-        logging.info(self.metadata)
-
         return MethodResult(name=self.name,
                             method_data=kwargs,
-                            result=copy.copy(self.metadata))
+                            log=copy.copy(self.metadata),
+                            created_time=self.metadata[0]['time'],
+                            finished_time=self.metadata[-1]['time'],
+                            result=result)
 
     async def throw_error(self, error: str, critical: bool = False, retry: bool = False) -> None:
         """Populates the method error. If a critical error, stops method execution. If not critical,
@@ -318,17 +325,6 @@ class MethodRunner:
         # if this was the last method to finish, set event_finished
         if len(self._running_tasks) == 0:
             self.event_finished.set()
-
-    async def method_from_data(self, method_name: str, method_data: dict, id: str | None = None):
-        """Chain of run tasks to accomplish. Subclass to change the logic"""
-        self.active_methods.update({method_name: ActiveMethod(method=self.methods[method_name],
-                                                        method_data=method_data)})
-        try:
-            await self.methods[method_name].start(**method_data)
-        except asyncio.CancelledError:
-            logging.debug(f'Task {method_name} with id {id} cancelled')
-        finally:
-            self.active_methods.pop(method_name)
 
     def run_method(self, method: Coroutine, id: str | None = None, name: str = '') -> None:
         """Runs a coroutine method. Designed for complex operations with assembly hardware"""
