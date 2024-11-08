@@ -1,23 +1,19 @@
 import asyncio
-import json
 import logging
 from typing import Coroutine, List, Dict
 from dataclasses import dataclass
 
 from aiohttp.web_app import Application as Application
-from aiohttp import web
-
-from autocontrol.status import Status
-from autocontrol.task_struct import TaskData
 
 from device import ValvePositionerBase, SyringePumpBase
 from distribution import DistributionBase, DistributionSingleValve
 from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
 from gsioc import GSIOC
 from components import InjectionPort, FlowCell
-from assemblies import AssemblyBase, InjectionChannelBase, Network, NestedAssemblyBase, Mode, AssemblyMode
+from assemblies import InjectionChannelBase, Network,Mode, AssemblyMode
 from connections import connect_nodes, Node
 from methods import MethodBase, MethodBaseDeadVolume
+from multichannel import MultiChannelAssembly
 from bubblesensor import BubbleSensorBase, SMDSensoronHamiltonDevice
 
 class RoadmapChannelBase(InjectionChannelBase):
@@ -641,11 +637,19 @@ class RoadmapChannelBubbleSensor(RoadmapChannel):
         self.inlet_bubble_sensor = inlet_bubble_sensor
         self.outlet_bubble_sensor = outlet_bubble_sensor
 
-class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
+class RoadmapChannelAssembly(MultiChannelAssembly):
 
-    def __init__(self, channels: List[RoadmapChannelBubbleSensor], distribution_system: DistributionBase, gsioc: GSIOC, name='') -> None:
-        NestedAssemblyBase.__init__(self, [], channels + [distribution_system], name)
-        AssemblyBase.__init__(self, self.devices, name)
+    def __init__(self,
+                 channels: List[RoadmapChannelBubbleSensor],
+                 distribution_system: DistributionBase,
+                 gsioc: GSIOC,
+                 database_path: str | None = None,
+                 name='') -> None:
+        
+        super().__init__(channels=channels,
+                         assemblies=[distribution_system],
+                         database_path=database_path,
+                         name=name)
 
         """TODO:
             1. Generalize methods to have specific upstream and downstream connection points (if necessary)
@@ -676,91 +680,12 @@ class RoadmapChannelAssembly(NestedAssemblyBase, AssemblyBase):
                                'RoadmapChannelSleep': RoadmapChannelSleep(ch)
                                })
 
-        self.channels = channels
         self.distribution_system = distribution_system
 
     async def initialize(self) -> None:
         """Initialize the loop as a unit and the distribution valve separately"""
         await asyncio.gather(*[ch.initialize() for ch in self.channels], self.distribution_system.initialize())
         await self.trigger_update()
-
-    async def get_info(self):
-        d = await super().get_info()
-        d.update({'devices': {}})
-        return d
-
-    def create_web_app(self, template='roadmap.html') -> Application:
-        app = super().create_web_app(template=template)
-        routes = web.RouteTableDef()
-
-        @routes.post('/SubmitTask')
-        async def handle_task(request: web.Request) -> web.Response:
-            data = await request.json()
-            task = TaskData(**data)
-            self.logger.info(f'{self.name} received task {task}')
-            channel: int = task.channel
-            if channel > len(self.channels) - 1:
-                return web.Response(text=str(Status.INVALID), status=400)
-
-            # TODO: remove this to enable batch submission. For now, only one job at a time is allowed
-            if len(task.method_data['method_list']) > 1:
-                return web.Response(text=str(Status.INVALID), status=400)
-
-            success = True
-            for method in task.method_data['method_list']:
-                method_name: str = method['method_name']
-                method_data: dict = method['method_data']
-                if self.channels[channel].method_runner.is_ready(method_name):
-                    self.channels[channel].run_method(method_name, method_data, id=str(task.id))
-                else:
-                    success = False
-                    break
-
-            # if batch submission not successful, cancel methods
-            if not success:
-                self.channels[channel].cancel_methods_by_id(str(task.id))
-                return web.Response(text=str(Status.BUSY), status=503)
-
-            return web.Response(text=str(Status.SUCCESS), status=200)
-
-        @routes.post('/CancelTask')
-        async def cancel_task(request: web.Request) -> web.Response:
-            data = await request.json()
-            task = TaskData(**data)
-            self.logger.info(f'{self.name} received cancel request for task {task}')
-            channel: int = task.channel
-            
-            # cancel if any tasks match the request
-            if any(v['id'] == str(task.id) for v in self.channels[channel].running_tasks.values()):
-                self.channels[channel].cancel_methods_by_id(str(task.id))
-                return web.Response(text=str(Status.SUCCESS), status=200)
-
-            return web.Response(text=str(Status.INVALID), status=400)
-
-        @routes.get('/GetTaskData')
-        async def get_task(request: web.Request) -> web.Response:
-            # TODO: turn task into a dataclass; parsing will change
-            task = await request.json()
-            task_id = task['id']
-
-            # TODO: actually return task data
-            # TODO: Determine what task data we want to save. Logging? success? Any returned errors?
-            return web.Response(text=json.dumps({'id': task_id}), status=200)
-
-        @routes.get('/GetStatus')
-        async def get_status(request: web.Request) -> web.Response:
-            statuses = [Status.BUSY if ch.reserved else Status.IDLE for ch in self.channels]
-
-            return web.Response(text=json.dumps(dict(status=Status.IDLE,
-                                          channel_status=statuses)),
-                                status=200)
-
-        app.add_routes(routes)
-
-        for i, channel in enumerate(self.channels):
-            app.add_subapp(f'/{i}/', channel.create_web_app())
-
-        return app
 
 if __name__=='__main__':
 
@@ -834,7 +759,12 @@ if __name__=='__main__':
             connect_nodes(mvp0.valve.nodes[5], fc0.outlet_node, 0.0)
             connect_nodes(mvp1.valve.nodes[5], fc1.outlet_node, 0.0)
 
-            qcmd_system = RoadmapChannelAssembly([channel_0, channel_1], distribution_system=distribution_system, gsioc=gsioc, name='MultiChannel Injection System')
+            qcmd_system = RoadmapChannelAssembly([channel_0, channel_1],
+                                                 distribution_system=distribution_system,
+                                                 gsioc=gsioc,
+                                                 database_path='roadmap.db',
+                                                 name='MultiChannel Injection System')
+            
             app = qcmd_system.create_web_app(template='roadmap.html')
             runner = await run_socket_app(app, 'localhost', 5003)
             #print(json.dumps(await qcmd_system.get_info()))
