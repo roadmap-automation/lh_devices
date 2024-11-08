@@ -5,7 +5,7 @@ import logging
 import traceback
 from uuid import uuid4
 from typing import List, Dict, Any, Callable, TypedDict, Coroutine
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, Field
 
 from device import DeviceBase, DeviceError
 from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
@@ -313,6 +313,13 @@ class MethodRunner:
 
         # Event that is triggered when all methods are completed
         self.event_finished: asyncio.Event = asyncio.Event()
+
+    @property
+    def method_schema(self) -> Dict[str, tuple[Field,...]]:
+        """Return the schema for the MethodDefinition class of all methods
+        """
+
+        return {method_name: fields(m.MethodDefinition) for method_name, m in self.methods.items()}
 
     def remove_running_task(self, result: asyncio.Future) -> None:
         """Callback when method is complete. Should generally be done last
