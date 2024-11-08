@@ -5,16 +5,16 @@ from dataclasses import dataclass
 
 from aiohttp.web_app import Application as Application
 
-from device import ValvePositionerBase, SyringePumpBase
-from distribution import DistributionBase, DistributionSingleValve
-from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
-from gsioc import GSIOC
-from components import InjectionPort, FlowCell
-from assemblies import InjectionChannelBase, Network,Mode, AssemblyMode
-from connections import connect_nodes, Node
-from methods import MethodBase, MethodBaseDeadVolume
-from multichannel import MultiChannelAssembly
-from bubblesensor import BubbleSensorBase, SMDSensoronHamiltonDevice
+from ..device import ValvePositionerBase, SyringePumpBase
+from ..distribution import DistributionBase, DistributionSingleValve
+from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
+from ..gsioc import GSIOC
+from ..components import InjectionPort, FlowCell
+from ..assemblies import InjectionChannelBase, Network,Mode, AssemblyMode
+from ..connections import connect_nodes, Node
+from ..methods import MethodBase, MethodBaseDeadVolume
+from ..multichannel import MultiChannelAssembly
+from ..bubblesensor import BubbleSensorBase, SMDSensoronHamiltonDevice
 
 class RoadmapChannelBase(InjectionChannelBase):
 
@@ -691,7 +691,7 @@ if __name__=='__main__':
 
     import asyncio
     import datetime
-    from HamiltonComm import HamiltonSerial
+    from hamilton.HamiltonComm import HamiltonSerial
     from valve import LoopFlowValve, SyringeYValve, DistributionValve, SyringeLValve
     from webview import run_socket_app
 

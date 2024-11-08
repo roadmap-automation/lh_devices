@@ -1,13 +1,11 @@
 import os
 import json
 import sqlite3
-import time
 
 from pathlib import Path
-from typing import List
-from dataclasses import asdict, fields
+from dataclasses import fields
 
-from methods import MethodResult
+from .methods import MethodResult
 
 METHOD_HISTORY = Path(__file__).parent / 'history.sqlite'
 

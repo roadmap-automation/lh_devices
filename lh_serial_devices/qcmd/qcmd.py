@@ -1,26 +1,27 @@
-from dataclasses import dataclass, asdict
-from typing import Any, Coroutine, List, Dict
-from aiohttp import ClientSession, web, ClientConnectionError
-from aiohttp.web import Application
-from enum import Enum
 import time
 import asyncio
 import logging
 import json
+
+from dataclasses import dataclass
+from typing import List, Dict
+from aiohttp import ClientSession, web, ClientConnectionError
+from aiohttp.web import Application
+from enum import Enum
 from urllib.parse import urlsplit
-from device import ValvePositionerBase, DeviceBase
-from HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial, PollTimer
-from valve import LoopFlowValve, SyringeLValve, DistributionValve
-from components import InjectionPort, FlowCell, Node
-from distribution import DistributionSingleValve
-from gsioc import GSIOC, GSIOCMessage
-from assemblies import AssemblyBasewithGSIOC, AssemblyBase, InjectionChannelBase, Network, connect_nodes, Mode, NestedAssemblyBase, AssemblyMode
-from liquid_handler import SimLiquidHandler
-from logutils import Loggable
-from bubblesensor import SyringePumpwithBubbleSensor, BubbleSensorBase, SMDSensoronHamiltonDevice
-from webview import run_socket_app
-from methods import MethodBaseDeadVolume, MethodBase
-from multichannel import MultiChannelAssembly
+
+from ..device import ValvePositionerBase, DeviceBase
+from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, HamiltonSerial, PollTimer, SyringePumpwithBubbleSensor, SMDSensoronHamiltonDevice
+from ..valve import LoopFlowValve, SyringeLValve, DistributionValve
+from ..components import InjectionPort, FlowCell, Node
+from ..distribution import DistributionSingleValve
+from ..gsioc import GSIOC, GSIOCMessage
+from ..assemblies import AssemblyBasewithGSIOC, AssemblyBase, InjectionChannelBase, Network, connect_nodes, Mode, NestedAssemblyBase, AssemblyMode
+from ..logutils import Loggable
+from ..bubblesensor import BubbleSensorBase
+from ..webview import run_socket_app
+from ..methods import MethodBaseDeadVolume, MethodBase
+from ..multichannel import MultiChannelAssembly
 
 class Timer(Loggable):
     """Basic timer. Essentially serves as a sleep but only allows one instance to run."""
@@ -330,8 +331,8 @@ class QCMDMeasurementDevice(DeviceBase):
         result = await self._post(post_data)
         if result is None:
             self.qcmd_status = QCMDState.DISCONNECTED
-
-        self.qcmd_status = result['result']
+        else:
+            self.qcmd_status = result['result']
         self._updating = False
 
     async def sleep(self, sleep_time: float = 0.0) -> float:

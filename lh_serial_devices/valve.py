@@ -3,8 +3,9 @@ import svg
 import math
 from dataclasses import dataclass
 from typing import List
-from connections import Port, Node
-from components import ComponentBase
+
+from .connections import Port
+from .components import ComponentBase
 
 @dataclass
 class ValveState:

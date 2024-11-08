@@ -2,7 +2,6 @@ from typing import List
 import asyncio
 import aioserial
 from dataclasses import dataclass
-import datetime
 import logging
 
 def printcodes(p: str) -> None:

@@ -2,10 +2,9 @@ from typing import List, Dict
 
 from aiohttp.web_app import Application as Application
 
-from assemblies import Mode
-from device import DeviceBase, ValvePositionerBase
-from components import InjectionPort
-from assemblies import AssemblyBase
+from .assemblies import Mode, AssemblyBase
+from .components import InjectionPort
+from .device import DeviceBase, ValvePositionerBase
 
 class DistributionBase(AssemblyBase):
 

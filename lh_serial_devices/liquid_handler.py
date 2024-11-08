@@ -2,8 +2,8 @@ import asyncio
 import logging
 import json
 from functools import wraps
-from assemblies import AssemblyBasewithGSIOC
-from gsioc import GSIOCMessage, GSIOCCommandType
+from .assemblies import AssemblyBasewithGSIOC
+from .gsioc import GSIOCMessage, GSIOCCommandType
 
 def log_method(func):
     """Decorator for logging start and end time of methods"""
