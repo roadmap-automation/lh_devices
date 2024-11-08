@@ -202,7 +202,7 @@ class QCMDMeasurementDevice(DeviceBase):
         finally:
             # cancel the monitor
             self.idle = True
-            result = time.time() - self._start
+            result = round(time.time() - self._start, 6)
             monitor.cancel()
             self._active_sleep_task = None
 
@@ -229,7 +229,7 @@ class QCMDMeasurementDevice(DeviceBase):
             dict: response JSON
         """
 
-        self.logger.info(f'{self.session._base_url}{self.url_path} => {post_data}')
+        self.logger.debug(f'{self.session._base_url}{self.url_path} => {post_data}')
 
         response_json: dict | None = None
 
@@ -237,7 +237,7 @@ class QCMDMeasurementDevice(DeviceBase):
         try:
             async with self.session.post(self.url_path, json=post_data, timeout=self.timeout) as resp:
                 response_json = await resp.json()
-                self.logger.info(f'{self.session._base_url}{self.url_path} <= {response_json}')
+                self.logger.debug(f'{self.session._base_url}{self.url_path} <= {response_json}')
         except (ConnectionRefusedError, ClientConnectionError):
             self.logger.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
 
@@ -455,6 +455,8 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             self.idle = True
             self.release_all()
 
+            await self.trigger_update()
+
             return result
 
     class QCMDSleep(QCMDMethodBase):
@@ -470,9 +472,11 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             method = self.MethodDefinition(**kwargs)
             self.reserve_all()
             self.logger.info(f'{self.name}: Starting sleep for {method.sleep_time} s')
-            self.qcmd.result = await self.qcmd.sleep(method.sleep_time)
+            result = await self.qcmd.sleep(method.sleep_time)
             self.logger.info(f'{self.name}: Actual time slept {self.qcmd.result["total time"]} s')
             self.release_all()
+
+            return result
 
     class QCMDRecord(QCMDMethodBase):
 
@@ -492,8 +496,10 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             method = self.MethodDefinition(**kwargs)
             self.reserve_all()
-            self.qcmd.result = await self.qcmd.record(method.record_time, method.sleep_time)
+            result = await self.qcmd.record(method.record_time, method.sleep_time)
             self.release_all()
+
+            return result
 
     class QCMDRecordTag(QCMDMethodBase):
 
@@ -515,9 +521,10 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             method = self.MethodDefinition(**kwargs)
             self.reserve_all()
-            self.qcmd.result = await self.qcmd.record_tag(method.tag_name, method.record_time, method.sleep_time)
+            result = await self.qcmd.record_tag(method.tag_name, method.record_time, method.sleep_time)
             self.release_all()
 
+            return result
 
     class QCMDAcceptTransfer(QCMDMethodBase):
 
@@ -532,8 +539,10 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             method = self.MethodDefinition(**kwargs)
             self.reserve_all()
             self.logger.info(f'{self.name}: Received transfer of material {method.contents}')
-            self.qcmd.result = {'contents': method.contents}
+            result = {'contents': method.contents}
             self.release_all()
+
+            return result
 
     class QCMDStop(QCMDMethodBase):
 
@@ -545,8 +554,10 @@ class QCMDMeasurementChannel(InjectionChannelBase):
         async def run(self, **kwargs):
 
             self.reserve_all()
-            self.qcmd.result = await self.qcmd.stop_collection()
+            result = await self.qcmd.stop_collection()
             self.release_all()
+
+            return result
 
     class QCMDStart(QCMDMethodBase):
 
@@ -560,7 +571,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             method = self.MethodDefinition(**kwargs)
             self.reserve_all()
-            self.qcmd.result = await self.qcmd.start_collection(method.description)
+            result = await self.qcmd.start_collection(method.description)
             
             # wait for collection
             try:
@@ -580,6 +591,8 @@ class QCMDMeasurementChannel(InjectionChannelBase):
                 await self.qcmd.trigger_update()
 
             self.release_all()
+
+            return result
 
 class QCMDMultiChannelMeasurementDevice(NestedAssemblyBase, AssemblyBase):
     """QCMD recording device simultaneously recording on multiple QCMD instruments"""
