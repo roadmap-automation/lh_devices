@@ -102,6 +102,34 @@ class RoadmapChannelBase(InjectionChannelBase):
         else:
             return await super().event_handler(command, data)
 
+class PrimeLoop(MethodBase):
+    """Primes the loop of one ROADMAP channel
+    """
+
+    def __init__(self, channel: RoadmapChannelBase) -> None:
+        super().__init__([channel.syringe_pump, channel.loop_valve])
+        self.channel = channel
+
+    @dataclass
+    class MethodDefinition(MethodBase.MethodDefinition):
+
+        name: str = "PrimeLoop"
+        number_of_primes: str | int = 1
+
+    async def run(self, **kwargs):
+
+        self.reserve_all()
+
+        method = self.MethodDefinition(**kwargs)
+        number_of_primes = int(method.number_of_primes)
+
+        await self.channel.primeloop(number_of_primes)
+
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        await self.channel.change_mode('Standby')
+
+        self.release_all()
+
 class LoadLoop(MethodBaseDeadVolume):
     """Loads the loop of one ROADMAP channel
     """
@@ -676,7 +704,8 @@ class RoadmapChannelAssembly(MultiChannelAssembly):
                                'DirectInject': DirectInject(ch, distribution_system.modes[str(2 + 2 * i)], gsioc),
                                'DirectInjectBubbleSensor': DirectInjectBubbleSensor(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor),
                                'RoadmapChannelInit': RoadmapChannelInit(ch),
-                               'RoadmapChannelSleep': RoadmapChannelSleep(ch)
+                               'RoadmapChannelSleep': RoadmapChannelSleep(ch),
+                               'PrimeLoop': PrimeLoop(ch)
                                })
 
         self.distribution_system = distribution_system
