@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import copy
+import random
 import time
 
 from typing import Tuple
@@ -1587,6 +1588,24 @@ class SMDSensoronHamiltonDevice(BubbleSensorBase):
         """
 
         return await self.device.get_digital_input(self.digital_input)
+
+class SimulatedSensoronHamiltonDevice(BubbleSensorBase):
+
+    def __init__(self, device: SimulatedHamiltonBase, id: str | None = None, name: str = '') -> None:
+        super().__init__(id, name)
+        self.device = device
+
+    async def initialize(self) -> None:
+        ...
+
+    async def read(self) -> bool:
+        """Read bubble sensor
+
+        Returns:
+            bool: true if liquid in line; false if air
+        """
+
+        return random.choice([True, False])
 
 class SyringePumpwithBubbleSensor(HamiltonSyringePump):
     """DEPRECATED
