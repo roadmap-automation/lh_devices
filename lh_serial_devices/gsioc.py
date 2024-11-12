@@ -1,9 +1,7 @@
-import json
-from typing import Dict, Tuple
 import logging
 from enum import Enum
 from dataclasses import dataclass
-import datetime
+
 import asyncio
 import aioserial
 

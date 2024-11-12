@@ -7,9 +7,9 @@ from uuid import uuid4
 from typing import List, Dict, Any, Callable, TypedDict, Coroutine
 from dataclasses import dataclass, field, fields, Field
 
-from device import DeviceBase, DeviceError
-from gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
-from logutils import Loggable, MethodLogHandler, MethodLogFormatter
+from .device import DeviceBase, DeviceError
+from .gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
+from .logutils import Loggable, MethodLogHandler, MethodLogFormatter
 
 # ======== Method base classes ==========
 

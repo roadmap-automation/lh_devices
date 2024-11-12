@@ -3,12 +3,11 @@ import copy
 import logging
 from uuid import uuid4
 from typing import List, Literal
-from connections import Node
 from dataclasses import dataclass
 
-from logutils import Loggable
-from valve import ValveState, ValveBase
-from webview import WebNodeBase
+from .connections import Node
+from .valve import ValveState, ValveBase
+from .webview import WebNodeBase
 
 @dataclass
 class DeviceError:

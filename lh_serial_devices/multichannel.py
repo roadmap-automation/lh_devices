@@ -9,9 +9,9 @@ from typing import List
 from autocontrol.status import Status
 from autocontrol.task_struct import TaskData
 
-from assemblies import NestedAssemblyBase, AssemblyBase, InjectionChannelBase
-from history import HistoryDB
-from methods import MethodResult
+from .assemblies import NestedAssemblyBase, AssemblyBase, InjectionChannelBase
+from .history import HistoryDB
+from .methods import MethodResult
 
 class MultiChannelAssembly(NestedAssemblyBase):
     """Multichannel assembly, with endpoints for task submission, running, and saving"""
