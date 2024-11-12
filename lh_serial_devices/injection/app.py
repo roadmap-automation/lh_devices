@@ -16,6 +16,7 @@ from ..connections import connect_nodes
 from .injectionsystem import RoadmapChannelBubbleSensor, RoadmapChannelAssembly
 
 LOG_PATH = pathlib.Path(__file__).parent.parent.parent / 'logs'
+HISTORY_PATH = pathlib.Path(__file__).parent.parent.parent / 'history'
 
 async def run_injection_system():
     gsioc = GSIOC(62, 'COM13', 19200)
@@ -74,7 +75,7 @@ async def run_injection_system():
     qcmd_system = RoadmapChannelAssembly([channel_0, channel_1],
                                             distribution_system=distribution_system,
                                             gsioc=gsioc,
-                                            database_path=LOG_PATH / 'injection_system.db',
+                                            database_path=HISTORY_PATH / 'injection_system.db',
                                             name='MultiChannel Injection System')
     
     app = qcmd_system.create_web_app(template='roadmap.html')
