@@ -7,7 +7,7 @@ from typing import List, Dict, Coroutine, Literal, TypedDict
 from dataclasses import asdict
 
 from .device import DeviceBase, DeviceError, ValvePositionerBase
-from .gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
+from .gilson.gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from .connections import Port, Node, connect_nodes
 from .methods import MethodBase, MethodBasewithGSIOC, MethodRunner, ActiveMethod, MethodResult
 from .components import ComponentBase

@@ -11,6 +11,7 @@ Both devices and assemblies have a built in recursive web application builder fo
 ## Structure
 Base (application-independent) classes are contained in the modules in the base `lh_serial_devices` directory. Subdirectories contain application-specific code:
 
+* `gilson`: communications with Gilson devices, specifically through the GSIOC protocol
 * `hamilton`: communications specifically with Hamilton OEM syringe pumps and valves
 * `injection`: the ROADMAP project multichannel injection system. Requires an active setup to run.
 * `qcmd`: the ROADMAP project QCMD measurement interface.
