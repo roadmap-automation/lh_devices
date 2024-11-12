@@ -8,11 +8,18 @@ Control and visualization framework for automated liquid handling applications
 
 Both devices and assemblies have a built in recursive web application builder for visualization and rudimentary control, with updates performed over a SocketIO connection.
 
+## Structure
+Base (application-independent) classes are contained in the modules in the base `lh_serial_devices` directory. Subdirectories contain application-specific code:
+
+* `hamilton`: communications specifically with Hamilton OEM syringe pumps and valves
+* `injection`: the ROADMAP project multichannel injection system. Requires an active setup to run.
+* `qcmd`: the ROADMAP project QCMD measurement interface.
+
 ## Getting started
-Two full applications are currently included in the repo. The injection system multichannel device controls a series of Hamilton-brand OEM syringe pumps and valves.
+Two full applications are currently included in the repo. The injection system multichannel device controls a series of Hamilton-brand OEM syringe pumps and valves. Note that this will only work with an active setup.
 
-`python -m lh_serial_devices.injection.roadmap`
+`python -m lh_serial_devices.injection.app`
 
-The QCMD application interfaces with a QCMD instrument HTTP API and is purely for measurement:
+The QCMD application interfaces with a QCMD instrument HTTP API and is purely for measurement. It will run without an active setup but will not be able to communicate:
 
-`python -m lh_serial_devices.qcmd.qcmd`
+`python -m lh_serial_devices.qcmd.app`
