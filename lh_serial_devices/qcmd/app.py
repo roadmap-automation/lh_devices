@@ -3,7 +3,7 @@ import datetime
 import logging
 import pathlib
 
-from .qcmd import QCMDMultiChannelMeasurementDevice
+from .multichannel import QCMDMultiChannelMeasurementDevice
 from ..webview import run_socket_app
 
 LOG_PATH = pathlib.Path(__file__).parent.parent.parent / 'logs'
@@ -19,13 +19,13 @@ async def qcmd_multichannel_measure():
     except asyncio.CancelledError:
         pass
     finally:
-        logging.info('Cleaning up...')
+        logging.info('Closing QCMD Multichannel Measurement Device...')
         await runner.cleanup()
 
 if __name__ == '__main__':
 
     logging.basicConfig(handlers=[
-                        logging.FileHandler(LOG_PATH / (datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_qcmdmulti_recorder_log.txt')),
+                        logging.FileHandler(LOG_PATH / (datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_qcmdmulti_log.txt')),
                         logging.StreamHandler()
                     ],
                         format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
