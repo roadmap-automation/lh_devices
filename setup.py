@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='lh_serial_devices',
-    version='0.1',
+    version='0.1.0',
     packages=['lh_serial_devices'],
     url='https://github.com/hoogerheide/lh_serial_devices',
     license='Public Domain',
