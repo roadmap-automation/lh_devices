@@ -3,7 +3,7 @@ import datetime
 import logging
 import pathlib
 
-from ..gsioc import GSIOC
+from ..gilson.gsioc import GSIOC
 from .recorder import QCMDRecorderDevice
 
 LOG_PATH = pathlib.Path(__file__).parent.parent.parent / 'logs'
