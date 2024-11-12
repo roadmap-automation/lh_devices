@@ -10,7 +10,7 @@ from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePu
 from ..hamilton.HamiltonComm import HamiltonSerial
 from ..valve import LoopFlowValve, DistributionValve, SyringeLValve
 from ..webview import run_socket_app
-from ..gsioc import GSIOC
+from ..gilson.gsioc import GSIOC
 from ..components import InjectionPort, FlowCell
 from ..connections import connect_nodes
 from .injectionsystem import RoadmapChannelBubbleSensor, RoadmapChannelAssembly

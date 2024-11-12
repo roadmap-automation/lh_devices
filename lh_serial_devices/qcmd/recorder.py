@@ -3,7 +3,7 @@ import asyncio
 from aiohttp import ClientSession, ClientConnectionError
 from urllib.parse import urlsplit
 
-from ..gsioc import GSIOCMessage
+from ..gilson.gsioc import GSIOCMessage
 from ..assemblies import AssemblyBasewithGSIOC
 from ..logutils import Loggable
 

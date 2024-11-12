@@ -7,7 +7,7 @@ from aiohttp.web_app import Application as Application
 from ..device import ValvePositionerBase, SyringePumpBase
 from ..distribution import DistributionBase
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
-from ..gsioc import GSIOC
+from ..gilson.gsioc import GSIOC
 from ..components import FlowCell
 from ..assemblies import InjectionChannelBase, Network,Mode, AssemblyMode
 from ..connections import Node

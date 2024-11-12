@@ -14,7 +14,7 @@ from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePu
 from ..valve import LoopFlowValve, SyringeLValve, DistributionValve
 from ..components import InjectionPort, FlowCell, Node
 from ..distribution import DistributionSingleValve
-from ..gsioc import GSIOC, GSIOCMessage
+from ..gilson.gsioc import GSIOC, GSIOCMessage
 from ..assemblies import AssemblyBasewithGSIOC, AssemblyBase, InjectionChannelBase, Network, connect_nodes, Mode, NestedAssemblyBase, AssemblyMode
 from ..bubblesensor import BubbleSensorBase
 from ..webview import run_socket_app
