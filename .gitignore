@@ -2,3 +2,6 @@
 logs/*
 history/*
 *.csv
+*.egg-info
+build/*
+dist/*
