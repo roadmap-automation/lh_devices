@@ -1,11 +1,13 @@
 from setuptools import setup
 
 setup(
-    name='lh_serial_devices',
+    name='lh_devices',
     version='0.1.0',
-    packages=['lh_serial_devices',
-              'lh_serial_devices.hamilton'],
-    url='https://github.com/hoogerheide/lh_serial_devices',
+    packages=['lh_devices',
+              'lh_devices.hamilton',
+              'lh_devices.injection',
+              'lh_devices.qcmd'],
+    url='https://github.com/hoogerheide/lh_devices',
     license='Public Domain',
     author='David P. Hoogerheide',
     author_email='david.hoogerheide@nist.gov',
