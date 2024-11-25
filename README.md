@@ -1,4 +1,4 @@
-# lh_devices
+# Liquid handling devices (`lh_devices`)
 Control and visualization framework for automated liquid handling applications
 
 ## Introduction and core concepts
