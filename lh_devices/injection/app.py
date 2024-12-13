@@ -46,7 +46,7 @@ async def run_injection_system():
     distribution_system = DistributionSingleValve(dvp, ip, 'Distribution System')
 
     # connect LH injection port to distribution port valve 0
-    connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 124 + 20)
+    connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 262 + 20)
 
     # connect distribution valve port 1 to syringe pump valve node 2 (top)
     connect_nodes(dvp.valve.nodes[1], sp0.valve.nodes[2], 73 + 20)
