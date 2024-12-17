@@ -424,9 +424,13 @@ class DirectInject(MethodBaseDeadVolume):
         # Connect to GSIOC communications
         self.connect_gsioc()
 
+        # Wait for initial trigger
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
+        await self.distribution_mode.activate()
+        await self.wait_for_trigger()
+
         # Set dead volume and wait for method to ask for it (might need brief wait in the calling
         # method to make sure this updates in time)
-        await self.distribution_mode.activate()
         dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
 
         # blocks if there's already something in the dead volume queue
