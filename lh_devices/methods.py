@@ -105,15 +105,15 @@ class MethodBase(Loggable):
 
         pass
 
+    async def on_cancel(self):
+        self.logger.info(f'{self.name} canceled, releasing and updating all devices')
+        self.error.retry = False
+        self.release_all()
+        await self.trigger_update()
+
     async def start(self, **kwargs) -> MethodResult:
         """Starts a method run with error handling
         """
-
-        async def on_cancel():
-            self.logger.info(f'{self.name} canceled, releasing and updating all devices')
-            self.error.retry = False
-            self.release_all()
-            await self.trigger_update()
 
         # clear metadata and result before starting
         self.metadata.clear()
@@ -129,7 +129,7 @@ class MethodBase(Loggable):
             self.error.clear()
             result = await self.run(**kwargs)
         except asyncio.CancelledError:
-            await on_cancel()
+            await self.on_cancel()
 
         except MethodException as e:
             # these are critical errors
@@ -147,7 +147,7 @@ class MethodBase(Loggable):
                     self.metadata = retry_metadata + self.metadata
                     result = newresult.result
             except asyncio.CancelledError:
-                await on_cancel()
+                await self.on_cancel()
         finally:
             self.logger.info(f'{self.name} finished')
             
@@ -227,6 +227,14 @@ class MethodBasewithGSIOC(MethodBase):
 
         for task in self._gsioc_tasks:
             task.cancel()
+
+    async def on_cancel(self):
+        self.disconnect_gsioc()
+        return await super().on_cancel()
+    
+    async def start(self, **kwargs):
+        self.disconnect_gsioc()
+        return await super().start(**kwargs)
 
     async def wait_for_trigger(self) -> None:
         """Uses waiting and trigger events to signal that assembly is waiting for a trigger signal
