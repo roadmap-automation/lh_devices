@@ -519,15 +519,15 @@ class InjectionChannelBase(AssemblyBase):
 
         await super().event_handler(command, data)
         if command == 'clear_error':
-            target_method: MethodBase = self.active_methods.get(data['method'], None)
+            target_method: MethodBase = self.active_methods.get(data['method'], None)['method']
             if target_method is not None:
                 target_method.error.clear(retry=data['retry'])
                 await self.trigger_update()
         elif command == 'send_trigger':
-            target_method: MethodBasewithGSIOC = self.active_methods.get(data['method'], None)
+            target_method: MethodBasewithGSIOC = self.active_methods.get(data['method'], None)['method']
             if target_method is not None:
                 target_method.activate_trigger()
         elif command == 'cancel_method':
-            target_method = self.active_methods.get(data['method'], None)
+            target_method = self.active_methods.get(data['method'], None)['method']
             if target_method is not None:
                 self.method_runner.cancel_methods_by_name(data['method'])
