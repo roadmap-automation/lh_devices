@@ -136,6 +136,8 @@ class QCMDMeasurementDevice(DeviceBase):
                 self.logger.debug(f'{self.session._base_url}{self.url_path} <= {response_json}')
         except (ConnectionRefusedError, ClientConnectionError):
             self.logger.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
+        except TimeoutError:
+            self.logger.error(f'request to {self.session._base_url}{self.url_path} failed: timed out')
 
         return response_json
 
