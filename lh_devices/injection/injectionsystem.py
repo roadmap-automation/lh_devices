@@ -397,6 +397,68 @@ class InjectLoopBubbleSensor(MethodBase):
 
         self.release_all()
 
+class DirectInjectPrime(MethodBaseDeadVolume):
+    """Prime direct inject line
+    """
+
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC) -> None:
+        super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()])
+        self.channel = channel
+        self.dead_volume_mode: str = 'LHPrime'
+        self.distribution_mode = distribution_mode
+
+    @dataclass
+    class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
+        
+        name: str = "DirectInjectPrime"
+        pump_volume: str | float = 0, # uL
+        pump_flow_rate: str | float = 1, # mL/min        
+
+    async def run(self, **kwargs):
+        """Same as DirectInject but does not switch to injection mode"""
+
+        self.reserve_all()
+
+        method = self.MethodDefinition(**kwargs)
+
+        # Connect to GSIOC communications
+        self.connect_gsioc()
+
+        # Wait for initial trigger
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
+        await self.distribution_mode.activate()
+        await self.wait_for_trigger()
+
+        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
+        # method to make sure this updates in time)
+        dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
+
+        # blocks if there's already something in the dead volume queue
+        await self.dead_volume.put(dead_volume)
+        self.logger.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
+
+        # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
+        await self.wait_for_trigger()
+        if self.dead_volume.qsize():
+            self.dead_volume.get_nowait()
+            self.logger.warning(f'{self.channel.name}.{method.name}: Trigger received but dead volume was not read')
+
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
+        await asyncio.gather(self.channel.change_mode('LHPrime'), self.distribution_mode.activate())
+
+        # Wait for trigger to switch to standby
+        self.logger.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
+        await self.wait_for_trigger()
+
+        # switch to standby mode    
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        await self.channel.change_mode('Standby')
+
+        # At this point, liquid handler is done, release communications
+        self.disconnect_gsioc()
+        self.release_all()
+
 class DirectInject(MethodBaseDeadVolume):
     """Directly inject from LH to a ROADMAP channel flow cell
     """
@@ -705,6 +767,7 @@ class RoadmapChannelAssembly(MultiChannelAssembly):
                                'LoadLoopBubbleSensor': LoadLoopBubbleSensor(ch, distribution_system.modes[str(1 + 2 * i)], gsioc),
                                'InjectLoop': InjectLoop(ch),
                                'InjectLoopBubbleSensor': InjectLoopBubbleSensor(ch),
+                               'DirectInjectPrime': DirectInjectPrime(ch, distribution_system.modes[str(2 + 2 * i)], gsioc),
                                'DirectInject': DirectInject(ch, distribution_system.modes[str(2 + 2 * i)], gsioc),
                                'DirectInjectBubbleSensor': DirectInjectBubbleSensor(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor),
                                'RoadmapChannelInit': RoadmapChannelInit(ch),
