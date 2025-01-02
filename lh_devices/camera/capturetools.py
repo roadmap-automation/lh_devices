@@ -1,7 +1,8 @@
 import numpy as np
 import sys
 
-from pygrabber.dshow_graph import client, clsids, ICreateDevEnum, GUID, POINTER, IMoniker, IPropertyBag, qedit, wstring_at, DeviceCategories
+from pygrabber.dshow_graph import client, clsids, ICreateDevEnum, GUID, POINTER, IPropertyBag, qedit, wstring_at, DeviceCategories
+from pygrabber.moniker import IMoniker
 
 def get_input_devices(prop):
         return _get_available_filters(DeviceCategories.CLSID_VideoInputDeviceCategory, prop)
