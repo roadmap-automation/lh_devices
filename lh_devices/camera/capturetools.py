@@ -5,7 +5,7 @@ from pygrabber.dshow_graph import client, clsids, ICreateDevEnum, GUID, POINTER,
 from pygrabber.moniker import IMoniker
 
 def get_input_devices(prop):
-        return _get_available_filters(DeviceCategories.CLSID_VideoInputDeviceCategory, prop)
+        return _get_available_filters(DeviceCategories.VideoInputDevice, prop)
 
 def _get_available_filters(category_clsid, prop):
     system_device_enum = client.CreateObject(clsids.CLSID_SystemDeviceEnum, interface=ICreateDevEnum)

@@ -7,6 +7,7 @@ from aiohttp import ClientSession, ClientConnectionError
 from enum import Enum
 from urllib.parse import urlsplit
 
+from ..camera.camera import CameraDeviceBase, FIT0819
 from ..device import DeviceBase, PollTimer
 from ..assemblies import InjectionChannelBase
 from ..methods import MethodBase
@@ -491,6 +492,38 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             self.release_all()
 
             return result
+        
+class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
+
+    def __init__(self, qcmd: QCMDMeasurementDevice, camera: CameraDeviceBase, name='QCMD Channel with Camera'):
+        self.camera = camera
+        super().__init__(qcmd, name)
+        self.devices += [camera]
+
+    class QCMDMethodBasewithCamera(QCMDMeasurementChannel.QCMDMethodBase):
+
+        def __init__(self, device: QCMDMeasurementDevice, camera: CameraDeviceBase):
+            super().__init__(device)
+            self.camera = camera
+
+    class QCMDCaptureImage(QCMDMethodBasewithCamera):
+
+        @dataclass
+        class MethodDefinition(MethodBase.MethodDefinition):
+
+            name: str = 'QCMDCaptureImage'
+            description: str = ''
+
+        async def run(self, **kwargs):
+
+            method = self.MethodDefinition(**kwargs)
+            self.reserve_all()
+
+            self.camera.capture()
+
+            self.release_all()
+
+            return {'image': self.camera.image}
 
 class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly):
     """QCMD recording device simultaneously recording on multiple QCMD instruments"""
@@ -504,13 +537,15 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly):
                  name='MultiChannel QCMD Measurement Device') -> None:
 
         if qcmd_ids is not None:
-            channels = [QCMDMeasurementChannel(QCMDMeasurementDevice(f'http://{qcmd_address}:{qcmd_port}/QCMD/id/{qcmd_id}/',
+            channels = [QCMDMeasurementChannelwithCamera(QCMDMeasurementDevice(f'http://{qcmd_address}:{qcmd_port}/QCMD/id/{qcmd_id}/',
                                                                           name=f'QCMD Measurement Device {i}, Serial Number {qcmd_id}'),
+                                                         camera=FIT0819(None),
                                                     name=f'QCMD Measurement Channel {i}')
                                 for i, qcmd_id in enumerate(qcmd_ids)]
         else:
-            channels = [QCMDMeasurementChannel(QCMDMeasurementDevice(f'http://{qcmd_address}:{qcmd_port}/QCMD/{i}/',
+            channels = [QCMDMeasurementChannelwithCamera(QCMDMeasurementDevice(f'http://{qcmd_address}:{qcmd_port}/QCMD/{i}/',
                                                                           name=f'QCMD Measurement Device {i}'),
+                                                         camera=None,
                                                     name=f'QCMD Measurement Device {i}')
                                 for i in range(n_channels)]
 
