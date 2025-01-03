@@ -3,6 +3,8 @@ aiohttp-jinja2
 aioserial
 aioconsole
 python-socketio
+pygrabber
+pywin32
 numpy
 scipy
 plotly
