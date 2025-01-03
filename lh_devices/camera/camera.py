@@ -1,7 +1,7 @@
 import asyncio
 import base64
 import cv2
-from pythoncom import CoInitialize, CoInitializeEx
+import datetime
 from dataclasses import dataclass, field
 from ..device import DeviceBase, DeviceError
 from .capturetools import get_input_devices
@@ -23,7 +23,9 @@ class CameraDeviceBase(DeviceBase):
 
         self.address = address
         self.camera_list = camera_list
-        self.image: cv2.typing.MatLike = None
+        self.raw_image: cv2.typing.MatLike = None
+        self.image: str = None
+        self.timestamp: datetime.datetime = None
         self.properties: dict[int, float] = {}
 
     def check_if_present(self) -> bool:
@@ -54,7 +56,12 @@ class CameraDeviceBase(DeviceBase):
 
             # capture image
             if cam.isOpened():
-                result, self.image = cam.read()
+                result, image = cam.read()
+                self.timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            # render image as base64 string
+            self.raw_image = image
+            self.image = base64.b64encode(cv2.imencode('.png', image)[1].tobytes()).decode("utf-8")
 
             # read properties
             for prop in self.properties.keys():
@@ -65,7 +72,7 @@ class CameraDeviceBase(DeviceBase):
 
         else:
 
-            self.image = None
+            self.clear()
   
     async def capture(self) -> None:
         """Async version of _capture
@@ -80,6 +87,10 @@ class CameraDeviceBase(DeviceBase):
             self.idle = True
             await self.trigger_update()
 
+    def clear(self) -> None:
+        self.image = None
+        self.raw_image = None
+        self.timestamp = None
 
 # =========== DFRobot FIT0819 Endoscope WebCam ==========
 
@@ -87,9 +98,6 @@ class CameraDeviceBase(DeviceBase):
 class DFRobotCameraList(CameraListBase):
 
     def refresh(self):
-
-        # required if using threading with openCV
-        CoInitialize()
 
         names: list[str] = get_input_devices("FriendlyName")
         paths: list[str] = get_input_devices("DevicePath")
@@ -116,8 +124,9 @@ class FIT0819(CameraDeviceBase):
                   'display': {'Address': '' if self.address is None else self.address},
                   'state': {'idle': self.idle,
                             'reserved': self.reserved,
-                            'display': {'Address: ': self.address},
-                            'image': base64.b64encode(cv2.imencode('.png', self.image)[1].tobytes()).decode("utf-8") if self.image is not None else None},
+                            'display': {'Address': self.address,
+                                        'Timestamp': self.timestamp},
+                            'image': self.image},
                   'controls': {'address': {'type': 'select',
                                            'options': [''] + list(self.camera_list.cameras.keys()),
                                            'text': 'Camera address: ',
@@ -139,9 +148,8 @@ class FIT0819(CameraDeviceBase):
 
         if command == 'address':
             self.address = list(self.camera_list.cameras.keys())[data['index'] - 1] if data['index'] > 0 else None
-            self.image = None
+            self.clear()
             await self.trigger_update()
         elif command == 'capture':
             # capture in background. Idle flags prevent multiple acquisitions
             asyncio.create_task(self.capture())
-
