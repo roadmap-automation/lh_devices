@@ -5,6 +5,7 @@ aioconsole
 python-socketio
 pygrabber
 pywin32
+opencv-python
 numpy
 scipy
 plotly
