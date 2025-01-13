@@ -1,4 +1,7 @@
 import asyncio
+import logging
+
+from typing import Coroutine
 
 from aiohttp import ClientSession, ClientConnectionError
 from urllib.parse import urlsplit
@@ -26,8 +29,12 @@ class Timer(Loggable):
         # don't start another timer if one is already running
         if not self.timer_running.is_set():
             self.timer_running.set()
-            await asyncio.sleep(wait_time)
-            self.timer_running.clear()
+            try:
+                await asyncio.sleep(wait_time)
+            except asyncio.CancelledError:
+                return False
+            finally:
+                self.timer_running.clear()
             return True
         else:
             self.logger.warning(f'{self.name}: Timer is already running, ignoring start command')
@@ -77,6 +84,11 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
         super().__init__([], name)
         self.recorder = QCMDRecorder(f'http://{qcmd_address}:{qcmd_port}/QCMD/', f'{self.name}.QCMDRecorder')
 
+        self.running_tasks = set()
+
+        # Event that is triggered when all methods are completed
+        self.event_finished: asyncio.Event = asyncio.Event()        
+
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
         """Handles GSIOC message but deals with Q more robustly than the base method"""
 
@@ -84,6 +96,7 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
             response = 'busy' if self.recorder.timer_running.is_set() else 'idle'
         else:
             response = await super().handle_gsioc(data)
+            await self.trigger_update()
 
         return response
 
@@ -96,4 +109,60 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
         sleep_time = float(sleep_time)
 
         # wait the full time
-        await self.recorder.record(tag_name, record_time, sleep_time)
+        try:
+            await self.recorder.record(tag_name, record_time, sleep_time)
+        except asyncio.CancelledError:
+            pass
+
+    def run_method(self, method: Coroutine) -> None:
+        """Runs a coroutine method. Designed for complex operations with assembly hardware"""
+
+        # clear finished event because something is now running
+        self.event_finished.clear()
+
+        # create a task and add to set to avoid garbage collection
+        task = asyncio.create_task(method)
+        logging.debug(f'Running task {task} from method {method}')
+        self.running_tasks.add(task)
+
+        # register callback upon task completion
+        task.add_done_callback(self.method_complete_callback)
+
+    def method_complete_callback(self, result: asyncio.Future) -> None:
+        """Callback when method is complete
+
+        Args:
+            result (Any): calling method
+        """
+
+        self.running_tasks.discard(result)
+
+        # if this was the last method to finish, set event_finished
+        if len(self.running_tasks) == 0:
+            self.event_finished.set()
+
+    async def get_info(self) -> dict:
+        d = await super().get_info()
+        d.update({'type': 'device',
+                  'state': {'idle': (not self.recorder.timer_running.is_set()),
+                            'reserved': self.reserved},
+                  'controls': {'interrupt': {'type': 'button',
+                                             'text': 'Interrupt'}}})
+        
+        return d    
+
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        await super().event_handler(command, data)
+
+        if command == 'interrupt':
+            for task in self.running_tasks:
+                task.cancel()
+            
+            await self.trigger_update()
