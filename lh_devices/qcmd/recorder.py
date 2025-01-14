@@ -32,7 +32,7 @@ class Timer(Loggable):
             try:
                 await asyncio.sleep(wait_time)
             except asyncio.CancelledError:
-                return False
+                pass
             finally:
                 self.timer_running.clear()
             return True
@@ -48,6 +48,27 @@ class QCMDRecorder(Timer):
         url_parts = urlsplit(http_address)
         self.session = ClientSession(f'{url_parts.scheme}://{url_parts.netloc}')
         self.url_path = url_parts.path
+        self.cancel: asyncio.Queue = asyncio.Queue(1)
+
+    def stop(self, hard: bool = False):
+        """Stops timer immediately
+
+        Args:
+            hard (bool, optional): hard stop (does not do any follow-up actions). Defaults to False.
+        """
+
+        if self.cancel.empty():
+            self.cancel.put_nowait(hard)
+
+    async def wait(self, wait_time = 0) -> None:
+        # reset the cancel queue
+        while not self.cancel.empty():
+            self.cancel.get_nowait()
+        
+        if await self.start(wait_time):
+            self.cancel.put_nowait(False)
+        else:
+            self.cancel.put_nowait(True)
 
     async def record(self, tag_name: str = '', record_time: float = 0.0, sleep_time: float = 0.0) -> None:
         """Executes timer and sends record command to QCMD. Call by sending
@@ -60,8 +81,12 @@ class QCMDRecorder(Timer):
         # calculate total wait time
         wait_time = record_time + sleep_time
 
-        # wait the full time
-        if await self.start(wait_time):
+        # wait the full time, stopping if a cancel signal is received
+        wait_task = asyncio.create_task(self.wait(wait_time))
+        hard_cancel: bool = self.cancel.get()
+        wait_task.cancel()
+
+        if not hard_cancel:
 
             post_data = {'command': 'set_tag',
                         'value': {'tag': tag_name,
@@ -109,10 +134,8 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
         sleep_time = float(sleep_time)
 
         # wait the full time
-        try:
-            await self.recorder.record(tag_name, record_time, sleep_time)
-        except asyncio.CancelledError:
-            pass
+        await self.recorder.record(tag_name, record_time, sleep_time)
+        await self.trigger_update()
 
     def run_method(self, method: Coroutine) -> None:
         """Runs a coroutine method. Designed for complex operations with assembly hardware"""
@@ -147,7 +170,9 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
                   'state': {'idle': (not self.recorder.timer_running.is_set()),
                             'reserved': self.reserved},
                   'controls': {'interrupt': {'type': 'button',
-                                             'text': 'Interrupt'}}})
+                                             'text': 'Interrupt'},
+                              'cancel': {'type': 'button',
+                                             'text': 'Cancel'}}})
         
         return d    
 
@@ -161,8 +186,9 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
 
         await super().event_handler(command, data)
 
-        if command == 'interrupt':
-            for task in self.running_tasks:
-                task.cancel()
-            
-            await self.trigger_update()
+        if command == 'cancel':
+            if self.recorder.cancel.empty():
+                self.recorder.cancel.put_nowait(True)
+        elif command == 'interrupt':
+            if self.recorder.cancel.empty():
+                self.recorder.cancel.put_nowait(False)
