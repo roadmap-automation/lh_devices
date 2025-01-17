@@ -182,6 +182,13 @@
                                     Plotly.react(newdiv.get(0), plotobj['data'], plotobj['layout'], {responsive: true})
                                 }
                             }
+                            if ('image' in data['state']) {
+                                if (data['state']['image'] != null) {
+                                    console.log(data['state'])
+                                    const newdiv = $('<img>').addClass('imagecontainer').attr("src", "data:image/png;base64," + data['state']['image'])
+                                    newdiv.appendTo(statediv)
+                                }
+                            }
                             statediv.append($('<hr>'))
                             if ('digital_outputs' in data['state']) {
                                 let do_container = $('<div>').text('Digital outputs: ')
@@ -575,6 +582,11 @@
         overflow: auto;
         aspect-ratio: 1/1;
         height:100%;
+    }
+    .imagecontainer {
+        padding:5%;
+        overflow: auto;
+        width: 90%;
     }
     .valve_svg {
         margin:auto;

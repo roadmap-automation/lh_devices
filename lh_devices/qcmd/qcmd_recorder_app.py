@@ -2,15 +2,20 @@ import asyncio
 import datetime
 import logging
 import pathlib
+import webbrowser
 
 from ..gilson.gsioc import GSIOC
 from .recorder import QCMDRecorderDevice
+from ..webview import run_socket_app
 
 LOG_PATH = pathlib.Path(__file__).parent.parent.parent / 'logs'
 
 async def main():
     gsioc = GSIOC(62, 'COM13', 19200)
     qcmd_recorder = QCMDRecorderDevice('localhost', 5011, name='QCMD Recorder')
+    app = qcmd_recorder.create_web_app(template='roadmap.html')
+    runner = await run_socket_app(app, 'localhost', 5006)
+    webbrowser.open('http://localhost:5006/')
     try:
         await qcmd_recorder.initialize_gsioc(gsioc)
     except asyncio.CancelledError:
@@ -18,6 +23,7 @@ async def main():
     finally:
         logging.info('Closing QCMD Recorder...')
         await qcmd_recorder.recorder.session.close()
+        await runner.cleanup()
 
 if __name__ == '__main__':
     logging.basicConfig(handlers=[

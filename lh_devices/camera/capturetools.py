@@ -1,11 +1,13 @@
 import numpy as np
-import sys
-
+from pythoncom import CoInitialize
 from pygrabber.dshow_graph import client, clsids, ICreateDevEnum, GUID, POINTER, IPropertyBag, qedit, wstring_at, DeviceCategories
 from pygrabber.moniker import IMoniker
 
 def get_input_devices(prop):
-        return _get_available_filters(DeviceCategories.CLSID_VideoInputDeviceCategory, prop)
+  # required if running in a thread
+  CoInitialize()
+
+  return _get_available_filters(DeviceCategories.VideoInputDevice, prop)
 
 def _get_available_filters(category_clsid, prop):
     system_device_enum = client.CreateObject(clsids.CLSID_SystemDeviceEnum, interface=ICreateDevEnum)
