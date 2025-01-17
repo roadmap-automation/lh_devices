@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, fields, Field
 from .device import DeviceBase, DeviceError
 from .gilson.gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from .logutils import Loggable, MethodLogHandler, MethodLogFormatter
+from .waste import WasteInterfaceBase
 
 # ======== Method base classes ==========
 
@@ -42,10 +43,12 @@ class MethodBase(Loggable):
         2. required configurations
         3. which devices are involved
         4. locks, signals, controls
+        5. waste tracking
     """
 
-    def __init__(self, devices: List[DeviceBase] = []) -> None:
+    def __init__(self, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
         self.devices = devices
+        self.waste_tracker = waste_tracker
         self.error = MethodError()
         self.dead_volume_node: str | None = None
 
@@ -99,7 +102,7 @@ class MethodBase(Loggable):
 
         name: str
 
-    async def run(self, **kwargs) -> None:
+    async def run(self, **kwargs) -> dict:
         """Runs the method with the appropriate keywords
         """
 
@@ -183,8 +186,8 @@ class MethodBase(Loggable):
 
 class MethodBasewithGSIOC(MethodBase):
 
-    def __init__(self, gsioc: GSIOC, devices: List[DeviceBase] = []) -> None:
-        super().__init__(devices)
+    def __init__(self, gsioc: GSIOC, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__(devices, waste_tracker=waste_tracker)
 
         self.gsioc = gsioc
 
@@ -285,8 +288,8 @@ class MethodBasewithGSIOC(MethodBase):
     
 class MethodBaseDeadVolume(MethodBasewithGSIOC):
 
-    def __init__(self, gsioc: GSIOC, devices: List[DeviceBase] = []) -> None:
-        super().__init__(gsioc, devices)
+    def __init__(self, gsioc: GSIOC, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__(gsioc, devices, waste_tracker=waste_tracker)
 
         self.dead_volume: asyncio.Queue = asyncio.Queue(1)
 
