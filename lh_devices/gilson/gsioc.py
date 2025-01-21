@@ -283,6 +283,38 @@ class GSIOC(aioserial.AioSerial):
 
         return True
 
+class SimulatedGSIOC(GSIOC):
+
+    def __init__(self, gsioc_name = 'Simulated GSIOC'):
+        super().__init__(0, 'COM0', 9600, aioserial.PARITY_EVEN, gsioc_name)
+
+    def open(self):
+        ...
+
+    async def listen(self) -> None:
+        """
+        Starts simulated GSIOC listener. Only ends when an interrupt signal is received.
+        """
+
+        logging.info('Starting Simulated GSIOC listener... Ctrl+C to exit.')
+
+        # infinite loop to wait for a command. Break by cancelling the task
+        try:
+            while True:
+
+                await asyncio.wait(0.5)
+
+        except asyncio.CancelledError:
+            logging.info('Closing GSIOC connection...')
+        except Exception:
+            raise
+
+        finally:
+
+            # close serial port before exiting when interrupt is received
+            self.message_queue.empty()
+            self.response_queue.empty()
+
 async def main():
 
     virtual_port = 'COM13'
