@@ -54,6 +54,8 @@ class RoadmapChannelBase(InjectionChannelBase):
                                       syringe_pump: 0},
                                       final_node=loop_valve.valve.nodes[3])
                     }
+        
+        self.methods.update({'PrimeLoop': PrimeLoop(self)})
 
     async def initialize(self) -> None:
         """Overwrites base initialization to ensure valves and pumps are in appropriate mode for homing syringe"""
@@ -99,7 +101,8 @@ class RoadmapChannelBase(InjectionChannelBase):
     async def event_handler(self, command: str, data: Dict) -> None:
 
         if command == 'prime_loop':
-            return await self.primeloop(int(data['n_prime']))
+            return self.run_method('PrimeLoop', dict(name='PrimeLoop', number_of_primes=int(data['n_prime'])))
+            #return await self.primeloop(int(data['n_prime']))
         else:
             return await super().event_handler(command, data)
 

@@ -58,13 +58,14 @@ class RoadmapWasteInterface(WasteInterfaceBase):
         """
 
         post_data = waste.model_dump()
+        headers = {'Content-Type': 'application/json'}
 
         self.logger.debug(f'{self.session._base_url}{self.url_path} => {post_data}')
 
         response = {}
 
         try:
-            async with self.session.post(self.url_path, json=post_data, timeout=self.timeout) as resp:
+            async with self.session.post(self.url_path, headers=headers, json=post_data, timeout=self.timeout) as resp:
                 response_json = await resp.json()
                 self.logger.debug(f'{self.session._base_url}{self.url_path} <= {response_json}')
                 response = WasteResponse(success=True, response=response_json)
