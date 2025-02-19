@@ -6,7 +6,8 @@ from aiohttp import ClientSession, ClientConnectionError
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-from lh_manager.waste_manager.waste import WasteItem, Composition
+from lh_manager.waste_manager.wastedata import WasteItem
+from lh_manager.liquid_handler.bedlayout import Composition
 
 from .logutils import Loggable
 
