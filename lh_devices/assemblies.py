@@ -9,7 +9,7 @@ from dataclasses import asdict
 from .device import DeviceBase, DeviceError, ValvePositionerBase
 from .gilson.gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from .connections import Port, Node, connect_nodes
-from .methods import MethodBase, MethodBasewithGSIOC, MethodRunner, ActiveMethod, MethodResult
+from .methods import MethodBase, MethodBasewithTrigger, MethodBasewithGSIOC, MethodRunner, ActiveMethod, MethodResult
 from .components import ComponentBase
 from .webview import WebNodeBase
 
@@ -524,7 +524,7 @@ class InjectionChannelBase(AssemblyBase):
                 target_method.error.clear(retry=data['retry'])
                 await self.trigger_update()
         elif command == 'send_trigger':
-            target_method: MethodBasewithGSIOC = self.active_methods.get(data['method'], None)['method']
+            target_method: MethodBasewithTrigger = self.active_methods.get(data['method'], None)['method']
             if target_method is not None:
                 target_method.activate_trigger()
         elif command == 'cancel_method':

@@ -184,16 +184,37 @@ class MethodBase(Loggable):
             self.error.retry = retry
             await self.error.pause_until_clear()
 
-class MethodBasewithGSIOC(MethodBase):
+class MethodBasewithTrigger(MethodBase):
+
+    def __init__(self, devices = [], waste_tracker = WasteInterfaceBase()):
+        super().__init__(devices, waste_tracker)
+
+        # enables triggering
+        self.waiting: asyncio.Event = asyncio.Event()
+        self.trigger: asyncio.Event = asyncio.Event()
+
+    async def wait_for_trigger(self) -> None:
+        """Uses waiting and trigger events to signal that assembly is waiting for a trigger signal
+            and then release upon receiving the trigger signal"""
+        
+        self.waiting.set()
+        await self.trigger.wait()
+        self.waiting.clear()
+        self.trigger.clear()
+
+    def activate_trigger(self):
+        """Activates the trigger
+        """
+
+        self.waiting.clear()
+        self.trigger.set()
+
+class MethodBasewithGSIOC(MethodBasewithTrigger):
 
     def __init__(self, gsioc: GSIOC, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
         super().__init__(devices, waste_tracker=waste_tracker)
 
         self.gsioc = gsioc
-
-        # enables triggering
-        self.waiting: asyncio.Event = asyncio.Event()
-        self.trigger: asyncio.Event = asyncio.Event()
 
         # container for gsioc tasks 
         self._gsioc_tasks: List[asyncio.Task] = []
@@ -238,22 +259,6 @@ class MethodBasewithGSIOC(MethodBase):
     async def start(self, **kwargs):
         self.disconnect_gsioc()
         return await super().start(**kwargs)
-
-    async def wait_for_trigger(self) -> None:
-        """Uses waiting and trigger events to signal that assembly is waiting for a trigger signal
-            and then release upon receiving the trigger signal"""
-        
-        self.waiting.set()
-        await self.trigger.wait()
-        self.waiting.clear()
-        self.trigger.clear()
-
-    def activate_trigger(self):
-        """Activates the trigger
-        """
-
-        self.waiting.clear()
-        self.trigger.set()
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
         """Handles GSIOC messages. Put actions into gsioc_command_queue for async processing.
