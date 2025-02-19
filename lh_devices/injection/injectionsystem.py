@@ -14,6 +14,7 @@ from ..connections import Node
 from ..methods import MethodBase, MethodBaseDeadVolume
 from ..multichannel import MultiChannelAssembly
 from ..bubblesensor import BubbleSensorBase
+from ..waste import WasteInterfaceBase
 
 class RoadmapChannelBase(InjectionChannelBase):
 
@@ -53,6 +54,8 @@ class RoadmapChannelBase(InjectionChannelBase):
                                       syringe_pump: 0},
                                       final_node=loop_valve.valve.nodes[3])
                     }
+        
+        self.methods.update({'PrimeLoop': PrimeLoop(self)})
 
     async def initialize(self) -> None:
         """Overwrites base initialization to ensure valves and pumps are in appropriate mode for homing syringe"""
@@ -98,7 +101,8 @@ class RoadmapChannelBase(InjectionChannelBase):
     async def event_handler(self, command: str, data: Dict) -> None:
 
         if command == 'prime_loop':
-            return await self.primeloop(int(data['n_prime']))
+            return self.run_method('PrimeLoop', dict(name='PrimeLoop', number_of_primes=int(data['n_prime'])))
+            #return await self.primeloop(int(data['n_prime']))
         else:
             return await super().event_handler(command, data)
 
@@ -106,8 +110,8 @@ class PrimeLoop(MethodBase):
     """Primes the loop of one ROADMAP channel
     """
 
-    def __init__(self, channel: RoadmapChannelBase) -> None:
-        super().__init__([channel.syringe_pump, channel.loop_valve])
+    def __init__(self, channel: RoadmapChannelBase, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__([channel.syringe_pump, channel.loop_valve], waste_tracker=waste_tracker)
         self.channel = channel
 
     @dataclass
@@ -124,6 +128,7 @@ class PrimeLoop(MethodBase):
         number_of_primes = int(method.number_of_primes)
 
         await self.channel.primeloop(number_of_primes)
+        await self.waste_tracker.submit_water(number_of_primes * self.channel.syringe_pump.syringe_volume / 1000)
 
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
         await self.channel.change_mode('Standby')
@@ -134,8 +139,8 @@ class LoadLoop(MethodBaseDeadVolume):
     """Loads the loop of one ROADMAP channel
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC) -> None:
-        super().__init__(gsioc, [channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys()])
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__(gsioc, [channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.dead_volume_mode: str = 'LoadLoop'
         self.distribution_mode = distribution_mode
@@ -198,6 +203,7 @@ class LoadLoop(MethodBaseDeadVolume):
         # smart dispense the volume required to move plug quickly through loop
         self.logger.info(f'{self.channel.name}.{method.name}: Moving plug through loop, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume + excess_volume)} uL')
         await self.channel.syringe_pump.smart_dispense(self.channel.sample_loop.get_volume() - (pump_volume + excess_volume), self.channel.syringe_pump.max_dispense_flow_rate)
+        await self.waste_tracker.submit_water((self.channel.sample_loop.get_volume() - (pump_volume + excess_volume)) / 1000)
 
         # switch to standby mode
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
@@ -210,8 +216,8 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         Bubble sensor must be powered by digital output 2 (index 1) and read from digital input 2
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC) -> None:
-        super().__init__(gsioc, [channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys()])
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__(gsioc, [channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.dead_volume_mode: str = 'LoadLoop'
         self.distribution_mode = distribution_mode
@@ -284,10 +290,12 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         self.logger.info(f'{self.channel.name}.{method.name}: Moving plug through loop until air gap detected, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume)} uL with minimum volume {min_pump_volume} uL')
         if min_pump_volume > 0:
             actual_volume0 = await self.channel.syringe_pump.smart_dispense(min_pump_volume, self.channel.syringe_pump.max_dispense_flow_rate)
+            await self.waste_tracker.submit_water(actual_volume0 / 1000)
         else:
             actual_volume0 = 0.0
         actual_volume = await self.channel.syringe_pump.smart_dispense(self.channel.sample_loop.get_volume() - pump_volume - min_pump_volume, self.channel.syringe_pump.max_dispense_flow_rate, 6)
         self.logger.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume + actual_volume0} uL')
+        await self.waste_tracker.submit_water(actual_volume / 1000)
 
         async def traverse_air_gap(nominal_air_gap: float, flow_rate: float = self.channel.syringe_pump.max_dispense_flow_rate, volume_step: float = 10) -> float:
             
@@ -302,6 +310,7 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         self.logger.info(f'{self.channel.name}.{method.name}: Traversing air gap...')
         total_air_gap_volume = await traverse_air_gap(air_gap, self.channel.syringe_pump.max_dispense_flow_rate)
         self.logger.info(f'{self.channel.name}.{method.name}: Total air gap volume: {total_air_gap_volume} uL')
+        await self.waste_tracker.submit_water(total_air_gap_volume / 1000)
 
         # switch to standby mode
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
@@ -314,8 +323,8 @@ class InjectLoop(MethodBase):
     """Injects the contents of the loop of one ROADMAP channel
     """
 
-    def __init__(self, channel: RoadmapChannelBase) -> None:
-        super().__init__([channel.syringe_pump, channel.loop_valve])
+    def __init__(self, channel: RoadmapChannelBase, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__([channel.syringe_pump, channel.loop_valve], waste_tracker=waste_tracker)
         self.channel = channel
 
     @dataclass
@@ -339,9 +348,11 @@ class InjectLoop(MethodBase):
         await self.channel.change_mode('PumpInject')
         self.logger.info(f'{self.channel.name}.{method.name}: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
         await self.channel.syringe_pump.smart_dispense(pump_volume, pump_flow_rate)
+        await self.waste_tracker.submit_water(pump_volume / 1000)
 
         # Prime loop
         await self.channel.primeloop()
+        await self.waste_tracker.submit_water(self.channel.syringe_pump.syringe_volume / 1000)
         await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
         self.release_all()
@@ -351,8 +362,8 @@ class InjectLoopBubbleSensor(MethodBase):
         the air gap. Bubble sensor must be powered from digital output 1 (index 0) and read from digital input 1.
     """
 
-    def __init__(self, channel: RoadmapChannelBase) -> None:
-        super().__init__([channel.syringe_pump, channel.loop_valve])
+    def __init__(self, channel: RoadmapChannelBase, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__([channel.syringe_pump, channel.loop_valve], waste_tracker=waste_tracker)
         self.channel = channel
 
     @dataclass
@@ -386,13 +397,16 @@ class InjectLoopBubbleSensor(MethodBase):
         # inject, interrupting if sensor 1 goes low (air detected at end of sample loop)
         if min_pump_volume > 0:
             actual_volume0 = await self.channel.syringe_pump.smart_dispense(min_pump_volume, pump_flow_rate)
+            await self.waste_tracker.submit_water(actual_volume0 / 1000)
         else:
             actual_volume0 = 0.0
         actual_volume = await self.channel.syringe_pump.smart_dispense(pump_volume - min_pump_volume, pump_flow_rate, 5)
+        await self.waste_tracker.submit_water(actual_volume / 1000)
         self.logger.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume + actual_volume0} uL')
 
         # Switch to prime loop mode and flush
         await self.channel.primeloop()
+        await self.waste_tracker.submit_water(self.channel.syringe_pump.syringe_volume / 1000)
         await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
         self.release_all()
@@ -401,8 +415,8 @@ class DirectInjectPrime(MethodBaseDeadVolume):
     """Prime direct inject line
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC) -> None:
-        super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()])
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.dead_volume_mode: str = 'LHPrime'
         self.distribution_mode = distribution_mode
@@ -463,8 +477,8 @@ class DirectInject(MethodBaseDeadVolume):
     """Directly inject from LH to a ROADMAP channel flow cell
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC) -> None:
-        super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()])
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.dead_volume_mode: str = 'LHPrime'
         self.distribution_mode = distribution_mode
@@ -539,8 +553,10 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
     """Directly inject from LH to measurement system through distribution valve and injection system, using bubble sensors to direct flow.
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC, inlet_bubble_sensor: BubbleSensorBase, outlet_bubble_sensor: BubbleSensorBase) -> None:
-        super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()])
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC,
+                 inlet_bubble_sensor: BubbleSensorBase, outlet_bubble_sensor: BubbleSensorBase,
+                 waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.inlet_bubble_sensor = inlet_bubble_sensor
         self.outlet_bubble_sensor = outlet_bubble_sensor
@@ -624,6 +640,9 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         # monitor the process for air in the line
         self.logger.info(f'{self.channel.name}.{method.name}: Starting air monitor on inlet bubble sensor with delay {min_pump_volume/pump_flow_rate: 0.2f} s...')
         monitor_task = asyncio.create_task(self.detect_air_gap(delay=min_pump_volume/pump_flow_rate, callback=self.channel.change_mode('LHPrime')))
+        
+        # submit dead volume to waste (this is the only place it is tracked; total air gap size is not tracked)
+        await self.waste_tracker.submit_water(dead_volume)
 
         # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
@@ -737,6 +756,7 @@ class RoadmapChannelAssembly(MultiChannelAssembly):
                  distribution_system: DistributionBase,
                  gsioc: GSIOC,
                  database_path: str | None = None,
+                 waste_tracker: WasteInterfaceBase = WasteInterfaceBase(),
                  name='') -> None:
         
         super().__init__(channels=channels,
@@ -763,16 +783,16 @@ class RoadmapChannelAssembly(MultiChannelAssembly):
             ch.injection_node = self.injection_port.nodes[0]
 
             # add system-specific methods to the channel
-            ch.methods.update({'LoadLoop': LoadLoop(ch, distribution_system.modes[str(1 + 2 * i)], gsioc),
-                               'LoadLoopBubbleSensor': LoadLoopBubbleSensor(ch, distribution_system.modes[str(1 + 2 * i)], gsioc),
-                               'InjectLoop': InjectLoop(ch),
-                               'InjectLoopBubbleSensor': InjectLoopBubbleSensor(ch),
-                               'DirectInjectPrime': DirectInjectPrime(ch, distribution_system.modes[str(2 + 2 * i)], gsioc),
-                               'DirectInject': DirectInject(ch, distribution_system.modes[str(2 + 2 * i)], gsioc),
-                               'DirectInjectBubbleSensor': DirectInjectBubbleSensor(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor),
+            ch.methods.update({'LoadLoop': LoadLoop(ch, distribution_system.modes[str(1 + 2 * i)], gsioc, waste_tracker=waste_tracker),
+                               'LoadLoopBubbleSensor': LoadLoopBubbleSensor(ch, distribution_system.modes[str(1 + 2 * i)], gsioc, waste_tracker=waste_tracker),
+                               'InjectLoop': InjectLoop(ch, waste_tracker=waste_tracker),
+                               'InjectLoopBubbleSensor': InjectLoopBubbleSensor(ch, waste_tracker=waste_tracker),
+                               'DirectInjectPrime': DirectInjectPrime(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, waste_tracker=waste_tracker),
+                               'DirectInject': DirectInject(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, waste_tracker=waste_tracker),
+                               'DirectInjectBubbleSensor': DirectInjectBubbleSensor(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker),
                                'RoadmapChannelInit': RoadmapChannelInit(ch),
                                'RoadmapChannelSleep': RoadmapChannelSleep(ch),
-                               'PrimeLoop': PrimeLoop(ch)
+                               'PrimeLoop': PrimeLoop(ch, waste_tracker=waste_tracker)
                                })
 
         self.distribution_system = distribution_system

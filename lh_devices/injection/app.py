@@ -13,6 +13,7 @@ from ..webview import run_socket_app
 from ..gilson.gsioc import GSIOC
 from ..components import InjectionPort, FlowCell
 from ..connections import connect_nodes
+from ..waste import RoadmapWasteInterface
 from .injectionsystem import RoadmapChannelBubbleSensor, RoadmapChannelAssembly
 
 LOG_PATH = pathlib.Path(__file__).parent.parent.parent / 'logs'
@@ -95,10 +96,13 @@ async def run_injection_system():
     connect_nodes(mvp1.valve.nodes[5], fc1.outlet_node, 0.0)
     connect_nodes(mvp2.valve.nodes[5], fc2.outlet_node, 0.0)
 
+    waste_tracker = RoadmapWasteInterface('http://localhost:5001/Waste/AddWaste/')
+
     qcmd_system = RoadmapChannelAssembly([channel_0, channel_1, channel_2],
                                             distribution_system=distribution_system,
                                             gsioc=gsioc,
                                             database_path=HISTORY_PATH / 'injection_system.db',
+                                            waste_tracker=waste_tracker,
                                             name='MultiChannel Injection System')
     
     app = qcmd_system.create_web_app(template='roadmap.html')
