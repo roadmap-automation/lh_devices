@@ -24,9 +24,9 @@ from lh_manager.waste_manager.wastedata import Composition, WATER
 class RinseSystemBase(InjectionChannelBase):
 
     def __init__(self,
-                 syringe_pump: HamiltonSyringePump,
-                 source_valve: HamiltonValvePositioner,
-                 selector_valve: HamiltonValvePositioner,
+                 syringe_pump: SyringePumpBase,
+                 source_valve: ValvePositionerBase,
+                 selector_valve: ValvePositionerBase,
                  sample_loop: FlowCell,
                  injection_node: Node | None = None,
                  layout_path: Path | None = None,
