@@ -10,6 +10,7 @@ from aiohttp import web
 from autocontrol.status import Status
 from autocontrol.task_struct import TaskData
 
+from ..device import SyringePumpBase, ValvePositionerBase
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
 from ..history import HistoryDB
 from ..components import FlowCell
