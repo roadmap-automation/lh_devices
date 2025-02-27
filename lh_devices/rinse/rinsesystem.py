@@ -1,19 +1,21 @@
 import asyncio
 import json
 from typing import Coroutine, List, Dict
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
 
 from aiohttp.web_app import Application as Application
+from aiohttp import web
 
-from ..assemblies import AssemblyBase
-from ..device import ValvePositionerBase, SyringePumpBase
-from ..distribution import DistributionBase
+from autocontrol.status import Status
+from autocontrol.task_struct import TaskData
+
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
+from ..history import HistoryDB
 from ..components import FlowCell
-from ..assemblies import InjectionChannelBase, Network, Mode, AssemblyMode
+from ..assemblies import InjectionChannelBase, Mode
 from ..connections import Node
-from ..methods import MethodBase, MethodBasewithTrigger
+from ..methods import MethodBase, MethodResult
 from ..bubblesensor import BubbleSensorBase
 from ..waste import WasteInterfaceBase
 from ..webview import sio
@@ -47,7 +49,7 @@ class RinseSystemBase(InjectionChannelBase):
         self.modes = {'Standby': Mode({source_valve: 0,
                                        selector_valve: 0,
                                         syringe_pump: 0}),
-                      'LoadLoop': Mode({source_valve: 1,
+                      'Aspirate': Mode({source_valve: 1,
                                         syringe_pump: 3}),
                       'AspirateAirGap': Mode({source_valve: 2,
                                               syringe_pump: 3}),
@@ -55,8 +57,11 @@ class RinseSystemBase(InjectionChannelBase):
                       'PumpPrimeLoop': Mode({source_valve: 1,
                                              selector_valve: 8,
                                              syringe_pump: 3}),
-                      'PumpInject': Mode({source_valve: 2,
+                      'PumpDirectInject': Mode({source_valve: 3,
                                           syringe_pump: 3}),
+                      'PumpLoopInject': Mode({source_valve: 4,
+                                        syringe_pump: 3}),
+
                       }
 
     async def initialize(self):
@@ -70,11 +75,11 @@ class RinseSystemBase(InjectionChannelBase):
 
             else:
                 self.logger.info(f'Layout path {self.layout_path} does not exist, creating empty rinse system layout...')
-                rinse_rack = Rack(columns=2, rows=3, max_volume=2000, style='staggered')
-                water_rack = Rack(columns=1, rows=1, max_volume=2000, style='grid')
+                rinse_rack = Rack(columns=2, rows=3, max_volume=2000, style='staggered', wells=[])
+                water_rack = Rack(columns=1, rows=1, max_volume=2000, style='grid', wells=[])
                 self.layout = LHBedLayout(racks={'Water': water_rack,
                                                  'Rinse': rinse_rack})
-                self.layout.add_well_to_rack('Water', Well(composition=WATER, volume=0, well_number=1))
+                self.layout.add_well_to_rack('Water', Well(composition=WATER, volume=0, rack_id='', well_number=1))
                 self.save_layout()
 
         return await super().initialize()
@@ -195,6 +200,7 @@ class RinseSystem(RinseSystemBase):
                  sample_loop: FlowCell,
                  injection_node: Node | None = None,
                  layout_path: Path | None = None,
+                 database_path: Path | None = None,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase(),
                  name='Rinse System'):
         super().__init__(syringe_pump, source_valve, selector_valve, sample_loop, injection_node, layout_path, waste_tracker, name)
@@ -202,3 +208,77 @@ class RinseSystem(RinseSystemBase):
         self.methods.update({'InitiateRinse': InitiateRinse(self, waste_tracker),
                              'PrimeRinseLoop': PrimeRinseLoop(self, waste_tracker),
                             })
+        
+        if database_path is not None:
+            self.method_callbacks.append(self.save_to_database)
+            
+            self.database_path = database_path
+
+    async def save_to_database(self, result: MethodResult):
+        """Saves a method result to the database, only if a task id is associated with it
+
+        Args:
+            result (MethodResult): result to save
+        """
+
+        if result.id is not None:
+            with HistoryDB(self.database_path) as db:
+                db.smart_insert(result)
+
+    def read_from_database(self, id: str) -> MethodResult | None:
+        """Reads a method result from the database
+
+        Args:
+            id (str): id of record
+
+        Returns:
+            MethodResult | None: MethodResult object if id exists, otherwise None
+        """
+
+        with HistoryDB(self.database_path) as db:
+            return db.search_id(id)
+
+    def create_web_app(self, template='roadmap.html') -> Application:
+        app = super().create_web_app(template=template)
+        routes = web.RouteTableDef()
+
+        @routes.post('/SubmitTask')
+        async def handle_task(request: web.Request) -> web.Response:
+            # TODO: turn task into a dataclass; parsing will change
+            # testing: curl -X POST http://localhost:5004/SubmitTask -d "{\"channel\": 0, \"method_name\": \"InitiateRinse\", \"method_data\": {\"name\": \"InitiateRinse\"}}"
+            data = await request.json()
+            task = TaskData(**data)
+            self.logger.info(f'{self.name} received task {task}')
+            method = task.method_data['method_list'][0]
+            method_name: str = method['method_name']
+            method_data: dict = method['method_data']
+            if self.method_runner.is_ready(method_name):
+                self.run_method(method_name, method_data, id=str(task.id))
+                  
+                return web.Response(text='accepted', status=200)
+                
+            return web.Response(text='busy', status=503)
+       
+        @routes.get('/GetStatus')
+        async def get_status(request: web.Request) -> web.Response:
+            
+            statuses = [Status.BUSY if dev.reserved else Status.IDLE for dev in self.devices]
+
+            return web.Response(text=json.dumps(dict(status=Status.IDLE,
+                                          channel_status=statuses)),
+                                status=200)
+
+        @routes.get('/GetTaskData')
+        async def get_task(request: web.Request) -> web.Response:
+            data = await request.json()
+            task = TaskData(**data)
+            
+            record = self.read_from_database(task.id)
+            if record is None:
+                return web.Response(text=f'error: id {task.id} does not exist', status=400)
+
+            return web.Response(text=json.dumps(asdict(record)), status=200)
+        
+        app.add_routes(routes)
+
+        return app
