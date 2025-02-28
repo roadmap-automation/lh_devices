@@ -17,7 +17,6 @@ from ..components import FlowCell
 from ..assemblies import InjectionChannelBase, Mode
 from ..connections import Node
 from ..methods import MethodBase, MethodResult
-from ..bubblesensor import BubbleSensorBase
 from ..waste import WasteInterfaceBase
 from ..webview import sio
 
@@ -31,7 +30,8 @@ class RinseSystemBase(InjectionChannelBase):
                  source_valve: ValvePositionerBase,
                  selector_valve: ValvePositionerBase,
                  sample_loop: FlowCell,
-                 injection_node: Node | None = None,
+                 loop_injection_node: Node | None = None,
+                 direct_injection_node: Node | None = None,
                  layout_path: Path | None = None,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase(),
                  name='Rinse System'):
@@ -40,12 +40,15 @@ class RinseSystemBase(InjectionChannelBase):
         self.source_valve = source_valve
         self.selector_valve = selector_valve
         self.sample_loop = sample_loop
+        self.loop_injection_node = loop_injection_node
+        self.direct_injection_node = direct_injection_node
+        self.waste_tracker = waste_tracker
 
         # define attribute for the bed layout. Will be loaded upon initialization
         self.layout: LHBedLayout | None = None
         self.layout_path = layout_path
 
-        super().__init__([syringe_pump, source_valve, selector_valve], injection_node, name)
+        super().__init__([syringe_pump, source_valve, selector_valve], self.source_valve.valve.nodes[0], name)
 
         self.modes = {'Standby': Mode({source_valve: 0,
                                        selector_valve: 0,
@@ -97,7 +100,14 @@ class RinseSystemBase(InjectionChannelBase):
         await sio.emit(f'layout_{self.id}')
         self.save_layout()
 
-    def get_well(self, composition: Composition) -> int:
+    async def release(self):
+        """Releases reservations on all devices
+        """
+        for dev in self.devices:
+            dev.reserved = False
+            await dev.trigger_update()
+
+    def get_well(self, composition: Composition) -> Well:
         """Searches through existing wells and finds the first one with the appropriate composition
 
         Args:
@@ -133,6 +143,20 @@ class RinseSystemBase(InjectionChannelBase):
         await self.change_mode('LoadLoop')
         await self.selector_valve.move_valve(index)
         await self.syringe_pump.aspirate(volume * 1000, speed * 1000 / 60)
+
+    async def aspirate_plug(self, target_well: Well, volume: float, air_gap_volume: float = 0.1, speed: float=2.0):
+        """Aspirates a plug separated by an air gap
+
+        Args:
+            target_well (Well): Well from which to aspirate
+            volume (float): Volume to aspirate (ml).
+            air_gap_volume (float, optional): Air gap volume (ml) to aspirate. Defaults to 0.1.
+            speed (float, optional): Speed (ml/min). Defaults to 2.0.
+        """
+
+        await self.aspirate_air_gap(air_gap_volume)
+        await self.aspirate_solvent(target_well.well_number, volume, speed)
+        await self.aspirate_air_gap(air_gap_volume)
 
     async def primeloop(self,
                         n_prime: int = 1, # number of repeats
@@ -199,12 +223,11 @@ class RinseSystem(RinseSystemBase):
                  source_valve: HamiltonValvePositioner,
                  selector_valve: HamiltonValvePositioner,
                  sample_loop: FlowCell,
-                 injection_node: Node | None = None,
                  layout_path: Path | None = None,
                  database_path: Path | None = None,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase(),
                  name='Rinse System'):
-        super().__init__(syringe_pump, source_valve, selector_valve, sample_loop, injection_node, layout_path, waste_tracker, name)
+        super().__init__(syringe_pump, source_valve, selector_valve, sample_loop, selector_valve.valve.nodes[0], layout_path, waste_tracker, name)
 
         self.methods.update({'InitiateRinse': InitiateRinse(self, waste_tracker),
                              'PrimeRinseLoop': PrimeRinseLoop(self, waste_tracker),
