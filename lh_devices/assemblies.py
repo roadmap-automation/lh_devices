@@ -446,8 +446,10 @@ class InjectionChannelBase(AssemblyBase):
 
         # Measurement modes
 
-    def get_dead_volume(self, mode: str | None = None) -> float:
-        return super().get_dead_volume(self.injection_node, mode)
+    def get_dead_volume(self, mode: str | None = None, injection_node: Node | None = None) -> float:
+        if injection_node is None:
+            injection_node = self.injection_node
+        return super().get_dead_volume(injection_node, mode)
 
     @property
     def methods(self) -> Dict[str, MethodBase]:
