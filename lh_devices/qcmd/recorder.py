@@ -1,11 +1,15 @@
 import asyncio
+import base64
+import datetime
 import logging
 
+from pathlib import Path
 from typing import Coroutine
 
 from aiohttp import ClientSession, ClientConnectionError
 from urllib.parse import urlsplit
 
+from ..camera.camera import CameraDeviceBase, FIT0819
 from ..gilson.gsioc import GSIOCMessage
 from ..assemblies import AssemblyBasewithGSIOC
 from ..logutils import Loggable
@@ -192,3 +196,55 @@ class QCMDRecorderDevice(AssemblyBasewithGSIOC):
         elif command == 'interrupt':
             if self.recorder.cancel.empty():
                 self.recorder.cancel.put_nowait(False)
+
+class QCMDRecorderDevicewithCamera(QCMDRecorderDevice):
+    """QCMD recording device."""
+
+    def __init__(self,
+                 qcmd_address: str = 'localhost',
+                 qcmd_port: int = 5011,
+                 camera: CameraDeviceBase = CameraDeviceBase(None, None),
+                 camera_save_path: Path = Path('~/Documents').expanduser(),
+                 name='QCMDRecorderDevice') -> None:
+        super().__init__(qcmd_address, qcmd_port, name)
+        self.camera = camera
+        self.camera_save_path = camera_save_path / datetime.datetime.now().strftime('%Y%m%d_%H.%M.%S')
+        self.camera_save_path.mkdir(parents=True, exist_ok=True)
+
+    async def QCMDRecord(self, tag_name: str = '', record_time: str | float = 0.0, sleep_time: str | float = 0.0) -> None:
+        """Executes timer and sends record command to QCMD. Call by sending
+            {"method": "record", {**kwargs}} over GSIOC.
+        """
+
+        record_time = float(record_time)
+        sleep_time = float(sleep_time)
+
+        # wait the full time
+        await self.recorder.record(tag_name, record_time, sleep_time)
+        await self.capture_and_write(tag_name)
+        await self.trigger_update()
+
+    async def capture_and_write(self, tag_name: str = ''):
+        """Captures an image with the camera and writes the data to a timestamped file
+        """
+        await self.camera.capture()
+        formatted_time = self.camera.timestamp.strftime('%Y%m%d_%H.%M.%S')
+        self.logger.info(f'Captured image at {formatted_time} with tag name {tag_name}')
+        try:
+            fn = formatted_time + f'{tag_name}.png'
+            with open(self.camera_save_path / fn, 'wb') as f:
+                f.write(base64.b64decode(self.camera.image))
+        except OSError:
+            self.logger.warning(f'Invalid character in tag name {tag_name}, just printing timestamp')
+            fn = formatted_time + '.png'
+            with open(self.camera_save_path / fn, 'wb') as f:
+                f.write(base64.b64decode(self.camera.image))
+
+if __name__=='__main__':
+
+    async def test_capture():
+        qrd = QCMDRecorderDevicewithCamera('localhost', 5001, FIT0819(None))
+        await qrd.capture_and_write()
+        await qrd.recorder.session.close()
+
+    asyncio.run(test_capture())
