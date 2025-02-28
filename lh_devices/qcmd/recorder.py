@@ -87,7 +87,7 @@ class QCMDRecorder(Timer):
 
         # wait the full time, stopping if a cancel signal is received
         wait_task = asyncio.create_task(self.wait(wait_time))
-        hard_cancel: bool = self.cancel.get()
+        hard_cancel: bool = await self.cancel.get()
         wait_task.cancel()
 
         if not hard_cancel:
