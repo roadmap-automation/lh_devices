@@ -14,6 +14,7 @@ from ..waste import WasteInterfaceBase
 from .channel import RoadmapChannelBubbleSensor
 from .channelmethods import InjectLoop, InjectLoopBubbleSensor, PrimeLoop, RoadmapChannelInit, RoadmapChannelSleep
 from .lhmethods import LoadLoop, LoadLoopBubbleSensor, DirectInject, DirectInjectBubbleSensor, DirectInjectPrime
+from .rinsemethods import RinseLoadLoop, RinseLoadLoopBubbleSensor, RinseDirectInjectPrime, RinseDirectInject, RinseDirectInjectBubbleSensor
 
 class RoadmapChannelAssembly(MultiChannelAssembly):
 
@@ -110,7 +111,12 @@ class RoadmapChannelAssemblyRinse(RoadmapChannelAssembly):
                                'DirectInjectBubbleSensor': DirectInjectBubbleSensor(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker),
                                'RoadmapChannelInit': RoadmapChannelInit(ch),
                                'RoadmapChannelSleep': RoadmapChannelSleep(ch),
-                               'PrimeLoop': PrimeLoop(ch, waste_tracker=waste_tracker)
+                               'PrimeLoop': PrimeLoop(ch, waste_tracker=waste_tracker),
+                               'RinseLoadLoop': RinseLoadLoop(ch, distribution_system, distribution_system.modes[str(1 + 2 * i)], rinse_system, waste_tracker=waste_tracker),
+                               'RinseLoadLoopBubbleSensor': RinseLoadLoopBubbleSensor(ch, distribution_system, distribution_system.modes[str(1 + 2 * i)], rinse_system, waste_tracker=waste_tracker),
+                               'RinseDirectInjectPrime': RinseDirectInjectPrime(ch, distribution_system, distribution_system.modes[str(2 + 2 * i)], rinse_system, waste_tracker=waste_tracker),
+                               'RinseDirectInject': RinseDirectInject(ch, distribution_system, distribution_system.modes[str(2 + 2 * i)], rinse_system, waste_tracker=waste_tracker),
+                               'RinseDirectInjectBubbleSensor': RinseDirectInjectBubbleSensor(ch, distribution_system, distribution_system.modes[str(2 + 2 * i)], rinse_system, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker),
                                })
 
         self.distribution_system = distribution_system
