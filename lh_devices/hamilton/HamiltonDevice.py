@@ -1124,8 +1124,14 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
             self.logger.debug(f'{self.name}: smart dispense dispensing {total_steps} at V {V_dispense}')
             await self.run_until_idle(self.move_valve(self.valve.dispense_position))
             await self.run_until_idle(self.set_speed(dispense_flow_rate))
-            await self.run_syringe_until_idle(self.move_absolute(current_position - total_steps, interrupt_index))
+            try:
+                await self.run_syringe_until_idle(self.move_absolute(current_position - total_steps, interrupt_index))
+            except asyncio.CancelledError:
+                await self.run_until_idle(self.stop())
+                await self.update_syringe_status()
+
             total_steps_dispensed += current_position - self.syringe_position
+            
         else:
             # number of full_volume loops plus remainder
             #print(total_steps, full_stroke)
@@ -1143,7 +1149,12 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
                     self.logger.debug(f'{self.name}: smart dispense dispensing all at V {V_dispense}')
                     await self.run_until_idle(self.move_valve(self.valve.dispense_position))
                     await self.run_until_idle(self.set_speed(dispense_flow_rate))
-                    await self.run_syringe_until_idle(self.move_absolute(0, interrupt_index))
+                    try:
+                        await self.run_syringe_until_idle(self.move_absolute(0, interrupt_index))
+                    except asyncio.CancelledError:
+                        await self.run_until_idle(self.stop())
+                        await self.update_syringe_status()
+
                     position_change = position_after_aspirate - self.syringe_position
                     total_steps_dispensed += position_change
 
