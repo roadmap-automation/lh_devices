@@ -3,7 +3,7 @@
 import asyncio
 import json
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Coroutine
 
 from ..assemblies import AssemblyMode
@@ -32,7 +32,7 @@ class RinseLoadLoop(MethodBase):
     class MethodDefinition(MethodBase.MethodDefinition):
         
         name: str = "RinseLoadLoop"
-        composition: Composition = WATER
+        composition: Composition = field(default_factory=lambda: WATER)
         aspirate_flow_rate: str | float = 1 # mL/min
         flow_rate: str | float = 1 # mL/min
         pump_volume: str | float = 1 # ml
@@ -126,7 +126,7 @@ class RinseLoadLoopBubbleSensor(RinseLoadLoop):
     class MethodDefinition(RinseLoadLoop.MethodDefinition):
         
         name: str = "RinseLoadLoopBubbleSensor"
-        composition: Composition = WATER
+        composition: Composition = field(default_factory=lambda: WATER)
         aspirate_flow_rate: str | float = 1 # mL/min
         flow_rate: str | float = 1 # mL/min
         pump_volume: str | float = 1 # ml
@@ -236,7 +236,7 @@ class RinseDirectInject(MethodBase):
     class MethodDefinition(MethodBase.MethodDefinition):
         
         name: str = "RinseDirectInject"
-        composition: Composition = WATER
+        composition: Composition = field(default_factory=lambda: WATER)
         aspirate_flow_rate: str | float = 1 # mL/min
         flow_rate: str | float = 1 # mL/min
         inject_flow_rate: str | float = 1 #mL/min
@@ -252,7 +252,7 @@ class RinseDirectInject(MethodBase):
 
         method = self.MethodDefinition(**kwargs)
 
-        composition = Composition.model_validate_json(method.composition)
+        composition = Composition.model_validate(method.composition)
         target_well = self.rinse_system.get_well(composition)
 
         air_gap = float(method.air_gap)
@@ -337,7 +337,7 @@ class RinseDirectInjectBubbleSensor(MethodBase):
     class MethodDefinition(MethodBase.MethodDefinition):
         
         name: str = "RinseDirectInjectBubbleSensor"
-        composition: Composition = WATER
+        composition: Composition = field(default_factory=lambda: WATER)
         aspirate_flow_rate: str | float = 1 # mL/min
         flow_rate: str | float = 1 # mL/min
         inject_flow_rate: str | float = 1 #mL/min
@@ -353,7 +353,7 @@ class RinseDirectInjectBubbleSensor(MethodBase):
 
         method = self.MethodDefinition(**kwargs)
 
-        composition = Composition.model_validate_json(method.composition)
+        composition = Composition.model_validate(method.composition)
         target_well = self.rinse_system.get_well(composition)
 
         air_gap = float(method.air_gap)
