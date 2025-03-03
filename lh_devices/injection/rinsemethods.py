@@ -6,9 +6,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Coroutine
 
-from ..assemblies import AssemblyMode
+from ..assemblies import Mode
 from ..bubblesensor import BubbleSensorBase
-from ..distribution import DistributionBase
 from ..methods import MethodBase
 from ..rinse.rinsesystem import RinseSystem
 from ..waste import WasteInterfaceBase, WasteItem, Composition, WATER
@@ -21,12 +20,11 @@ class RinseLoadLoop(MethodBase):
     """Loads the loop of one ROADMAP channel
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_system: DistributionBase, distribution_mode: AssemblyMode, rinse_system: RinseSystem, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
-        super().__init__([channel.syringe_pump, channel.loop_valve, *distribution_system.devices, *rinse_system.devices], waste_tracker=waste_tracker)
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, rinse_system: RinseSystem, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__([channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys(), *rinse_system.devices], waste_tracker=waste_tracker)
         self.channel = channel
         self.rinse_system = rinse_system
         self.distribution_mode = distribution_mode
-        self.distribution_system = distribution_system
 
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
@@ -68,7 +66,6 @@ class RinseLoadLoop(MethodBase):
         loop_rinse_volume = float(method.loop_rinse_volume)
 
         # set source and channel selector and calculate dead volume
-        await self.distribution_system.change_mode('Rinse')
         await self.distribution_mode.activate()
         dead_volume = self.channel.get_dead_volume('LoadLoop', self.rinse_system.loop_injection_node)
         self.logger.info(f'{self.channel.name}.{method.name}: dead volume is {dead_volume}')
@@ -173,13 +170,12 @@ class RinseDirectInjectPrime(MethodBase):
     """Prime direct inject line
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_system: DistributionBase, distribution_mode: AssemblyMode, rinse_system: RinseSystem, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
-        super().__init__([channel.syringe_pump, channel.loop_valve, *distribution_system.devices, *rinse_system.devices], waste_tracker=waste_tracker)
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, rinse_system: RinseSystem, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__([channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys(), *rinse_system.devices], waste_tracker=waste_tracker)
         self.channel = channel
         self.rinse_system = rinse_system
         self.distribution_mode = distribution_mode
-        self.distribution_system = distribution_system
-
+        
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
         
@@ -197,7 +193,6 @@ class RinseDirectInjectPrime(MethodBase):
         pump_flow_rate = float(method.pump_flow_rate)
 
         # set distribution system
-        await self.distribution_system.change_mode('Rinse')
         await self.distribution_mode.activate()
 
         # get dead volume
@@ -225,12 +220,11 @@ class RinseDirectInject(MethodBase):
     """Directly inject from LH to a ROADMAP channel flow cell
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_system: DistributionBase, distribution_mode: AssemblyMode, rinse_system: RinseSystem, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
-        super().__init__([channel.syringe_pump, channel.loop_valve, *distribution_system.devices, *rinse_system.devices], waste_tracker=waste_tracker)
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, rinse_system: RinseSystem, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__([channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys(), *rinse_system.devices], waste_tracker=waste_tracker)
         self.channel = channel
         self.rinse_system = rinse_system
         self.distribution_mode = distribution_mode
-        self.distribution_system = distribution_system
 
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
@@ -264,7 +258,6 @@ class RinseDirectInject(MethodBase):
         flow_rate = float(method.flow_rate)
 
         # set source and channel selector and calculate dead volume
-        await self.distribution_system.change_mode('Rinse')
         await self.distribution_mode.activate()
         dead_volume = self.channel.get_dead_volume('LHPrime', self.rinse_system.direct_injection_node)
         self.logger.info(f'{self.channel.name}.{method.name}: dead volume is {dead_volume}')
@@ -319,17 +312,15 @@ class RinseDirectInjectBubbleSensor(MethodBase):
 
     def __init__(self,
                  channel: RoadmapChannelBase,
-                 distribution_system: DistributionBase,
-                 distribution_mode: AssemblyMode,
+                 distribution_mode: Mode,
                  rinse_system: RinseSystem,
                  inlet_bubble_sensor: BubbleSensorBase,
                  outlet_bubble_sensor: BubbleSensorBase,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
-        super().__init__([channel.syringe_pump, channel.loop_valve, *distribution_system.devices, *rinse_system.devices], waste_tracker=waste_tracker)
+        super().__init__([channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys(), *rinse_system.devices], waste_tracker=waste_tracker)
         self.channel = channel
         self.rinse_system = rinse_system
         self.distribution_mode = distribution_mode
-        self.distribution_system = distribution_system
         self.inlet_bubble_sensor = inlet_bubble_sensor
         self.outlet_bubble_sensor = outlet_bubble_sensor
 
@@ -368,7 +359,6 @@ class RinseDirectInjectBubbleSensor(MethodBase):
         min_pump_volume = 0.5 * pump_volume if pump_volume > 0.2 else 0
 
         # set source and channel selector and calculate dead volume
-        await self.distribution_system.change_mode('Rinse')
         await self.distribution_mode.activate()
         dead_volume = self.channel.get_dead_volume('LHPrime', self.rinse_system.direct_injection_node)
         self.logger.info(f'{self.channel.name}.{method.name}: dead volume is {dead_volume}')

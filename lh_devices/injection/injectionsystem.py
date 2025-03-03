@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 from aiohttp.web_app import Application as Application
 
-from ..assemblies import Network, AssemblyMode
-from ..distribution import DistributionBase
+from ..assemblies import Network, AssemblyMode, ModeGroup
+from ..distribution import DistributionBase, DistributionSingleValveTwoSource
 from ..gilson.gsioc import GSIOC
 from ..multichannel import MultiChannelAssembly
 from ..rinse.rinsesystem import RinseSystem
@@ -73,7 +73,7 @@ class RoadmapChannelAssemblyRinse(RoadmapChannelAssembly):
 
     def __init__(self,
                  channels: List[RoadmapChannelBubbleSensor],
-                 distribution_system: DistributionBase,
+                 distribution_system: DistributionSingleValveTwoSource,
                  rinse_system: RinseSystem,
                  gsioc: GSIOC,
                  database_path: str | None = None,
@@ -102,21 +102,25 @@ class RoadmapChannelAssemblyRinse(RoadmapChannelAssembly):
             ch.injection_node = self.injection_port.nodes[0]
 
             # add system-specific methods to the channel
-            ch.methods.update({'LoadLoop': LoadLoop(ch, distribution_system.modes[str(1 + 2 * i)], gsioc, waste_tracker=waste_tracker),
-                               'LoadLoopBubbleSensor': LoadLoopBubbleSensor(ch, distribution_system.modes[str(1 + 2 * i)], gsioc, waste_tracker=waste_tracker),
+            lh_loop_mode = ModeGroup([distribution_system.modes[str(1 + 2 * i)], distribution_system.modes['LH']])
+            rinse_loop_mode = ModeGroup([distribution_system.modes[str(1 + 2 * i)], distribution_system.modes['Rinse']])
+            lh_direct_mode = ModeGroup([distribution_system.modes[str(2 + 2 * i)], distribution_system.modes['LH']])
+            rinse_direct_mode = ModeGroup([distribution_system.modes[str(2 + 2 * i)], distribution_system.modes['Rinse']])
+            ch.methods.update({'LoadLoop': LoadLoop(ch, lh_loop_mode, gsioc, waste_tracker=waste_tracker),
+                               'LoadLoopBubbleSensor': LoadLoopBubbleSensor(ch, lh_loop_mode, gsioc, waste_tracker=waste_tracker),
                                'InjectLoop': InjectLoop(ch, waste_tracker=waste_tracker),
                                'InjectLoopBubbleSensor': InjectLoopBubbleSensor(ch, waste_tracker=waste_tracker),
-                               'DirectInjectPrime': DirectInjectPrime(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, waste_tracker=waste_tracker),
-                               'DirectInject': DirectInject(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, waste_tracker=waste_tracker),
-                               'DirectInjectBubbleSensor': DirectInjectBubbleSensor(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker),
+                               'DirectInjectPrime': DirectInjectPrime(ch, lh_direct_mode, gsioc, waste_tracker=waste_tracker),
+                               'DirectInject': DirectInject(ch, lh_direct_mode, gsioc, waste_tracker=waste_tracker),
+                               'DirectInjectBubbleSensor': DirectInjectBubbleSensor(ch, lh_direct_mode, gsioc, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker),
                                'RoadmapChannelInit': RoadmapChannelInit(ch),
                                'RoadmapChannelSleep': RoadmapChannelSleep(ch),
                                'PrimeLoop': PrimeLoop(ch, waste_tracker=waste_tracker),
-                               'RinseLoadLoop': RinseLoadLoop(ch, distribution_system, distribution_system.modes[str(1 + 2 * i)], rinse_system, waste_tracker=waste_tracker),
-                               'RinseLoadLoopBubbleSensor': RinseLoadLoopBubbleSensor(ch, distribution_system, distribution_system.modes[str(1 + 2 * i)], rinse_system, waste_tracker=waste_tracker),
-                               'RinseDirectInjectPrime': RinseDirectInjectPrime(ch, distribution_system, distribution_system.modes[str(2 + 2 * i)], rinse_system, waste_tracker=waste_tracker),
-                               'RinseDirectInject': RinseDirectInject(ch, distribution_system, distribution_system.modes[str(2 + 2 * i)], rinse_system, waste_tracker=waste_tracker),
-                               'RinseDirectInjectBubbleSensor': RinseDirectInjectBubbleSensor(ch, distribution_system, distribution_system.modes[str(2 + 2 * i)], rinse_system, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker),
+                               'RinseLoadLoop': RinseLoadLoop(ch, rinse_loop_mode, rinse_system, waste_tracker=waste_tracker),
+                               'RinseLoadLoopBubbleSensor': RinseLoadLoopBubbleSensor(ch, rinse_loop_mode, rinse_system, waste_tracker=waste_tracker),
+                               'RinseDirectInjectPrime': RinseDirectInjectPrime(ch, rinse_direct_mode, rinse_system, waste_tracker=waste_tracker),
+                               'RinseDirectInject': RinseDirectInject(ch, rinse_direct_mode, rinse_system, waste_tracker=waste_tracker),
+                               'RinseDirectInjectBubbleSensor': RinseDirectInjectBubbleSensor(ch, rinse_direct_mode, rinse_system, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker),
                                })
 
         self.distribution_system = distribution_system

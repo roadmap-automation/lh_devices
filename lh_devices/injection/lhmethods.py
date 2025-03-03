@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Coroutine
 
-from ..assemblies import AssemblyMode
+from ..assemblies import Mode
 from ..bubblesensor import BubbleSensorBase
 from ..gilson.gsioc import GSIOC
 from ..methods import MethodBase, MethodBaseDeadVolume
@@ -16,7 +16,7 @@ class LoadLoop(MethodBaseDeadVolume):
     """Loads the loop of one ROADMAP channel
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
         super().__init__(gsioc, [channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.dead_volume_mode: str = 'LoadLoop'
@@ -93,7 +93,7 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         Bubble sensor must be powered by digital output 2 (index 1) and read from digital input 2
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
         super().__init__(gsioc, [channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.dead_volume_mode: str = 'LoadLoop'
@@ -199,7 +199,7 @@ class DirectInjectPrime(MethodBaseDeadVolume):
     """Prime direct inject line
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
         super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.dead_volume_mode: str = 'LHPrime'
@@ -261,7 +261,7 @@ class DirectInject(MethodBaseDeadVolume):
     """Directly inject from LH to a ROADMAP channel flow cell
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
         super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.dead_volume_mode: str = 'LHPrime'
@@ -337,7 +337,7 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
     """Directly inject from LH to measurement system through distribution valve and injection system, using bubble sensors to direct flow.
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: AssemblyMode, gsioc: GSIOC,
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, gsioc: GSIOC,
                  inlet_bubble_sensor: BubbleSensorBase, outlet_bubble_sensor: BubbleSensorBase,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
         super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)

@@ -296,6 +296,17 @@ class AssemblyMode(Mode):
         for mode in modes.values():
             self.valves.update(mode.valves)
 
+class ModeGroup(Mode):
+    """Similar to AssemblyMode but simply collects modes in a list (does not associate them with the parent assembly)
+    """
+
+    def __init__(self, modes: List[Mode | AssemblyMode] = [], valves: Dict[ValvePositionerBase, int] = {}, final_node: Node | None = None) -> None:
+        super().__init__(valves, final_node)
+
+        for mode in modes:
+            self.valves.update(mode.valves)
+
+
 class AssemblyBasewithGSIOC(AssemblyBase):
     """Assembly with support for GSIOC commands
     """
