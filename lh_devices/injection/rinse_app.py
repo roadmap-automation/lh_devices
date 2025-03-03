@@ -5,10 +5,10 @@ import pathlib
 
 from aiohttp.web_app import Application as Application
 
-from ..distribution import DistributionSingleValve
+from ..distribution import DistributionSingleValveTwoSource
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, SMDSensoronHamiltonDevice
 from ..hamilton.HamiltonComm import HamiltonSerial
-from ..valve import LoopFlowValve, DistributionValve, SyringeLValve, SyringeYValve
+from ..valve import LoopFlowValve, DistributionValve, SyringeLValve, SyringeYValve, YValve
 from ..webview import run_socket_app
 from ..gilson.gsioc import GSIOC
 from ..components import InjectionPort, FlowCell
@@ -64,7 +64,7 @@ async def run_injection_system():
     rinse_system = RinseSystem(syringe_pump=syringe_pump,
                                source_valve=source_valve,
                                selector_valve=selector_valve,
-                               sample_loop=rinse_loop,
+                               rinse_loop=rinse_loop,
                                layout_path=LOG_PATH / 'rinse_layout.json',
                                database_path=HISTORY_PATH / 'rinse_system.db',
                                waste_tracker=waste_tracker,
@@ -78,8 +78,9 @@ async def run_injection_system():
     gsioc = GSIOC(62, 'COM13', 19200)
     ser = HamiltonSerial(port='COM9', baudrate=38400)
 
-    # device setup
-    dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Valve')
+    # Distribution system
+    dvp_source = HamiltonValvePositioner(ser, '7', YValve(name='source_valve'), name='Distribution Source Valve')
+    dvp_selection = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Selection Valve')
 
     mvp0 = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve0'), name='Loop Valve 0')
     outlet_bubble_sensor0 = SMDSensoronHamiltonDevice(mvp0, 2, 1)
@@ -114,21 +115,28 @@ async def run_injection_system():
     channel_1 = RoadmapChannelBubbleSensor(mvp1, sp1, fc1, sampleloop1, injection_node=ip.nodes[0], inlet_bubble_sensor=inlet_bubble_sensor1, outlet_bubble_sensor=outlet_bubble_sensor1, name='Channel 1')
     channel_2 = RoadmapChannelBubbleSensor(mvp2, sp2, fc2, sampleloop2, injection_node=ip.nodes[0], inlet_bubble_sensor=inlet_bubble_sensor2, outlet_bubble_sensor=outlet_bubble_sensor2, name='Channel 2')
 
-    distribution_system = DistributionSingleValve(dvp, ip, 'Distribution System')
+    distribution_system = DistributionSingleValveTwoSource(source_valve=dvp_source,
+                                                           distribution_valve=dvp_selection,
+                                                           injection_port=ip,
+                                                           name='Distribution System')
+    
+    # internal distribution system connection
+    connect_nodes(dvp_source.valve.nodes[0], dvp_selection.valve.nodes[0], 50 + 20)
 
-    # connect LH injection port to distribution port valve 0
-    connect_nodes(ip.nodes[0], dvp.valve.nodes[0], 262 + 20)
+    # connect LH and rinse system to distribution system
+    connect_nodes(ip.nodes[0], dvp_source.valve.nodes[1], 262 + 20)
+    connect_nodes(selector_valve.valve.nodes[2], dvp_source.valve.nodes[2], 90 + 20)
 
     # loop inject: connect distribution valve port 1 to syringe pump valve node 2 (top)
-    connect_nodes(dvp.valve.nodes[1], sp0.valve.nodes[2], 73 + 20)
-    connect_nodes(dvp.valve.nodes[3], sp1.valve.nodes[2], 90 + 20)
-    connect_nodes(dvp.valve.nodes[5], sp2.valve.nodes[2], 90 + 20)
+    connect_nodes(dvp_selection.valve.nodes[1], sp0.valve.nodes[2], 73 + 20)
+    connect_nodes(dvp_selection.valve.nodes[3], sp1.valve.nodes[2], 90 + 20)
+    connect_nodes(dvp_selection.valve.nodes[5], sp2.valve.nodes[2], 90 + 20)
 
     # direct inject: connect distribution valve port 2 to loop valve node 3 (top right)
     # volume ~ tubing volume + 60 uL for bubble sensor
-    connect_nodes(dvp.valve.nodes[2], mvp0.valve.nodes[3], 100)
-    connect_nodes(dvp.valve.nodes[4], mvp1.valve.nodes[3], 180)
-    connect_nodes(dvp.valve.nodes[6], mvp2.valve.nodes[3], 180)
+    connect_nodes(dvp_selection.valve.nodes[2], mvp0.valve.nodes[3], 100)
+    connect_nodes(dvp_selection.valve.nodes[4], mvp1.valve.nodes[3], 180)
+    connect_nodes(dvp_selection.valve.nodes[6], mvp2.valve.nodes[3], 180)
 
     # connect syringe pump valve port 3 to sample loop
     connect_nodes(sp0.valve.nodes[3], sampleloop0.inlet_node, 0.0)
@@ -164,8 +172,15 @@ async def run_injection_system():
     runner = await run_socket_app(app, 'localhost', 5003)
 
     try:
-        await rinse_system.initialize()
         await qcmd_system.initialize()
+
+        #from lh_manager.liquid_handler.bedlayout import Composition, Well, Solvent
+        #rinse_system.layout.add_well_to_rack('Rinse', Well(composition=Composition(solvents=[Solvent(name='ethanol', fraction=1)]), volume=2000, rack_id='Rinse', well_number=1))
+        #rinse_system.layout.add_well_to_rack('Rinse', Well(composition=Composition(solvents=[Solvent(name='isopropanol', fraction=1)]), volume=2000, rack_id='Rinse', well_number=2))
+        #rinse_system.layout.add_well_to_rack('Rinse', Well(composition=Composition(solvents=[Solvent(name='D2O', fraction=1)]), volume=2000, rack_id='Rinse', well_number=3))
+        #rinse_system.save_layout()
+
+
         gsioc_task = asyncio.create_task(gsioc.listen())
         await asyncio.Event().wait()
 

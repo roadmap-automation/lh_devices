@@ -1,19 +1,13 @@
 from typing import Dict
-from dataclasses import dataclass
 
 from aiohttp.web_app import Application as Application
 
 from ..device import ValvePositionerBase, SyringePumpBase
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
-from ..gilson.gsioc import GSIOC
 from ..components import FlowCell
 from ..assemblies import InjectionChannelBase, Network, Mode
 from ..connections import Node
-from ..methods import MethodBase
 from ..bubblesensor import BubbleSensorBase
-from ..waste import WasteInterfaceBase
-
-from .channelmethods import InjectLoop, RoadmapChannelInit, PrimeLoop
 
 class RoadmapChannelBase(InjectionChannelBase):
 
@@ -54,8 +48,6 @@ class RoadmapChannelBase(InjectionChannelBase):
                                       final_node=loop_valve.valve.nodes[3])
                     }
         
-        self.methods.update({'PrimeLoop': PrimeLoop(self)})
-
     async def initialize(self) -> None:
         """Overwrites base initialization to ensure valves and pumps are in appropriate mode for homing syringe"""
 
@@ -105,18 +97,7 @@ class RoadmapChannelBase(InjectionChannelBase):
         else:
             return await super().event_handler(command, data)
 
-class RoadmapChannel(RoadmapChannelBase):
-    """Roadmap channel with populated methods
-    """
-
-    def __init__(self, loop_valve: ValvePositionerBase, syringe_pump: SyringePumpBase, flow_cell: FlowCell, sample_loop: FlowCell, injection_node: Node | None = None, name: str = '') -> None:
-        super().__init__(loop_valve, syringe_pump, flow_cell, sample_loop, injection_node, name)
-
-        # add standalone methods
-        self.methods.update({'InjectLoop': InjectLoop(self),
-                        'RoadmapChannelInit': RoadmapChannelInit(self)})
-
-class RoadmapChannelBubbleSensor(RoadmapChannel):
+class RoadmapChannelBubbleSensor(RoadmapChannelBase):
     """Roadmap channel with populated methods
     """
 

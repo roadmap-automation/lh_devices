@@ -88,7 +88,7 @@ class RoadmapChannelAssemblyRinse(RoadmapChannelAssembly):
 
         # Build network
         self.injection_port = distribution_system.injection_port
-        self.network = Network(self.devices + [self.injection_port])
+        self.network = Network(self.devices + [self.injection_port, rinse_system.rinse_loop] + rinse_system.devices)
 
         self.modes.update({'Standby': AssemblyMode(modes={rinse_system: rinse_system.modes['Standby'],
                                                      distribution_system: distribution_system.modes['8']})})

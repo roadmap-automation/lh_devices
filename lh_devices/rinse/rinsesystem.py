@@ -222,12 +222,13 @@ class RinseSystem(RinseSystemBase):
                  syringe_pump: HamiltonSyringePump,
                  source_valve: HamiltonValvePositioner,
                  selector_valve: HamiltonValvePositioner,
-                 sample_loop: FlowCell,
+                 rinse_loop: FlowCell,
                  layout_path: Path | None = None,
                  database_path: Path | None = None,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase(),
                  name='Rinse System'):
-        super().__init__(syringe_pump, source_valve, selector_valve, sample_loop, selector_valve.valve.nodes[0], layout_path, waste_tracker, name)
+        super().__init__(syringe_pump, source_valve, selector_valve, rinse_loop, selector_valve.valve.nodes[0], selector_valve.valve.nodes[0], layout_path, waste_tracker, name)
+        self.rinse_loop = rinse_loop
 
         self.methods.update({'InitiateRinse': InitiateRinse(self, waste_tracker),
                              'PrimeRinseLoop': PrimeRinseLoop(self, waste_tracker),
