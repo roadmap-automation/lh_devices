@@ -83,7 +83,7 @@ class RinseLoadLoop(MethodBase):
             actual_volume = await self.rinse_system.syringe_pump.smart_dispense(air_gap + pump_volume + excess_volume, flow_rate)
             await self.rinse_system.aspirate_air_gap(air_gap)
             await self.rinse_system.change_mode('PumpLoopInject')
-            actual_volume += await self.rinse_system.syringe_pump.smart_dispense(dead_volume + air_gap + loop_rinse_volume)
+            actual_volume += await self.rinse_system.syringe_pump.smart_dispense(dead_volume + air_gap + loop_rinse_volume, flow_rate)
             await self.waste_tracker.submit_water(pump_volume + dead_volume + excess_volume + loop_rinse_volume)
 
         else:
