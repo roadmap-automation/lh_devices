@@ -78,7 +78,7 @@ async def run_injection_system():
                                name='Rinse System')
 
     rinse_app = rinse_system.create_web_app(template='roadmap.html')
-    rinse_runner = await run_socket_app(rinse_app, 'localhost', 5004)
+    rinse_runner = await run_socket_app(rinse_app, 'localhost', 5014)
 
     # ============== Injection System setup =====================
     # serial communications setup
