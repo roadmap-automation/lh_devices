@@ -109,7 +109,7 @@ class RinseLoadLoop(MethodBase):
         await self.channel.change_mode('PumpPrimeLoop')
 
         # smart dispense the volume required to move plug quickly through loop
-        #await self.traverse_loop(method)
+        await self.traverse_loop(method)
 
         # switch to standby mode
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
@@ -192,14 +192,14 @@ class RinseDirectInjectPrime(MethodBase):
         self.reserve_all()
 
         method = self.MethodDefinition(**kwargs)
-        pump_volume = float(method.pump_volume)
-        pump_flow_rate = float(method.pump_flow_rate)
+        pump_volume = float(method.pump_volume) * 1000
+        pump_flow_rate = float(method.pump_flow_rate) * 1000 / 60
 
         # set distribution system
         await self.distribution_mode.activate()
 
         # get dead volume
-        dead_volume = self.channel.get_dead_volume('LHPrime', self.rinse_system.direct_injection_node)
+        dead_volume = self.channel.get_dead_volume('LHPrime', self.rinse_system.direct_injection_port.nodes[0])
 
         # blocks if there's already something in the dead volume queue
         self.logger.info(f'{self.channel.name}.{method.name}: dead volume is {dead_volume}')
@@ -207,6 +207,7 @@ class RinseDirectInjectPrime(MethodBase):
         # Change to prime mode
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await self.channel.change_mode('LHPrime')
+        await self.rinse_system.change_mode('PumpDirectInject')
 
         # prime with water
         actual_volume = await self.rinse_system.syringe_pump.smart_dispense(pump_volume + dead_volume, pump_flow_rate)

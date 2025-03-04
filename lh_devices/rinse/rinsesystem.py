@@ -63,9 +63,9 @@ class RinseSystemBase(InjectionChannelBase):
                       'PumpPrimeLoop': Mode({source_valve: 1,
                                              selector_valve: 8,
                                              syringe_pump: 3}),
-                      'PumpDirectInject': Mode({source_valve: 2,
+                      'PumpDirectInject': Mode({source_valve: 3,
                                           syringe_pump: 3}),
-                      'PumpLoopInject': Mode({source_valve: 2,
+                      'PumpLoopInject': Mode({source_valve: 3,
                                         syringe_pump: 3}),
 
                       }
