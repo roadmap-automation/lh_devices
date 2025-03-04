@@ -96,7 +96,10 @@ class RinseLoadLoop(MethodBase):
             await self.rinse_system.change_mode('PumpLoopInject')
             total_volume = 2 * air_gap + pump_volume + excess_volume + dead_volume + loop_rinse_volume
             actual_volume = await self.rinse_system.syringe_pump.smart_dispense(total_volume, flow_rate)
-            await self.waste_tracker.submit_water(dead_volume)
+
+            rinse_aspirate_dead_volume = max(500, 5 * self.rinse_system._aspirate_dead_volume())
+            await self.rinse_system.primeloop(n_prime=1, volume=rinse_aspirate_dead_volume)
+            await self.waste_tracker.submit_water(dead_volume + rinse_aspirate_dead_volume)
 
         # rinse and distribution systems are done, release relevant devices
         await self.rinse_system.change_mode('Standby')
@@ -303,7 +306,12 @@ class RinseDirectInject(MethodBase):
             await self.channel.change_mode('LHPrime')
             # push excess volume to waste
             await self.rinse_system.syringe_pump.smart_dispense(excess_volume * 0.5 + rinse_volume + air_gap, flow_rate)
-            await self.waste_tracker.submit_water(dead_volume + rinse_volume)
+
+            # rinse aspiration pathway
+            rinse_aspirate_dead_volume = max(500, 5 * self.rinse_system._aspirate_dead_volume())
+            await self.rinse_system.primeloop(n_prime=1, volume=rinse_aspirate_dead_volume)
+            await self.waste_tracker.submit_water(dead_volume + rinse_volume + rinse_aspirate_dead_volume)
+
 
         # switch to standby mode
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
@@ -411,7 +419,10 @@ class RinseDirectInjectBubbleSensor(MethodBase):
             await self.channel.change_mode('LHPrime')
             # push excess volume to waste
             await self.rinse_system.syringe_pump.smart_dispense(excess_volume * 0.5 + rinse_volume + air_gap, flow_rate)
-            await self.waste_tracker.submit_water(dead_volume + rinse_volume)
+            
+            rinse_aspirate_dead_volume = max(500, 5 * self.rinse_system._aspirate_dead_volume())
+            await self.rinse_system.primeloop(n_prime=1, volume=rinse_aspirate_dead_volume)
+            await self.waste_tracker.submit_water(dead_volume + rinse_volume + rinse_aspirate_dead_volume)
         
         # switch to standby mode
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
