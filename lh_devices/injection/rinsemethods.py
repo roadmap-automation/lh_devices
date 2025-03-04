@@ -40,8 +40,8 @@ class RinseLoadLoop(MethodBase):
 
     async def traverse_loop(self, method: MethodDefinition):
 
-        pump_volume = float(method.pump_volume)
-        excess_volume = float(method.excess_volume)
+        pump_volume = float(method.pump_volume) * 1000
+        excess_volume = float(method.excess_volume) * 1000
 
         # smart dispense the volume required to move plug quickly through loop
         self.logger.info(f'{self.channel.name}.{method.name}: Moving plug through loop, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume + excess_volume)} uL')
@@ -58,16 +58,16 @@ class RinseLoadLoop(MethodBase):
         composition = Composition.model_validate(method.composition)
         target_well = self.rinse_system.get_well(composition)
 
-        air_gap = float(method.air_gap)
-        pump_volume = float(method.pump_volume)
-        excess_volume = float(method.excess_volume)
-        aspirate_flow_rate = float(method.aspirate_flow_rate)
-        flow_rate = float(method.flow_rate)
-        loop_rinse_volume = float(method.loop_rinse_volume)
+        air_gap = float(method.air_gap) * 1000
+        pump_volume = float(method.pump_volume) * 1000
+        excess_volume = float(method.excess_volume) * 1000
+        aspirate_flow_rate = float(method.aspirate_flow_rate) * 1000 / 60
+        flow_rate = float(method.flow_rate) * 1000 / 60
+        loop_rinse_volume = float(method.loop_rinse_volume) * 1000
 
         # set source and channel selector and calculate dead volume
         await self.distribution_mode.activate()
-        dead_volume = self.channel.get_dead_volume('LoadLoop', self.rinse_system.loop_injection_node)
+        dead_volume = self.channel.get_dead_volume('LoadLoop', self.rinse_system.loop_injection_port.nodes[0])
         self.logger.info(f'{self.channel.name}.{method.name}: dead volume is {dead_volume}')
 
         # Wait for trigger to switch to LoadLoop mode
@@ -79,25 +79,28 @@ class RinseLoadLoop(MethodBase):
         # aspirate material of interest in rinse system. If water (well_index 0), we are using the contents of the loop and the order is different
         if target_well.rack_id == 'Water':
             await self.rinse_system.aspirate_air_gap(air_gap)
+            await self.rinse_system.change_mode('PumpLoopInject')
             actual_volume = await self.rinse_system.syringe_pump.smart_dispense(air_gap + pump_volume + excess_volume, flow_rate)
             await self.rinse_system.aspirate_air_gap(air_gap)
+            await self.rinse_system.change_mode('PumpLoopInject')
             actual_volume += await self.rinse_system.syringe_pump.smart_dispense(dead_volume + air_gap + loop_rinse_volume)
             await self.waste_tracker.submit_water(pump_volume + dead_volume + excess_volume + loop_rinse_volume)
 
         else:
             # aspirate plug
-            await self.rinse_system.aspirate_plug(target_well, (pump_volume + excess_volume) / 1000, air_gap, aspirate_flow_rate)
+            await self.rinse_system.aspirate_plug(target_well, pump_volume + excess_volume, air_gap, aspirate_flow_rate)
             await self.waste_tracker.submit(WasteItem(composition=target_well.composition,
-                                                      volume=(pump_volume + excess_volume) / 1000))
+                                                      volume=pump_volume + excess_volume))
 
             # push aspirated material through to loop
+            await self.rinse_system.change_mode('PumpLoopInject')
             total_volume = 2 * air_gap + pump_volume + excess_volume + dead_volume + loop_rinse_volume
             actual_volume = await self.rinse_system.syringe_pump.smart_dispense(total_volume, flow_rate)
             await self.waste_tracker.submit_water(dead_volume)
 
         # rinse and distribution systems are done, release relevant devices
-        self.rinse_system.change_mode('Standby')
-        self.rinse_system.release()
+        await self.rinse_system.change_mode('Standby')
+        await self.rinse_system.release()
         for valve in self.distribution_mode.valves.keys():
             valve.reserved = False
             await valve.trigger_update()
@@ -106,7 +109,7 @@ class RinseLoadLoop(MethodBase):
         await self.channel.change_mode('PumpPrimeLoop')
 
         # smart dispense the volume required to move plug quickly through loop
-        self.traverse_loop(method)
+        #await self.traverse_loop(method)
 
         # switch to standby mode
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
