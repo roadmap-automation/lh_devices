@@ -13,8 +13,8 @@ from autocontrol.task_struct import TaskData
 from ..device import SyringePumpBase, ValvePositionerBase
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
 from ..history import HistoryDB
-from ..components import FlowCell
-from ..assemblies import InjectionChannelBase, Mode
+from ..components import FlowCell, InjectionPort
+from ..assemblies import InjectionChannelBase, Mode, Network
 from ..connections import Node
 from ..methods import MethodBase, MethodResult
 from ..waste import WasteInterfaceBase
@@ -30,8 +30,8 @@ class RinseSystemBase(InjectionChannelBase):
                  source_valve: ValvePositionerBase,
                  selector_valve: ValvePositionerBase,
                  sample_loop: FlowCell,
-                 loop_injection_node: Node | None = None,
-                 direct_injection_node: Node | None = None,
+                 loop_injection_port: InjectionPort | None = None,
+                 direct_injection_port: InjectionPort | None = None,
                  layout_path: Path | None = None,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase(),
                  name='Rinse System'):
@@ -40,15 +40,17 @@ class RinseSystemBase(InjectionChannelBase):
         self.source_valve = source_valve
         self.selector_valve = selector_valve
         self.sample_loop = sample_loop
-        self.loop_injection_node = loop_injection_node
-        self.direct_injection_node = direct_injection_node
+        self.loop_injection_port = loop_injection_port
+        self.direct_injection_port = direct_injection_port
         self.waste_tracker = waste_tracker
 
         # define attribute for the bed layout. Will be loaded upon initialization
         self.layout: LHBedLayout | None = None
         self.layout_path = layout_path
 
-        super().__init__([syringe_pump, source_valve, selector_valve], self.source_valve.valve.nodes[0], name)
+        super().__init__([syringe_pump, source_valve, selector_valve], loop_injection_port.nodes[0], name)
+
+        self.network = Network(self.devices + [loop_injection_port, direct_injection_port])
 
         self.modes = {'Standby': Mode({source_valve: 0,
                                        selector_valve: 0,
@@ -61,9 +63,9 @@ class RinseSystemBase(InjectionChannelBase):
                       'PumpPrimeLoop': Mode({source_valve: 1,
                                              selector_valve: 8,
                                              syringe_pump: 3}),
-                      'PumpDirectInject': Mode({source_valve: 3,
+                      'PumpDirectInject': Mode({source_valve: 2,
                                           syringe_pump: 3}),
-                      'PumpLoopInject': Mode({source_valve: 4,
+                      'PumpLoopInject': Mode({source_valve: 2,
                                         syringe_pump: 3}),
 
                       }
@@ -120,39 +122,47 @@ class RinseSystemBase(InjectionChannelBase):
         wells = find_composition(composition, self.layout.get_all_wells())
         return wells[0]
     
-    async def aspirate_air_gap(self, air_gap_volume: float = 0.1, speed: float=2.0):
+    async def aspirate_air_gap(self, air_gap_volume: float, speed: float | None = None):
         """Aspirates an air gap into the sample loop
 
         Args:
-            air_gap_volume (float, optional): Air gap volume (ml) to aspirate. Defaults to 0.1.
-            speed (float, optional): Speed (ml/min). Defaults to 2.0.
+            air_gap_volume (float): Air gap volume (ul) to aspirate
+            speed (float, optional): Speed (ul / s). Defaults to max aspirate flow rate
         """
         
         await self.change_mode('AspirateAirGap')
-        await self.syringe_pump.aspirate(air_gap_volume * 1000, speed * 1000 / 60)
+        if speed is None:
+            speed = self.syringe_pump.max_aspirate_flow_rate
+        await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.aspirate(air_gap_volume, speed))
 
-    async def aspirate_solvent(self, index: int, volume: float, speed: float=2.0):
+    async def aspirate_solvent(self, index: int, volume: float, speed: float | None = None):
         """Aspirates solvent into the sample loop
 
         Args:
             index (int): index of solvent to aspirate
-            volume (float): Volume to aspirate (ml).
-            speed (float, optional): Speed (ml/min). Defaults to 2.0.
+            volume (float): Volume to aspirate (ul).
+            speed (float, optional): Speed (ul / s). Defaults to max aspirate flow rate
         """
 
-        await self.change_mode('LoadLoop')
+        await self.change_mode('Aspirate')
         await self.selector_valve.move_valve(index)
-        await self.syringe_pump.aspirate(volume * 1000, speed * 1000 / 60)
+        if speed is None:
+            speed = self.syringe_pump.max_aspirate_flow_rate
 
-    async def aspirate_plug(self, target_well: Well, volume: float, air_gap_volume: float = 0.1, speed: float=2.0):
+        await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.aspirate(volume, speed))
+
+    async def aspirate_plug(self, target_well: Well, volume: float, air_gap_volume: float = 0.1, speed: float | None = None):
         """Aspirates a plug separated by an air gap
 
         Args:
             target_well (Well): Well from which to aspirate
-            volume (float): Volume to aspirate (ml).
-            air_gap_volume (float, optional): Air gap volume (ml) to aspirate. Defaults to 0.1.
-            speed (float, optional): Speed (ml/min). Defaults to 2.0.
+            volume (float): Volume to aspirate (ul).
+            air_gap_volume (float, optional): Air gap volume (ul) to aspirate
+            speed (float, optional): Speed (ul / s). Defaults to max aspirate flow rate
         """
+
+        if speed is None:
+            speed = self.syringe_pump.max_aspirate_flow_rate
 
         await self.aspirate_air_gap(air_gap_volume)
         await self.aspirate_solvent(target_well.well_number, volume, speed)
@@ -223,11 +233,13 @@ class RinseSystem(RinseSystemBase):
                  source_valve: HamiltonValvePositioner,
                  selector_valve: HamiltonValvePositioner,
                  rinse_loop: FlowCell,
+                 loop_injection_port: InjectionPort | None = None,
+                 direct_injection_port: InjectionPort | None = None,
                  layout_path: Path | None = None,
                  database_path: Path | None = None,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase(),
                  name='Rinse System'):
-        super().__init__(syringe_pump, source_valve, selector_valve, rinse_loop, selector_valve.valve.nodes[0], selector_valve.valve.nodes[0], layout_path, waste_tracker, name)
+        super().__init__(syringe_pump, source_valve, selector_valve, rinse_loop, loop_injection_port, direct_injection_port, layout_path, waste_tracker, name)
         self.rinse_loop = rinse_loop
 
         self.methods.update({'InitiateRinse': InitiateRinse(self, waste_tracker),
@@ -307,3 +319,19 @@ class RinseSystem(RinseSystemBase):
         app.add_routes(routes)
 
         return app
+    
+    async def get_info(self) -> Dict:
+        d = await super().get_info()
+
+        d['controls'] = d['controls'] | {'prime_loop': {'type': 'number',
+                                                'text': 'Prime loop repeats: '}}
+        
+        return d
+    
+    async def event_handler(self, command: str, data: Dict) -> None:
+
+        if command == 'prime_loop':
+            return self.run_method('PrimeRinseLoop', dict(name='PrimeRinseLoop', number_of_primes=int(data['n_prime'])))
+            #return await self.primeloop(int(data['n_prime']))
+        else:
+            return await super().event_handler(command, data)

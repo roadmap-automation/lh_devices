@@ -88,7 +88,7 @@ class RoadmapChannelAssemblyRinse(RoadmapChannelAssembly):
 
         # Build network
         self.injection_port = distribution_system.injection_port
-        self.network = Network(self.devices + [self.injection_port, rinse_system.rinse_loop] + rinse_system.devices)
+        self.network = Network(self.devices + [self.injection_port, rinse_system.rinse_loop, rinse_system.loop_injection_port, rinse_system.direct_injection_port] + rinse_system.devices)
 
         self.modes.update({'Standby': AssemblyMode(modes={rinse_system: rinse_system.modes['Standby'],
                                                      distribution_system: distribution_system.modes['8']})})
@@ -122,7 +122,7 @@ class RoadmapChannelAssemblyRinse(RoadmapChannelAssembly):
                                'RinseDirectInject': RinseDirectInject(ch, rinse_direct_mode, rinse_system, waste_tracker=waste_tracker),
                                'RinseDirectInjectBubbleSensor': RinseDirectInjectBubbleSensor(ch, rinse_direct_mode, rinse_system, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker),
                                })
-
+            
         self.distribution_system = distribution_system
         self.rinse_system = rinse_system
 

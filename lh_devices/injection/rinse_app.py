@@ -52,12 +52,17 @@ async def run_injection_system():
     
     rinse_loop = FlowCell(5000., 'rinse_loop')
 
+    # hackish attempt to ensure dead volume tracing goes the correct direction
+    rinse_ip = InjectionPort('loop_injection_port')
+    rinse_ip.injection_port = source_valve.valve.ports[2]
+    rinse_ip._generate_nodes()
+
     # connect loop to syringe pump and selector valve
     connect_nodes(rinse_loop.inlet_node, syringe_pump.valve.nodes[2], 0.0)
     connect_nodes(rinse_loop.outlet_node, source_valve.valve.nodes[0], 0.0)
 
     # connect selector and source valves
-    connect_nodes(selector_valve.valve.nodes[0], source_valve.valve.nodes[0], 50.0)
+    connect_nodes(selector_valve.valve.nodes[0], source_valve.valve.nodes[1], 50.0)
 
     waste_tracker = RoadmapWasteInterface('http://localhost:5001/Waste/AddWaste/')
 
@@ -65,6 +70,8 @@ async def run_injection_system():
                                source_valve=source_valve,
                                selector_valve=selector_valve,
                                rinse_loop=rinse_loop,
+                               loop_injection_port=rinse_ip,
+                               direct_injection_port=rinse_ip,
                                layout_path=LOG_PATH / 'rinse_layout.json',
                                database_path=HISTORY_PATH / 'rinse_system.db',
                                waste_tracker=waste_tracker,
@@ -125,7 +132,7 @@ async def run_injection_system():
 
     # connect LH and rinse system to distribution system
     connect_nodes(ip.nodes[0], dvp_source.valve.nodes[1], 262 + 20)
-    connect_nodes(selector_valve.valve.nodes[2], dvp_source.valve.nodes[2], 90 + 20)
+    connect_nodes(rinse_ip.nodes[0], dvp_source.valve.nodes[2], 90 + 20)
 
     # loop inject: connect distribution valve port 1 to syringe pump valve node 2 (top)
     connect_nodes(dvp_selection.valve.nodes[1], sp0.valve.nodes[2], 73 + 20)
