@@ -166,6 +166,8 @@ class RinseSystemBase(InjectionChannelBase):
 
         await self.aspirate_air_gap(air_gap_volume)
         await self.aspirate_solvent(target_well.well_number, volume, speed)
+        target_well.volume -= volume
+        self.save_layout()
         await self.aspirate_air_gap(air_gap_volume)
 
     async def primeloop(self,
