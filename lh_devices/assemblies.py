@@ -54,7 +54,7 @@ class Network:
         # iterate through the network
         while True:
             # find node associated with previous port
-            #self.logger.debug((current_node, current_port))
+            #print((current_node, current_port))
             new_port, dv = current_node.trace_connection(previous_port)
 
             if len(new_port) == 0:
@@ -148,6 +148,8 @@ class AssemblyBase(WebNodeBase):
             self.logger.info(f'{self.name}: Changing mode to {mode}')
             await self.move_valves(self.modes[mode].valves)
             self.current_mode = mode
+            for valve in self.modes[mode].valves:
+                await valve.trigger_update()
         else:
             self.logger.error(f'Mode {mode} not in modes dictionary {self.modes}')
 
@@ -300,11 +302,13 @@ class ModeGroup(Mode):
     """Similar to AssemblyMode but simply collects modes in a list (does not associate them with the parent assembly)
     """
 
-    def __init__(self, modes: List[Mode | AssemblyMode] = [], valves: Dict[ValvePositionerBase, int] = {}, final_node: Node | None = None) -> None:
-        super().__init__(valves, final_node)
-
+    def __init__(self, modes: List[Mode | AssemblyMode] = [], final_node: Node | None = None) -> None:
+        
+        valves = {}
         for mode in modes:
-            self.valves.update(mode.valves)
+            valves.update(mode.valves)
+
+        super().__init__(valves, final_node)
 
 
 class AssemblyBasewithGSIOC(AssemblyBase):
