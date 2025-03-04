@@ -253,17 +253,17 @@ class RinseDirectInject(MethodBase):
         composition = Composition.model_validate(method.composition)
         target_well = self.rinse_system.get_well(composition)
 
-        air_gap = float(method.air_gap)
-        pump_volume = float(method.pump_volume)
-        excess_volume = float(method.excess_volume)
-        rinse_volume = float(method.rinse_volume)
-        aspirate_flow_rate = float(method.aspirate_flow_rate)
-        inject_flow_rate = float(method.inject_flow_rate)
-        flow_rate = float(method.flow_rate)
+        air_gap = float(method.air_gap) * 1000
+        pump_volume = float(method.pump_volume) * 1000
+        excess_volume = float(method.excess_volume) * 1000
+        rinse_volume = float(method.rinse_volume) * 1000
+        aspirate_flow_rate = float(method.aspirate_flow_rate) * 1000 / 60
+        inject_flow_rate = float(method.inject_flow_rate) * 1000 / 60
+        flow_rate = float(method.flow_rate) * 1000 / 60
 
         # set source and channel selector and calculate dead volume
         await self.distribution_mode.activate()
-        dead_volume = self.channel.get_dead_volume('LHPrime', self.rinse_system.direct_injection_node)
+        dead_volume = self.channel.get_dead_volume('LHPrime', self.rinse_system.direct_injection_port.nodes[0])
         self.logger.info(f'{self.channel.name}.{method.name}: dead volume is {dead_volume}')
 
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
@@ -274,6 +274,7 @@ class RinseDirectInject(MethodBase):
             # aspirate air gap
             await self.rinse_system.aspirate_air_gap(air_gap)
             # move air gap through the dead volume
+            await self.rinse_system.change_mode('PumpDirectInject')
             actual_volume = await self.rinse_system.syringe_pump.smart_dispense(dead_volume + air_gap + 0.5 * excess_volume, flow_rate)
             # switch to inject mode
             await self.channel.change_mode('LHInject')
@@ -292,6 +293,7 @@ class RinseDirectInject(MethodBase):
                                                       volume=(pump_volume + excess_volume) / 1000))
 
             # move plug through the dead volume
+            await self.rinse_system.change_mode('PumpDirectInject')
             await self.rinse_system.syringe_pump.smart_dispense(dead_volume + air_gap + 0.5 * excess_volume, flow_rate)
             # switch to inject mode
             await self.channel.change_mode('LHInject')
