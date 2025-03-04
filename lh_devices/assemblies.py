@@ -54,14 +54,15 @@ class Network:
         # iterate through the network
         while True:
             # find node associated with previous port
-            #print((current_node, current_port))
             new_port, dv = current_node.trace_connection(previous_port)
 
             if len(new_port) == 0:
                 logging.warning('Warning: chain broken, destination_port not reached, dead volume incomplete')
                 break
 
-            if len(new_port) > 1:
+            if destination_port in new_port:
+                dv = [dv[new_port.index(destination_port)]]
+            elif len(new_port) > 1:
                 logging.warning('Warning: ambiguous connection chain, dead volume incomplete')
                 break
             
