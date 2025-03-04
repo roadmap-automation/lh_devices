@@ -36,7 +36,7 @@ class RinseLoadLoop(MethodBase):
         pump_volume: str | float = 1 # ml
         excess_volume: str | float = 0.1 #mL
         air_gap: str | float = 0.1 #ml
-        loop_rinse_volume: str | float = 0.5 # ml
+        rinse_volume: str | float = 0.5 # ml
 
     async def traverse_loop(self, method: MethodDefinition):
 
@@ -63,7 +63,7 @@ class RinseLoadLoop(MethodBase):
         excess_volume = float(method.excess_volume) * 1000
         aspirate_flow_rate = float(method.aspirate_flow_rate) * 1000 / 60
         flow_rate = float(method.flow_rate) * 1000 / 60
-        loop_rinse_volume = float(method.loop_rinse_volume) * 1000
+        rinse_volume = float(method.rinse_volume) * 1000
 
         # set source and channel selector and calculate dead volume
         await self.distribution_mode.activate()
@@ -83,8 +83,8 @@ class RinseLoadLoop(MethodBase):
             actual_volume = await self.rinse_system.syringe_pump.smart_dispense(air_gap + pump_volume + excess_volume, flow_rate)
             await self.rinse_system.aspirate_air_gap(air_gap)
             await self.rinse_system.change_mode('PumpLoopInject')
-            actual_volume += await self.rinse_system.syringe_pump.smart_dispense(dead_volume + air_gap + loop_rinse_volume, flow_rate)
-            await self.waste_tracker.submit_water(pump_volume + dead_volume + excess_volume + loop_rinse_volume)
+            actual_volume += await self.rinse_system.syringe_pump.smart_dispense(dead_volume + air_gap + rinse_volume, flow_rate)
+            await self.waste_tracker.submit_water(pump_volume + dead_volume + excess_volume + rinse_volume)
 
         else:
             # aspirate plug
@@ -94,7 +94,7 @@ class RinseLoadLoop(MethodBase):
 
             # push aspirated material through to loop
             await self.rinse_system.change_mode('PumpLoopInject')
-            total_volume = 2 * air_gap + pump_volume + excess_volume + dead_volume + loop_rinse_volume
+            total_volume = 2 * air_gap + pump_volume + excess_volume + dead_volume + rinse_volume
             actual_volume = await self.rinse_system.syringe_pump.smart_dispense(total_volume, flow_rate)
 
             rinse_aspirate_dead_volume = max(500, 5 * self.rinse_system._aspirate_dead_volume())
@@ -135,13 +135,12 @@ class RinseLoadLoopBubbleSensor(RinseLoadLoop):
         pump_volume: str | float = 1 # ml
         excess_volume: str | float = 0.1 #mL
         air_gap: str | float = 0.1 #ml
-        loop_rinse_volume: str | float = 0.5 # ml
+        rinse_volume: str | float = 0.5 # ml
 
     async def traverse_loop(self, method: MethodDefinition):
 
-        air_gap = float(method.air_gap)
-        pump_volume = float(method.pump_volume)
-        excess_volume = float(method.excess_volume)
+        air_gap = float(method.air_gap) * 1000
+        pump_volume = float(method.pump_volume) * 1000
 
         # set minimum pump volume before checking for bubbles
         min_pump_volume = 0.5 * pump_volume if pump_volume > 200 else 0
@@ -186,7 +185,7 @@ class RinseDirectInjectPrime(MethodBase):
     class MethodDefinition(MethodBase.MethodDefinition):
         
         name: str = "DirectInjectPrime"
-        pump_volume: str | float = 1, # uL
+        pump_volume: str | float = 1, # mL
         pump_flow_rate: str | float = 1, # mL/min        
 
     async def run(self, **kwargs):
