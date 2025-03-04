@@ -56,7 +56,8 @@ class RinseSystemBase(InjectionChannelBase):
                                        selector_valve: 0,
                                         syringe_pump: 0}),
                       'Aspirate': Mode({source_valve: 1,
-                                        syringe_pump: 3}),
+                                        syringe_pump: 3},
+                                        final_node=self.source_valve.valve.nodes[1]),
                       'AspirateAirGap': Mode({source_valve: 2,
                                               syringe_pump: 3}),
                       'PumpAspirate': Mode({syringe_pump: 1}),
@@ -122,6 +123,16 @@ class RinseSystemBase(InjectionChannelBase):
         wells = find_composition(composition, self.layout.get_all_wells())
         return wells[0]
     
+    def _aspirate_dead_volume(self) -> float:
+        """Returns the volume that is left in the lines after aspirating a plug from a solvent bottle
+
+        Returns:
+            float: dead volume in ul
+
+        """
+
+        return 0
+    
     async def aspirate_air_gap(self, air_gap_volume: float, speed: float | None = None):
         """Aspirates an air gap into the sample loop
 
@@ -135,24 +146,35 @@ class RinseSystemBase(InjectionChannelBase):
             speed = self.syringe_pump.max_aspirate_flow_rate
         await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.aspirate(air_gap_volume, speed))
 
-    async def aspirate_solvent(self, index: int, volume: float, speed: float | None = None):
+    async def aspirate_solvent(self, index: int, volume: float, speed: float | None = None) -> float:
         """Aspirates solvent into the sample loop
 
         Args:
             index (int): index of solvent to aspirate
             volume (float): Volume to aspirate (ul).
             speed (float, optional): Speed (ul / s). Defaults to max aspirate flow rate
+
+        Returns:
+            float: actual volume aspirated (ul)
         """
 
         await self.change_mode('Aspirate')
         await self.selector_valve.move_valve(index)
+        await self.selector_valve.trigger_update()
+
+        # calculate dead volume. Note that if this fails, it means the mode is not correct for aspiration anyway.
+        dead_volume = self._aspirate_dead_volume()
+        self.logger.info(f'{self.name}: aspiration dead volume is {dead_volume}')
+
         if speed is None:
             speed = self.syringe_pump.max_aspirate_flow_rate
 
-        await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.aspirate(volume, speed))
+        await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.aspirate(volume + dead_volume, speed))
+
+        return volume + dead_volume
 
     async def aspirate_plug(self, target_well: Well, volume: float, air_gap_volume: float = 0.1, speed: float | None = None):
-        """Aspirates a plug separated by an air gap
+        """Aspirates a plug separated by an air gap. Automatically calculates dead volume from network.
 
         Args:
             target_well (Well): Well from which to aspirate
@@ -165,8 +187,8 @@ class RinseSystemBase(InjectionChannelBase):
             speed = self.syringe_pump.max_aspirate_flow_rate
 
         await self.aspirate_air_gap(air_gap_volume)
-        await self.aspirate_solvent(target_well.well_number, volume, speed)
-        target_well.volume -= volume
+        actual_volume = await self.aspirate_solvent(target_well.well_number, volume, speed)
+        target_well.volume -= actual_volume
         self.save_layout()
         await self.aspirate_air_gap(air_gap_volume)
 
@@ -252,6 +274,9 @@ class RinseSystem(RinseSystemBase):
             self.method_callbacks.append(self.save_to_database)
             
             self.database_path = database_path
+
+    def _aspirate_dead_volume(self):
+        return self.get_dead_volume('Aspirate', self.selector_valve.valve.nodes[0])
 
     async def save_to_database(self, result: MethodResult):
         """Saves a method result to the database, only if a task id is associated with it
