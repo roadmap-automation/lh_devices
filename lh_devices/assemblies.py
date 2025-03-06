@@ -495,10 +495,10 @@ class InjectionChannelBase(AssemblyBase):
 
     def run_method(self, method_name: str, method_data: dict, id: str | None = None) -> None:
 
-        if not self.methods[method_name].is_ready():
-            self.logger.error(f'{self.name}: not all devices in {method_name} are available')
-        else:
-            self.method_runner.run_method(self.process_method(method_name, method_data, id), id, method_name)
+        #if not self.methods[method_name].is_ready():
+        #    self.logger.error(f'{self.name}: not all devices in {method_name} are available')
+        #else:
+        self.method_runner.run_method(self.process_method(method_name, method_data, id), id, method_name)
 
     @property
     def error(self) -> DeviceError | None:

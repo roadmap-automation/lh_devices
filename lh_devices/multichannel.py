@@ -77,12 +77,12 @@ class MultiChannelAssembly(NestedAssemblyBase):
                 method = task.method_data['method_list'][0]
                 method_name: str = method['method_name']
                 method_data: dict = method['method_data']
-                if self.channels[channel].method_runner.is_ready(method_name):
-                    self.channels[channel].run_method(method_name, method_data, id=str(task.id))
-                   
-                    return web.Response(text='accepted', status=200)
+                #if self.channels[channel].method_runner.is_ready(method_name):
+                self.channels[channel].run_method(method_name, method_data, id=str(task.id))
                 
-                return web.Response(text='busy', status=503)
+                return web.Response(text='accepted', status=200)
+                
+                #return web.Response(text='busy', status=503)
             
             return web.Response(text=f'error: channel {channel} does not exist', status=400)
         
