@@ -144,6 +144,9 @@ class RinseLoadLoopBubbleSensor(RinseLoadLoop):
         # set minimum pump volume before checking for bubbles
         min_pump_volume = 0.5 * pump_volume if pump_volume > 200 else 0
 
+        # Power the bubble sensor
+        await self.channel.syringe_pump.set_digital_output(1, True)
+
         # smart dispense the volume required to move plug quickly through loop, interrupting if sensor 2 goes low (air detected)
         self.logger.info(f'{self.channel.name}.{method.name}: Moving plug through loop until air gap detected, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume)} uL with minimum volume {min_pump_volume} uL')
         if min_pump_volume > 0:
