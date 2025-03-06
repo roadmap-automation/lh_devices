@@ -16,8 +16,8 @@ from ..history import HistoryDB
 from ..components import FlowCell, InjectionPort
 from ..assemblies import InjectionChannelBase, Mode, Network
 from ..connections import Node
-from ..methods import MethodBase, MethodResult
-from ..waste import WasteInterfaceBase
+from ..methods import MethodBase, MethodResult, MethodError
+from ..waste import WasteInterfaceBase, WasteItem
 from ..webview import sio
 
 from lh_manager.liquid_handler.bedlayout import LHBedLayout, find_composition, Rack, Well
@@ -55,13 +55,13 @@ class RinseSystemBase(InjectionChannelBase):
         self.modes = {'Standby': Mode({source_valve: 0,
                                        selector_valve: 0,
                                         syringe_pump: 0}),
-                      'Aspirate': Mode({source_valve: 1,
+                      'Aspirate': Mode({source_valve: 4,
                                         syringe_pump: 3},
-                                        final_node=self.source_valve.valve.nodes[1]),
-                      'AspirateAirGap': Mode({source_valve: 2,
+                                        final_node=self.source_valve.valve.nodes[4]),
+                      'AspirateAirGap': Mode({source_valve: 1,
                                               syringe_pump: 3}),
                       'PumpAspirate': Mode({syringe_pump: 1}),
-                      'PumpPrimeLoop': Mode({source_valve: 1,
+                      'PumpPrimeLoop': Mode({source_valve: 4,
                                              selector_valve: 8,
                                              syringe_pump: 3}),
                       'PumpDirectInject': Mode({source_valve: 3,
@@ -146,13 +146,14 @@ class RinseSystemBase(InjectionChannelBase):
             speed = self.syringe_pump.max_aspirate_flow_rate
         await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.aspirate(air_gap_volume, speed))
 
-    async def aspirate_solvent(self, index: int, volume: float, speed: float | None = None) -> float:
+    async def aspirate_solvent(self, index: int, volume: float, speed: float | None = None, use_dead_volume: bool = True) -> float:
         """Aspirates solvent into the sample loop
 
         Args:
             index (int): index of solvent to aspirate
             volume (float): Volume to aspirate (ul).
             speed (float, optional): Speed (ul / s). Defaults to max aspirate flow rate
+            use_dead_volume (bool, optional): If true, account for dead volume between source and selector valves
 
         Returns:
             float: actual volume aspirated (ul)
@@ -163,8 +164,10 @@ class RinseSystemBase(InjectionChannelBase):
         await self.selector_valve.trigger_update()
 
         # calculate dead volume. Note that if this fails, it means the mode is not correct for aspiration anyway.
-        dead_volume = self._aspirate_dead_volume()
-        self.logger.info(f'{self.name}: aspiration dead volume is {dead_volume}')
+        dead_volume = 0.0
+        if use_dead_volume:
+            dead_volume = self._aspirate_dead_volume()
+            self.logger.info(f'{self.name}: aspiration dead volume is {dead_volume}')
 
         if speed is None:
             speed = self.syringe_pump.max_aspirate_flow_rate
@@ -235,10 +238,50 @@ class PrimeRinseLoop(MethodBase):
 
         self.release_all()
 
+class PrimeRinseSource(MethodBase):
+    """Primes one of the source lines of the rinse system
+    """
+
+    def __init__(self, rinsesystem: RinseSystemBase, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__([rinsesystem.syringe_pump, rinsesystem.source_valve, rinsesystem.selector_valve], waste_tracker=waste_tracker)
+        self.rinsesystem = rinsesystem
+
+    @dataclass
+    class MethodDefinition(MethodBase.MethodDefinition):
+
+        name: str = "PrimeRinseSource"
+        index: str | int = 1
+        volume: str | float = 1 # mL/min
+        number_of_primes: str | int = 1
+
+    async def run(self, **kwargs):
+
+        self.reserve_all()
+
+        method = self.MethodDefinition(**kwargs)
+        index = int(method.index)
+        volume = float(method.volume) * 1000
+        number_of_primes = int(method.number_of_primes)
+
+        target_well, _ = self.rinsesystem.layout.get_well_and_rack('Rinse', index)
+        target_composition = target_well.composition
+
+        for _ in range(number_of_primes):
+            await self.rinsesystem.aspirate_solvent(index, volume, use_dead_volume=False)
+            await self.rinsesystem.primeloop(n_prime=1, volume=volume)
+        
+        await self.waste_tracker.submit(WasteItem(composition=target_composition, volume=volume * float(number_of_primes)))
+
+        self.logger.info(f'{self.rinsesystem.name}.{method.name}: Switching to Standby mode')
+        await self.rinsesystem.change_mode('Standby')
+
+        self.release_all()
+
 class InitiateRinse(MethodBase):
 
     def __init__(self, rinsesystem: RinseSystemBase, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()):
         super().__init__(rinsesystem.devices, waste_tracker)
+        self.rinsesystem = rinsesystem
 
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
@@ -246,8 +289,19 @@ class InitiateRinse(MethodBase):
         name: str = "InitiateRinse"
 
     async def run(self, **kwargs):
+        """Waits 10 seconds for a companion method to start. Throws error if it hasn't started yet. Then polls every second until rinse system is released.
+        """
 
-        pass
+        await asyncio.sleep(10)
+        if not self.rinsesystem.reserved:
+            raise MethodError('InitiateRinse running but companion method has not started yet', False)
+
+        try:
+            # poll every second to see if devices have been released yet
+            while self.rinsesystem.reserved:
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
 
 
 class RinseSystem(RinseSystemBase):
@@ -268,6 +322,7 @@ class RinseSystem(RinseSystemBase):
 
         self.methods.update({'InitiateRinse': InitiateRinse(self, waste_tracker),
                              'PrimeRinseLoop': PrimeRinseLoop(self, waste_tracker),
+                             'PrimeRinseSource': PrimeRinseSource(self, waste_tracker)
                             })
         
         if database_path is not None:
@@ -351,7 +406,9 @@ class RinseSystem(RinseSystemBase):
         d = await super().get_info()
 
         d['controls'] = d['controls'] | {'prime_loop': {'type': 'number',
-                                                'text': 'Prime loop repeats: '}}
+                                                'text': 'Prime loop repeats: '},
+                                         'prime_source': {'type': 'number',
+                                                          'text': 'Prime source bottle (2 mL): '}}
         
         return d
     
@@ -359,6 +416,8 @@ class RinseSystem(RinseSystemBase):
 
         if command == 'prime_loop':
             return self.run_method('PrimeRinseLoop', dict(name='PrimeRinseLoop', number_of_primes=int(data['n_prime'])))
+        if command == 'prime_source':
+            return self.run_method('PrimeRinseSource', dict(name='PrimeRinseSource', index=int(data['n_prime']), volume=2.0))
             #return await self.primeloop(int(data['n_prime']))
         else:
             return await super().event_handler(command, data)
