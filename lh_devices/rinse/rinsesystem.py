@@ -143,7 +143,7 @@ class RinseSystemBase(InjectionChannelBase):
         
         await self.change_mode('AspirateAirGap')
         if speed is None:
-            speed = self.syringe_pump.max_aspirate_flow_rate
+            speed = 3.0 * 1000 / 60 # 3 mL/min; not very fast but only takes a few seconds
         await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.aspirate(air_gap_volume, speed))
 
     async def aspirate_solvent(self, index: int, volume: float, speed: float | None = None, use_dead_volume: bool = True) -> float:
@@ -292,9 +292,7 @@ class InitiateRinse(MethodBase):
         """Waits 10 seconds for a companion method to start. Throws error if it hasn't started yet. Then polls every second until rinse system is released.
         """
 
-        await asyncio.sleep(10)
-        if not self.rinsesystem.reserved:
-            raise MethodError('InitiateRinse running but companion method has not started yet', False)
+        self.reserve_all()
 
         try:
             # poll every second to see if devices have been released yet
@@ -381,10 +379,10 @@ class RinseSystem(RinseSystemBase):
         @routes.get('/GetStatus')
         async def get_status(request: web.Request) -> web.Response:
             
-            statuses = [Status.BUSY if dev.reserved else Status.IDLE for dev in self.devices]
+            #statuses = [Status.BUSY if dev.reserved else Status.IDLE for dev in self.devices]
 
-            return web.Response(text=json.dumps(dict(status=Status.IDLE,
-                                          channel_status=statuses)),
+            return web.Response(text=json.dumps(dict(status=Status.BUSY if any(dev.reserved for dev in self.devices) else Status.IDLE,
+                                          channel_status=[])),
                                 status=200)
 
         @routes.get('/GetTaskData')
