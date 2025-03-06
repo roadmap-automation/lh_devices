@@ -62,7 +62,7 @@ async def run_injection_system():
     connect_nodes(rinse_loop.outlet_node, source_valve.valve.nodes[0], 0.0)
 
     # connect selector and source valves
-    connect_nodes(selector_valve.valve.nodes[0], source_valve.valve.nodes[1], 50.0)
+    connect_nodes(selector_valve.valve.nodes[0], source_valve.valve.nodes[1], 245.0)
 
     waste_tracker = RoadmapWasteInterface('http://localhost:5001/Waste/AddWaste/')
 
@@ -128,11 +128,11 @@ async def run_injection_system():
                                                            name='Distribution System')
     
     # internal distribution system connection
-    connect_nodes(dvp_source.valve.nodes[0], dvp_selection.valve.nodes[0], 50 + 20)
+    connect_nodes(dvp_source.valve.nodes[0], dvp_selection.valve.nodes[0], 80 + 20)
 
     # connect LH and rinse system to distribution system
     connect_nodes(ip.nodes[0], dvp_source.valve.nodes[1], 262 + 20)
-    connect_nodes(rinse_ip.nodes[0], dvp_source.valve.nodes[2], 90 + 20)
+    connect_nodes(rinse_ip.nodes[0], dvp_source.valve.nodes[2], 242 + 20)
 
     # loop inject: connect distribution valve port 1 to syringe pump valve node 2 (top)
     connect_nodes(dvp_selection.valve.nodes[1], sp0.valve.nodes[2], 73 + 20)
