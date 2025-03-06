@@ -4,6 +4,7 @@ import socketio
 
 from pathlib import Path
 from aiohttp import web
+from uuid import uuid4
 
 from .logutils import Loggable
 
@@ -29,7 +30,7 @@ sio = socketio.AsyncServer()
 class WebNodeBase(Loggable):
 
     def __init__(self, id: str = '', name: str = ''):
-        self.id = id
+        self.id = str(uuid4()) if id is None else id
         self.name = name
         Loggable.__init__(self)
 
@@ -47,6 +48,7 @@ class WebNodeBase(Loggable):
         routes = web.RouteTableDef()
 
         @routes.get('/')
+        @routes.get(f'/{self.id}')
         async def get_handler(request: web.Request) -> web.Response:
             return web.FileResponse(TEMPLATE_PATH / template)
 
@@ -54,7 +56,12 @@ class WebNodeBase(Loggable):
         @routes.get(f'/{self.id}/state')
         async def get_state(request: web.Request) -> web.Response:
             state = await self.get_info()
-            return web.Response(text=json.dumps(state), status=200)
+            try:
+                json_state = json.dumps(state)
+            except TypeError:
+                print(state)
+
+            return web.Response(text=json_state, status=200)
 
         @sio.on(self.id)
         async def event_handler(event, data):

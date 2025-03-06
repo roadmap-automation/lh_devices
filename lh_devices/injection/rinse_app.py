@@ -75,19 +75,31 @@ async def run_injection_system():
                                layout_path=LOG_PATH / 'rinse_layout.json',
                                database_path=HISTORY_PATH / 'rinse_system.db',
                                waste_tracker=waste_tracker,
-                               name='Rinse System')
+                               name='Rinse System',
+                               id='rinse_system')
+    
+    rinseapp = rinse_system.create_web_app(template='roadmap.html')
+    rinse_runner = await run_socket_app(rinseapp, 'localhost', 5014)
 
-    rinse_app = rinse_system.create_web_app(template='roadmap.html')
-    rinse_runner = await run_socket_app(rinse_app, 'localhost', 5014)
-
-    # ============== Injection System setup =====================
-    # serial communications setup
-    gsioc = GSIOC(62, 'COM13', 19200)
+    # ============== Distribution System setup ==================
     ser = HamiltonSerial(port='COM9', baudrate=38400)
+
+    ip = InjectionPort('LH_injection_port')
 
     # Distribution system
     dvp_source = HamiltonValvePositioner(ser, '7', YValve(name='source_valve'), name='Distribution Source Valve')
     dvp_selection = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Selection Valve')
+
+    distribution_system = DistributionSingleValveTwoSource(source_valve=dvp_source,
+                                                           distribution_valve=dvp_selection,
+                                                           injection_port=ip,
+                                                           name='Distribution System',
+                                                           id='distribution_system')
+
+    # ============== Injection System setup =====================
+    # serial communications setup
+    gsioc = GSIOC(62, 'COM13', 19200)
+    #ser = HamiltonSerial(port='COM9', baudrate=38400)
 
     mvp0 = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve0'), name='Loop Valve 0')
     outlet_bubble_sensor0 = SMDSensoronHamiltonDevice(mvp0, 2, 1)
@@ -108,8 +120,6 @@ async def run_injection_system():
         sp.max_dispense_flow_rate = 5 * 1000 / 60
         sp.max_aspirate_flow_rate = 15 * 1000 / 60
     
-    ip = InjectionPort('LH_injection_port')
-
     fc0 = FlowCell(139, 'flow_cell0')
     fc1 = FlowCell(139, 'flow_cell1')
     fc2 = FlowCell(139, 'flow_cell2')
@@ -122,11 +132,6 @@ async def run_injection_system():
     channel_1 = RoadmapChannelBubbleSensor(mvp1, sp1, fc1, sampleloop1, injection_node=ip.nodes[0], inlet_bubble_sensor=inlet_bubble_sensor1, outlet_bubble_sensor=outlet_bubble_sensor1, name='Channel 1')
     channel_2 = RoadmapChannelBubbleSensor(mvp2, sp2, fc2, sampleloop2, injection_node=ip.nodes[0], inlet_bubble_sensor=inlet_bubble_sensor2, outlet_bubble_sensor=outlet_bubble_sensor2, name='Channel 2')
 
-    distribution_system = DistributionSingleValveTwoSource(source_valve=dvp_source,
-                                                           distribution_valve=dvp_selection,
-                                                           injection_port=ip,
-                                                           name='Distribution System')
-    
     # internal distribution system connection
     connect_nodes(dvp_source.valve.nodes[0], dvp_selection.valve.nodes[0], 80 + 20)
 
@@ -196,7 +201,8 @@ async def run_injection_system():
         gsioc_task.cancel()
         asyncio.gather(
                     runner.cleanup(),
-                    rinse_runner.cleanup())
+                    rinse_runner.cleanup(),
+                    distribution_runner.cleanup())
 
 if __name__=='__main__':
 

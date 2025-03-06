@@ -10,9 +10,10 @@ from aiohttp import web
 from autocontrol.status import Status
 from autocontrol.task_struct import TaskData
 
+from ..autocontrolplugin import AutocontrolPlugin
 from ..device import SyringePumpBase, ValvePositionerBase
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
-from ..history import HistoryDB
+from ..history import DatabasePlugin
 from ..components import FlowCell, InjectionPort
 from ..assemblies import InjectionChannelBase, Mode, Network
 from ..connections import Node
@@ -34,7 +35,8 @@ class RinseSystemBase(InjectionChannelBase):
                  direct_injection_port: InjectionPort | None = None,
                  layout_path: Path | None = None,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase(),
-                 name='Rinse System'):
+                 name: str = 'Rinse System',
+                 id: str = None):
         
         self.syringe_pump = syringe_pump
         self.source_valve = source_valve
@@ -48,7 +50,7 @@ class RinseSystemBase(InjectionChannelBase):
         self.layout: LHBedLayout | None = None
         self.layout_path = layout_path
 
-        super().__init__([syringe_pump, source_valve, selector_valve], loop_injection_port.nodes[0], name)
+        InjectionChannelBase.__init__(self, [syringe_pump, source_valve, selector_valve], loop_injection_port.nodes[0], name, id)
 
         self.network = Network(self.devices + [loop_injection_port, direct_injection_port])
 
@@ -293,16 +295,16 @@ class InitiateRinse(MethodBase):
         """
 
         self.reserve_all()
+        await self.trigger_update()
 
         try:
             # poll every second to see if devices have been released yet
             while self.rinsesystem.reserved:
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
-            pass
+            self.release_all()
 
-
-class RinseSystem(RinseSystemBase):
+class RinseSystem(AutocontrolPlugin, RinseSystemBase):
 
     def __init__(self,
                  syringe_pump: HamiltonSyringePump,
@@ -314,8 +316,10 @@ class RinseSystem(RinseSystemBase):
                  layout_path: Path | None = None,
                  database_path: Path | None = None,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase(),
-                 name='Rinse System'):
-        super().__init__(syringe_pump, source_valve, selector_valve, rinse_loop, loop_injection_port, direct_injection_port, layout_path, waste_tracker, name)
+                 name: str = 'Rinse System',
+                 id: str = 'rinse_system'):
+        RinseSystemBase.__init__(self, syringe_pump, source_valve, selector_valve, rinse_loop, loop_injection_port, direct_injection_port, layout_path, waste_tracker, name, id)
+        AutocontrolPlugin.__init__(self, database_path, self.id, self.name)
         self.rinse_loop = rinse_loop
 
         self.methods.update({'InitiateRinse': InitiateRinse(self, waste_tracker),
@@ -324,89 +328,28 @@ class RinseSystem(RinseSystemBase):
                             })
         
         if database_path is not None:
-            self.method_callbacks.append(self.save_to_database)
+            self.method_callbacks.append(self.async_save_to_database)
             
-            self.database_path = database_path
-
     def _aspirate_dead_volume(self):
         return self.get_dead_volume('Aspirate', self.selector_valve.valve.nodes[0])
 
-    async def save_to_database(self, result: MethodResult):
-        """Saves a method result to the database, only if a task id is associated with it
+    async def _get_status(self, request):
+        return web.Response(text=json.dumps(dict(status=Status.BUSY if any(dev.reserved for dev in self.devices) else Status.IDLE,
+                                        channel_status=[])),
+                            status=200)
 
-        Args:
-            result (MethodResult): result to save
-        """
-
-        if result.id is not None:
-            with HistoryDB(self.database_path) as db:
-                db.smart_insert(result)
-
-    def read_from_database(self, id: str) -> MethodResult | None:
-        """Reads a method result from the database
-
-        Args:
-            id (str): id of record
-
-        Returns:
-            MethodResult | None: MethodResult object if id exists, otherwise None
-        """
-
-        with HistoryDB(self.database_path) as db:
-            return db.search_id(id)
-
-    def create_web_app(self, template='roadmap.html') -> Application:
-        app = super().create_web_app(template=template)
-        routes = web.RouteTableDef()
-
-        @routes.post('/SubmitTask')
-        async def handle_task(request: web.Request) -> web.Response:
-            # TODO: turn task into a dataclass; parsing will change
-            # testing: curl -X POST http://localhost:5004/SubmitTask -d "{\"channel\": 0, \"method_name\": \"InitiateRinse\", \"method_data\": {\"name\": \"InitiateRinse\"}}"
-            data = await request.json()
-            task = TaskData(**data)
-            self.logger.info(f'{self.name} received task {task}')
-            method = task.method_data['method_list'][0]
-            method_name: str = method['method_name']
-            method_data: dict = method['method_data']
-            if self.method_runner.is_ready(method_name):
-                self.run_method(method_name, method_data, id=str(task.id))
-                  
-                return web.Response(text='accepted', status=200)
-                
-            return web.Response(text='busy', status=503)
-       
-        @routes.get('/GetStatus')
-        async def get_status(request: web.Request) -> web.Response:
-            
-            #statuses = [Status.BUSY if dev.reserved else Status.IDLE for dev in self.devices]
-
-            return web.Response(text=json.dumps(dict(status=Status.BUSY if any(dev.reserved for dev in self.devices) else Status.IDLE,
-                                          channel_status=[])),
-                                status=200)
-
-        @routes.get('/GetTaskData')
-        async def get_task(request: web.Request) -> web.Response:
-            data = await request.json()
-            task = TaskData(**data)
-            
-            record = self.read_from_database(task.id)
-            if record is None:
-                return web.Response(text=f'error: id {task.id} does not exist', status=400)
-
-            return web.Response(text=json.dumps(asdict(record)), status=200)
-        
-        app.add_routes(routes)
-
-        return app
-    
     async def get_info(self) -> Dict:
-        d = await super().get_info()
+        d = await AutocontrolPlugin.get_info(self)
+        d.update(await RinseSystemBase.get_info(self))
 
-        d['controls'] = d['controls'] | {'prime_loop': {'type': 'number',
+        #d.setdefault('controls', {})
+        d['controls'] = d['controls'] | {'release': {'type': 'button',
+                                                     'text': 'Release'},
+                                         'prime_loop': {'type': 'number',
                                                 'text': 'Prime loop repeats: '},
                                          'prime_source': {'type': 'number',
-                                                          'text': 'Prime source bottle (2 mL): '}}
+                                                          'text': 'Prime source bottle (2 mL): '},
+                                         }
         
         return d
     
@@ -417,5 +360,8 @@ class RinseSystem(RinseSystemBase):
         if command == 'prime_source':
             return self.run_method('PrimeRinseSource', dict(name='PrimeRinseSource', index=int(data['n_prime']), volume=2.0))
             #return await self.primeloop(int(data['n_prime']))
+        if command == 'release':
+            await self.release()
         else:
-            return await super().event_handler(command, data)
+            await RinseSystemBase.event_handler(self, command, data)
+            await AutocontrolPlugin.event_handler(self, command, data)
