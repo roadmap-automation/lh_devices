@@ -153,6 +153,7 @@ class MethodBase(Loggable):
                 await self.on_cancel()
         finally:
             self.logger.info(f'{self.name} finished')
+            await self.trigger_update()
             
             # remove method handler from device loggers
             for device in self.devices:

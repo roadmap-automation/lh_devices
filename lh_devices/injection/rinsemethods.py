@@ -119,7 +119,6 @@ class RinseLoadLoop(MethodBase):
         await self.channel.change_mode('Standby')
 
         self.release_all()
-        await self.trigger_update()
 
 class RinseLoadLoopBubbleSensor(RinseLoadLoop):
     """Loads the loop of one ROADMAP channel
@@ -317,7 +316,6 @@ class RinseDirectInject(MethodBase):
         await self.channel.change_mode('Standby')
 
         self.release_all()
-        await self.trigger_update()
 
 class RinseDirectInjectBubbleSensor(MethodBase):
     """Directly inject from LH to measurement system through distribution valve and injection system, using bubble sensors to direct flow.
@@ -428,7 +426,6 @@ class RinseDirectInjectBubbleSensor(MethodBase):
         await self.channel.change_mode('Standby')
 
         self.release_all()
-        await self.trigger_update()
 
     async def dispense_with_monitor(self, bubble_sensor: BubbleSensorBase, volume: float, flow_rate: float, min_pump_volume: float = 0) -> float:
 
