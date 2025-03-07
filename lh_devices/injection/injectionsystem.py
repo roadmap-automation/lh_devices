@@ -69,7 +69,7 @@ class RoadmapChannelAssembly(MultiChannelAssembly):
         await asyncio.gather(*[ch.initialize() for ch in self.channels], self.distribution_system.initialize())
         await self.trigger_update()
 
-class RoadmapChannelAssemblyRinse(RoadmapChannelAssembly):
+class RoadmapChannelAssemblyRinse(MultiChannelAssembly):
 
     def __init__(self,
                  channels: List[RoadmapChannelBubbleSensor],
@@ -80,11 +80,10 @@ class RoadmapChannelAssemblyRinse(RoadmapChannelAssembly):
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase(),
                  name='') -> None:
         
-        super().__init__(channels, distribution_system, gsioc, database_path, waste_tracker, name)
-
-        """TODO:
-            Check 
-        """
+        super().__init__(channels=channels,
+                         assemblies=[distribution_system],
+                         database_path=database_path,
+                         name=name)
 
         # Build network
         self.injection_port = distribution_system.injection_port
