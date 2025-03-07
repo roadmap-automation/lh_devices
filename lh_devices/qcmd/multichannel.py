@@ -233,7 +233,7 @@ class QCMDMeasurementDevice(DeviceBase):
         if result is None:
             self.qcmd_status = QCMDState.DISCONNECTED
         else:
-            self.qcmd_status = result['result']
+            self.qcmd_status = result.get('result', QCMDState.DISCONNECTED)
         self._updating = False
 
     async def sleep(self, sleep_time: float = 0.0) -> float:
