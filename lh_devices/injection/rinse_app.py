@@ -201,8 +201,7 @@ async def run_injection_system():
         gsioc_task.cancel()
         asyncio.gather(
                     runner.cleanup(),
-                    rinse_runner.cleanup(),
-                    distribution_runner.cleanup())
+                    rinse_runner.cleanup())
 
 if __name__=='__main__':
 
