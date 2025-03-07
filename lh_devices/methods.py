@@ -57,6 +57,7 @@ class MethodBase(Loggable):
         self.dead_volume_node: str | None = None
 
         self.metadata = []
+        self.active_reservations = set()
 
         # set up a unique logger for this method instance
         Loggable.__init__(self)
@@ -85,14 +86,27 @@ class MethodBase(Loggable):
         """
 
         for dev in self.devices:
+            self.active_reservations.add(dev)
             dev.reserved = True
 
-    def release_all(self) -> None:
-        """Releases all devices
+    def release(self, dev: DeviceBase):
+        """Releases a single device
         """
 
-        for dev in self.devices:
+        if dev in self.active_reservations:
+            self.logger.info(f'{self.name}: releasing device {dev.name}')
             dev.reserved = False
+            self.active_reservations.remove(dev)
+        else:
+            self.logger.warning(f'{self.name}: device {dev.name} not found in active reservations')
+
+    def release_all(self) -> None:
+        """Releases all remaining devices
+        """
+
+        # conversion to list prevents size of self.active_reservations from changing with releases
+        for dev in list(self.active_reservations):
+            self.release(dev)
 
     async def trigger_update(self) -> None:
         """Triggers update of all devices

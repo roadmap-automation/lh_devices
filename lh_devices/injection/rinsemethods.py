@@ -103,10 +103,11 @@ class RinseLoadLoop(MethodBase):
 
         # rinse and distribution systems are done, release relevant devices
         await self.rinse_system.change_mode('Standby')
-        await self.rinse_system.release()
-        for valve in self.distribution_mode.valves.keys():
-            valve.reserved = False
-            await valve.trigger_update()
+
+        # TODO: move to explicitly releasing the entire distribution system. This only works with InitiateDistribution if distribution_mode has all the valves in the distribution system in it
+        for dev in list(self.distribution_mode.valves.keys()) + self.rinse_system.devices:
+            self.release(dev)
+            await dev.trigger_update()
 
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
         await self.channel.change_mode('PumpPrimeLoop')

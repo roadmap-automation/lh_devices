@@ -70,7 +70,7 @@ class LoadLoop(MethodBaseDeadVolume):
         # At this point, liquid handler is done, release communications
         self.disconnect_gsioc()
         for valve in self.distribution_mode.valves.keys():
-            valve.reserved = False
+            self.release(valve)
             await valve.trigger_update()
         #self.release_liquid_handler.set()
 
@@ -111,6 +111,7 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
 
         self.reserve_all()
+        await self.trigger_update()
 
         method = self.MethodDefinition(**kwargs)
 
@@ -157,7 +158,7 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         # At this point, liquid handler is done, release communications
         self.disconnect_gsioc()
         for valve in self.distribution_mode.valves.keys():
-            valve.reserved = False
+            self.release(valve)
             await valve.trigger_update()
         
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
