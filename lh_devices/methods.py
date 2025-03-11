@@ -516,8 +516,8 @@ class MethodPlugin(WebNodeBase):
 
         return web.Response(text='not implemented', status=500)
 
-    def create_web_app(self, template='roadmap.html') -> Application:
-        app = super().create_web_app(template=template)
+    def _get_routes(self) -> web.RouteTableDef:
+
         routes = web.RouteTableDef()
 
         @routes.post('/SubmitTask')
@@ -531,8 +531,13 @@ class MethodPlugin(WebNodeBase):
         @routes.get('/GetTaskData')
         async def get_task(request: web.Request) -> web.Response:
             return await self._get_task(request)            
+
+        return routes
+
+    def create_web_app(self, template='roadmap.html') -> Application:
+        app = super().create_web_app(template=template)
         
-        app.add_routes(routes)
+        app.add_routes(self._get_routes())
 
         return app
     
