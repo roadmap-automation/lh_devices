@@ -1,12 +1,14 @@
 import asyncio
 import logging
+import json
 
 from aiohttp import web
 from aiohttp.web_app import Application as Application
+from pathlib import Path
 
 from lh_manager.liquid_handler.bedlayout import LHBedLayout, Rack, Well
 
-from .webview import WebNodeBase
+from .webview import WebNodeBase, sio
 
 class LayoutPlugin(WebNodeBase):
 
@@ -15,6 +17,16 @@ class LayoutPlugin(WebNodeBase):
         self.id = id
         self.name = name
         self.layout: LHBedLayout | None = None
+        self.layout_path: Path | None = None
+
+    def save_layout(self):
+        """Saves the layout to a JSON file
+        """
+
+        if self.layout_path is not None:
+            if self.layout_path.is_file():
+                with open(self.layout_path, 'w') as f:
+                    json.dump(self.layout.model_dump(), f, indent=2)         
 
     async def _get_layout(self, request: web.Request) -> web.Response:
         return web.Response(text=self.layout.model_dump_json(), status=200)
@@ -24,12 +36,14 @@ class LayoutPlugin(WebNodeBase):
         assert isinstance(data, dict)
         well = Well(**data)
         self.layout.update_well(well)
+        await self.trigger_layout_update()
         return web.Response(text=well.model_dump_json(), status=200)
     
     async def _remove_well(self, request: web.Request) -> web.Response:
         data = await request.json()
         assert isinstance(data, dict)
         self.layout.remove_well_definition(data["rack_id"], data["well_number"])
+        await self.trigger_layout_update()
         return web.Response(text={"well definition removed": data}, status=200)
 
     def _get_routes(self) -> web.RouteTableDef:
@@ -52,7 +66,13 @@ class LayoutPlugin(WebNodeBase):
 
     def create_web_app(self, template='roadmap.html') -> Application:
         app = super().create_web_app(template=template)
-        
+
         app.add_routes(self._get_routes())
 
         return app
+
+    async def trigger_layout_update(self):
+        """Emits a socketio event with id"""
+
+        await sio.emit(self.id, 'update_layout')
+        self.save_layout()
