@@ -1,16 +1,16 @@
 import time
 import asyncio
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, asdict
 from typing import Dict
-from aiohttp import ClientSession, ClientConnectionError
+from aiohttp import ClientSession, ClientConnectionError, web
 from enum import Enum
 from urllib.parse import urlsplit
 
 from ..camera.camera import CameraDeviceBase, FIT0819
 from ..device import DeviceBase, PollTimer
 from ..assemblies import InjectionChannelBase
-from ..layout import LayoutPlugin
+from ..layout import LayoutPlugin, LHBedLayout, Composition, Well, Rack
 from ..methods import MethodBase
 from ..multichannel import MultiChannelAssembly
 
@@ -311,10 +311,12 @@ class QCMDMeasurementChannel(InjectionChannelBase):
     def __init__(self, qcmd: QCMDMeasurementDevice, name='QCMD Channel'):
         super().__init__([qcmd], name=name)
 
+        self.well: Well = Well(composition=Composition(), volume=1, rack_id=self.name, well_number=1, id=None)
+
         self.methods.update({'QCMDRecord': self.QCMDRecord(qcmd),
                 'QCMDRecordTag': self.QCMDRecordTag(qcmd),
                 'QCMDSleep': self.QCMDSleep(qcmd),
-                'QCMDAcceptTransfer': self.QCMDAcceptTransfer(qcmd),
+                #'QCMDAcceptTransfer': self.QCMDAcceptTransfer(qcmd, self.well),
                 'QCMDStart': self.QCMDStart(qcmd),
                 'QCMDStop': self.QCMDStop(qcmd)})
         
@@ -426,24 +428,6 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             return result
 
-    class QCMDAcceptTransfer(QCMDMethodBase):
-
-        @dataclass
-        class MethodDefinition(MethodBase.MethodDefinition):
-
-            name: str = 'QCMDAcceptTransfer'
-            contents: str = ''
-
-        async def run(self, **kwargs):
-
-            method = self.MethodDefinition(**kwargs)
-            self.reserve_all()
-            self.logger.info(f'{self.name}: Received transfer of material {method.contents}')
-            result = {'contents': method.contents}
-            self.release_all()
-
-            return result
-
     class QCMDStop(QCMDMethodBase):
 
         @dataclass
@@ -493,7 +477,33 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             self.release_all()
 
             return result
-        
+
+class QCMDAcceptTransfer(MethodBase):
+
+    def __init__(self, channel: QCMDMeasurementChannel, layout: LHBedLayout):
+        super().__init__([channel.qcmd])
+        self.channel = channel
+        self.layout = layout
+
+    @dataclass
+    class MethodDefinition(MethodBase.MethodDefinition):
+
+        name: str = 'QCMDAcceptTransfer'
+        contents: dict = field(default_factory=dict)
+
+    async def run(self, **kwargs):
+
+        method = self.MethodDefinition(**kwargs)
+        method.contents = Composition(**method.contents)
+        self.reserve_all()
+        self.logger.info(f'{self.name}: Received transfer of material {repr(method.contents)}')
+        well, _ = self.layout.get_well_and_rack(self.channel.name, 1)
+        well.composition = method.contents
+        result = {'contents': asdict(method.contents)}
+        self.release_all()
+
+        return result
+
 class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
 
     def __init__(self, qcmd: QCMDMeasurementDevice, camera: CameraDeviceBase, name='QCMD Channel with Camera'):
@@ -535,6 +545,7 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
                  n_channels: int = 1,
                  qcmd_ids: list | None = None,
                  database_path: str | None = None,
+                 layout_path: str | None = None,
                  name='MultiChannel QCMD Measurement Device') -> None:
 
         if qcmd_ids is not None:
@@ -554,9 +565,43 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
                          assemblies=[],
                          database_path=database_path,
                          name=name)
-        
-        LayoutPlugin.__init__(self, self.id, self.name)
 
+        # set up layout        
+        LayoutPlugin.__init__(self, self.id, self.name)
+        self.layout_path = layout_path
+
+        # attempt to load the layout from log file
+        self.load_layout()
+
+        if self.layout is None:
+            racks = {}
+            for i, ch in enumerate(channels):
+                racks[ch.name] = Rack(columns=1,
+                                   rows=1,
+                                   max_volume=1,
+                                   wells=[ch.well],
+                                   style='grid',
+                                   height=300,
+                                   width=300,
+                                   x_translate=300 * i,
+                                   y_translate=0,
+                                   shape='circle')
+            
+            self.layout = LHBedLayout(racks=racks)
+        else:
+            for ch in channels:
+                # connect channel well to method (this is clumsy)
+                ch.well = self.layout.racks[ch.name].wells[0]
+
+        # add AcceptTransfer method, which updates the layout
+        # trigger a layout update whenever any method runs
+        async def trigger_layout_update(result):
+            await self.trigger_layout_update()
+
+        for ch in self.channels:
+            ch.methods.update({'QCMDAcceptTransfer': QCMDAcceptTransfer(ch, self.layout)})
+            ch.method_callbacks.append(trigger_layout_update)
+    
     def create_web_app(self, template='roadmap.html'):
         app = super().create_web_app(template)
 
