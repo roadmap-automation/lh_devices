@@ -7,10 +7,12 @@ from aiohttp import ClientSession, ClientConnectionError, web
 from enum import Enum
 from urllib.parse import urlsplit
 
+from lh_manager.liquid_handler.bedlayout import LHBedLayout, Composition, Rack, Well
+
 from ..camera.camera import CameraDeviceBase, FIT0819
 from ..device import DeviceBase, PollTimer
 from ..assemblies import InjectionChannelBase
-from ..layout import LayoutPlugin, LHBedLayout, Composition, Well, Rack
+from ..layout import LayoutPlugin
 from ..methods import MethodBase
 from ..multichannel import MultiChannelAssembly
 
