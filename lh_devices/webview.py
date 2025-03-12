@@ -1,3 +1,4 @@
+import aiohttp_cors
 import json
 import logging
 import socketio
@@ -25,7 +26,7 @@ Approach:
 
 TEMPLATE_PATH = Path(__file__).parent / 'templates'
 
-sio = socketio.AsyncServer()
+sio = socketio.AsyncServer(cors_allowed_origins='*')
 
 class WebNodeBase(Loggable):
 
@@ -105,8 +106,19 @@ async def run_socket_app(app: web.Application, host='localhost', port=5003) -> w
         app (web.Application): aiohttp web application
     """
 
-    sio.attach(app)
+    cors = aiohttp_cors.setup(app, defaults={
+   "*": aiohttp_cors.ResourceOptions(
+        allow_credentials=True,
+        expose_headers="*",
+        allow_headers="*"
+    )
+    })
 
+    for route in list(app.router.routes()):
+        cors.add(route)
+   
+    sio.attach(app)
+    
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, host, port)

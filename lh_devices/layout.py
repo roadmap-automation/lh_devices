@@ -29,7 +29,17 @@ class LayoutPlugin(WebNodeBase):
                     json.dump(self.layout.model_dump(), f, indent=2)         
 
     async def _get_layout(self, request: web.Request) -> web.Response:
-        return web.Response(text=self.layout.model_dump_json(), status=200)
+        return web.Response(text=self.layout.model_dump_json() if self.layout is not None else json.dumps(None), status=200)
+
+    async def _get_wells(self, request: web.Request) -> web.Response:
+        if self.layout is not None:
+            wells = self.layout.get_all_wells()
+            wells_dict = [well.model_dump() for well in wells]
+            for wd in wells_dict:
+                wd['zone'] = None
+            return web.Response(text=json.dumps(wells_dict), status=200)
+        else:
+            return web.Response(text=json.dumps(None), status=200)
 
     async def _update_well(self, request: web.Request) -> web.Response:
         data = await request.json()
@@ -50,15 +60,19 @@ class LayoutPlugin(WebNodeBase):
 
         routes = web.RouteTableDef()
 
-        @routes.post('/GUI/GetLayout')
+        @routes.get('/GUI/GetLayout')
         async def get_layout(request: web.Request) -> web.Response:
             return await self._get_layout(request)
+        
+        @routes.get('/GUI/GetWells')
+        async def get_wells(request: web.Request) -> web.Response:
+            return await self._get_wells(request)        
        
-        @routes.get('/GUI/UpdateWell')
+        @routes.post('/GUI/UpdateWell')
         async def update_well(request: web.Request) -> web.Response:
             return await self._update_well(request)
 
-        @routes.get('/GUI/RemoveWellDefinition')
+        @routes.post('/GUI/RemoveWellDefinition')
         async def remove_well(request: web.Request) -> web.Response:
             return await self._remove_well(request)            
 

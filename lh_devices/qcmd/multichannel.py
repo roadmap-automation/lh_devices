@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from ..camera.camera import CameraDeviceBase, FIT0819
 from ..device import DeviceBase, PollTimer
 from ..assemblies import InjectionChannelBase
+from ..layout import LayoutPlugin
 from ..methods import MethodBase
 from ..multichannel import MultiChannelAssembly
 
@@ -525,7 +526,7 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
 
             return {'image': self.camera.image}
 
-class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly):
+class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
     """QCMD recording device simultaneously recording on multiple QCMD instruments"""
 
     def __init__(self,
@@ -553,3 +554,12 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly):
                          assemblies=[],
                          database_path=database_path,
                          name=name)
+        
+        LayoutPlugin.__init__(self, self.id, self.name)
+
+    def create_web_app(self, template='roadmap.html'):
+        app = super().create_web_app(template)
+
+        app.add_routes(LayoutPlugin._get_routes(self))
+
+        return app
