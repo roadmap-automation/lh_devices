@@ -1,12 +1,11 @@
-import asyncio
-import logging
 import json
+import os
 
 from aiohttp import web
 from aiohttp.web_app import Application as Application
 from pathlib import Path
 
-from lh_manager.liquid_handler.bedlayout import LHBedLayout, Rack, Well
+from lh_manager.liquid_handler.bedlayout import LHBedLayout, Well
 
 from .webview import WebNodeBase, sio
 
@@ -24,9 +23,18 @@ class LayoutPlugin(WebNodeBase):
         """
 
         if self.layout_path is not None:
-            if self.layout_path.is_file():
-                with open(self.layout_path, 'w') as f:
-                    json.dump(self.layout.model_dump(), f, indent=2)         
+            with open(self.layout_path, 'w') as f:
+                json.dump(self.layout.model_dump(), f, indent=2)
+
+    def load_layout(self):
+        """Loads the layout from a JSON file
+        """
+
+        self.layout = None
+        if self.layout_path is not None:
+            if self.layout_path.exists():
+                with open(self.layout_path, 'r') as f:
+                    self.layout = LHBedLayout.model_validate_json(f.read())
 
     async def _get_layout(self, request: web.Request) -> web.Response:
         return web.Response(text=self.layout.model_dump_json() if self.layout is not None else json.dumps(None), status=200)
@@ -54,7 +62,7 @@ class LayoutPlugin(WebNodeBase):
         assert isinstance(data, dict)
         self.layout.remove_well_definition(data["rack_id"], data["well_number"])
         await self.trigger_layout_update()
-        return web.Response(text={"well definition removed": data}, status=200)
+        return web.Response(text=json.dumps({"well definition removed": data}), status=200)
 
     def _get_routes(self) -> web.RouteTableDef:
 
@@ -88,5 +96,6 @@ class LayoutPlugin(WebNodeBase):
     async def trigger_layout_update(self):
         """Emits a socketio event with id"""
 
-        await sio.emit(self.id, 'update_layout')
+        self.logger.debug('triggering layout update')
+        await sio.emit('update_layout', data={'msg': 'update_layout'})
         self.save_layout()
