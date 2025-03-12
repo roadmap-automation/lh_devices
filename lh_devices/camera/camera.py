@@ -125,7 +125,7 @@ class FIT0819(CameraDeviceBase):
                   'state': {'idle': self.idle,
                             'reserved': self.reserved,
                             'display': {'Address': self.address,
-                                        'Timestamp': self.timestamp.strftime('%Y-%m-%d %H:%M:%S')},
+                                        'Timestamp': self.timestamp.strftime('%Y-%m-%d %H:%M:%S') if self.timestamp is not None else ''},
                             'image': self.image},
                   'controls': {'address': {'type': 'select',
                                            'options': [''] + list(self.camera_list.cameras.keys()),
