@@ -77,8 +77,8 @@ class RinseSystemBase(InjectionChannelBase, LayoutPlugin):
 
         if self.layout is None:
             self.logger.info(f'Layout path {self.layout_path} does not exist, creating empty rinse system layout...')
-            rinse_rack = Rack(columns=3, rows=2, max_volume=2000, style='staggered', wells=[], height=300, width=600, x_translate=300, y_translate=0, shape='circle')
-            water_rack = Rack(columns=1, rows=1, max_volume=2000, style='grid', wells=[], height=300, width=300, x_translate=0, y_translate=0, shape='rect')
+            rinse_rack = Rack(columns=3, rows=2, max_volume=2000, style='staggered', wells=[], height=300, width=600, x_translate=300, y_translate=0, shape='circle', editable=True)
+            water_rack = Rack(columns=1, rows=1, max_volume=2000, style='grid', wells=[], height=300, width=300, x_translate=0, y_translate=0, shape='rect', editable=True)
             self.layout = LHBedLayout(racks={'Water': water_rack,
                                                 'Rinse': rinse_rack})
             self.layout.add_well_to_rack('Water', Well(composition=WATER, volume=0, rack_id='', well_number=1))

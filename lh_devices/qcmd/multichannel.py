@@ -587,7 +587,8 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
                                    width=300,
                                    x_translate=300 * i,
                                    y_translate=0,
-                                   shape='circle')
+                                   shape='circle',
+                                   editable=False)
             
             self.layout = LHBedLayout(racks=racks)
         else:
