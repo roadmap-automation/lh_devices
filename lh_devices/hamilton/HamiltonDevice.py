@@ -202,7 +202,7 @@ class HamiltonBase(DeviceBase):
         d.update({
                 'type': 'device',
                 'config': {
-                           'com_port': self.serial.port,
+                           'com_port': self.serial.port if self.serial is not None else None,
                            'address': self.address},
                 'state': asdict(self.state),
                 'controls': {
