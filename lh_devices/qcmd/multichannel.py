@@ -496,7 +496,7 @@ class QCMDAcceptTransfer(MethodBase):
     async def run(self, **kwargs):
 
         method = self.MethodDefinition(**kwargs)
-        method.contents = Composition(**method.contents)
+        method.contents = Composition.model_validate(method.contents)
         self.reserve_all()
         self.logger.info(f'{self.name}: Received transfer of material {repr(method.contents)}')
         well, _ = self.layout.get_well_and_rack(self.channel.name, 1)

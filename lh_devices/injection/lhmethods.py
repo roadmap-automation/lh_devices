@@ -42,7 +42,7 @@ class LoadLoop(MethodBaseDeadVolume):
 
         pump_volume = float(method.pump_volume)
         excess_volume = float(method.excess_volume)
-        composition = Composition(**method.composition)
+        composition = Composition.model_validate(method.composition)
 
         # Connect to GSIOC communications
         self.connect_gsioc()
@@ -127,7 +127,7 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         pump_volume = float(method.pump_volume)
         excess_volume = float(method.excess_volume)
         air_gap = float(method.air_gap)
-        composition = Composition(**method.composition)
+        composition = Composition.model_validate(method.composition)
 
         # set minimum pump volume before checking for bubbles
         min_pump_volume = 0.5 * pump_volume if pump_volume > 200 else 0
