@@ -1,6 +1,7 @@
 from typing import Dict
 
 from aiohttp.web_app import Application as Application
+from lh_manager.liquid_handler.bedlayout import LHBedLayout, Composition, Rack, Well
 
 from ..device import ValvePositionerBase, SyringePumpBase
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
@@ -23,6 +24,7 @@ class RoadmapChannelBase(InjectionChannelBase):
         self.syringe_pump = syringe_pump
         self.flow_cell = flow_cell
         self.sample_loop = sample_loop
+        self.well: Well = Well(composition=Composition(), volume=0.0, rack_id=sample_loop.name, well_number=1, id=None)
         super().__init__([loop_valve, syringe_pump], injection_node=injection_node, name=name)
 
         # Define node connections for dead volume estimations
@@ -80,6 +82,9 @@ class RoadmapChannelBase(InjectionChannelBase):
 
         for _ in range(n_prime):
             await self.syringe_pump.smart_dispense(volume, self.syringe_pump.max_aspirate_flow_rate)
+
+        self.well.composition = Composition()
+        self.well.volume = 0.0            
 
     async def get_info(self) -> Dict:
         d = await super().get_info()

@@ -10,13 +10,12 @@ from aiohttp import web
 from autocontrol.status import Status
 from autocontrol.task_struct import TaskData
 
+from ..assemblies import InjectionChannelBase, Mode, Network
 from ..autocontrolplugin import AutocontrolPlugin
+from ..components import FlowCell, InjectionPort
 from ..device import SyringePumpBase, ValvePositionerBase
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
-from ..history import DatabasePlugin
-from ..components import FlowCell, InjectionPort
-from ..assemblies import InjectionChannelBase, Mode, Network
-from ..connections import Node
+from ..layout import LayoutPlugin
 from ..methods import MethodBase, MethodResult, MethodError
 from ..waste import WasteInterfaceBase, WasteItem
 from ..webview import sio
@@ -24,7 +23,7 @@ from ..webview import sio
 from lh_manager.liquid_handler.bedlayout import LHBedLayout, find_composition, Rack, Well
 from lh_manager.waste_manager.wastedata import Composition, WATER
 
-class RinseSystemBase(InjectionChannelBase):
+class RinseSystemBase(InjectionChannelBase, LayoutPlugin):
 
     def __init__(self,
                  syringe_pump: SyringePumpBase,
@@ -47,9 +46,6 @@ class RinseSystemBase(InjectionChannelBase):
         self.waste_tracker = waste_tracker
 
         # define attribute for the bed layout. Will be loaded upon initialization
-        self.layout: LHBedLayout | None = None
-        self.layout_path = layout_path
-
         InjectionChannelBase.__init__(self, [syringe_pump, source_valve, selector_valve], loop_injection_port.nodes[0], name, id)
 
         self.network = Network(self.devices + [loop_injection_port, direct_injection_port])
@@ -72,38 +68,21 @@ class RinseSystemBase(InjectionChannelBase):
                                         syringe_pump: 3}),
 
                       }
+        
+        LayoutPlugin.__init__(self, self.id, self.name)
+        self.layout_path = layout_path
 
-    async def initialize(self):
-        """Loads layout from JSON, creating a new one if it does not exist, and then continues with initialization
-        """
+        # attempt to load the layout from log file
+        self.load_layout()
 
-        if self.layout_path is not None:
-            if self.layout_path.exists():
-                with open(self.layout_path, 'r') as fh:
-                    self.layout = LHBedLayout.model_validate_json(fh.read())
-
-            else:
-                self.logger.info(f'Layout path {self.layout_path} does not exist, creating empty rinse system layout...')
-                rinse_rack = Rack(columns=2, rows=3, max_volume=2000, style='staggered', wells=[])
-                water_rack = Rack(columns=1, rows=1, max_volume=2000, style='grid', wells=[])
-                self.layout = LHBedLayout(racks={'Water': water_rack,
-                                                 'Rinse': rinse_rack})
-                self.layout.add_well_to_rack('Water', Well(composition=WATER, volume=0, rack_id='', well_number=1))
-                self.save_layout()
-
-        return await super().initialize()
-
-    def save_layout(self):
-        """Writes layout to JSON"""
-
-        if self.layout_path is not None:
-            with open(self.layout_path, 'w') as fh:
-                fh.write(self.layout.model_dump_json(indent=2))
-
-    async def trigger_layout_update(self):
-        """Emits a layout_update message through socketio"""
-        await sio.emit(f'layout_{self.id}')
-        self.save_layout()
+        if self.layout is None:
+            self.logger.info(f'Layout path {self.layout_path} does not exist, creating empty rinse system layout...')
+            rinse_rack = Rack(columns=3, rows=2, max_volume=2000, style='staggered', wells=[], height=300, width=600, x_translate=300, y_translate=0, shape='circle', editable=True)
+            water_rack = Rack(columns=1, rows=1, max_volume=2000, style='grid', wells=[], height=300, width=300, x_translate=0, y_translate=0, shape='rect', editable=True)
+            self.layout = LHBedLayout(racks={'Water': water_rack,
+                                                'Rinse': rinse_rack})
+            self.layout.add_well_to_rack('Water', Well(composition=WATER, volume=0, rack_id='', well_number=1))
+            self.save_layout()            
 
     async def release(self):
         """Releases reservations on all devices
@@ -210,6 +189,13 @@ class RinseSystemBase(InjectionChannelBase):
 
         for _ in range(n_prime):
             await self.syringe_pump.smart_dispense(volume, self.syringe_pump.max_aspirate_flow_rate)
+
+    def create_web_app(self, template='roadmap.html'):
+        app = super().create_web_app(template)
+
+        app.add_routes(LayoutPlugin._get_routes(self))
+
+        return app
 
 class PrimeRinseLoop(MethodBase):
     """Primes the loop of the rinse system

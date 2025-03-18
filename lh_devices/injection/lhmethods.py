@@ -4,6 +4,8 @@ import asyncio
 from dataclasses import dataclass
 from typing import Coroutine
 
+from lh_manager.liquid_handler.bedlayout import Composition
+
 from ..assemblies import Mode
 from ..bubblesensor import BubbleSensorBase
 from ..gilson.gsioc import GSIOC
@@ -26,6 +28,7 @@ class LoadLoop(MethodBaseDeadVolume):
     class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
         name: str = "LoadLoop"
+        composition: dict = {},
         pump_volume: str | float = 0, # uL
         excess_volume: str | float = 0, #uL
         air_gap: str | float = 0, #uL, not used
@@ -39,6 +42,7 @@ class LoadLoop(MethodBaseDeadVolume):
 
         pump_volume = float(method.pump_volume)
         excess_volume = float(method.excess_volume)
+        composition = Composition.model_validate(method.composition)
 
         # Connect to GSIOC communications
         self.connect_gsioc()
@@ -74,6 +78,10 @@ class LoadLoop(MethodBaseDeadVolume):
             await valve.trigger_update()
         #self.release_liquid_handler.set()
 
+        # Register material in loop
+        self.channel.well.composition = composition
+        self.channel.well.volume = pump_volume + excess_volume
+
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
         await self.channel.change_mode('PumpPrimeLoop')
 
@@ -103,6 +111,7 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
     class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
         name: str = "LoadLoopBubbleSensor"
+        composition: dict = {},
         pump_volume: str | float = 0, # uL
         excess_volume: str | float = 0 # uL, not used
         air_gap: str | float = 0, #uL
@@ -116,7 +125,9 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         method = self.MethodDefinition(**kwargs)
 
         pump_volume = float(method.pump_volume)
+        excess_volume = float(method.excess_volume)
         air_gap = float(method.air_gap)
+        composition = Composition.model_validate(method.composition)
 
         # set minimum pump volume before checking for bubbles
         min_pump_volume = 0.5 * pump_volume if pump_volume > 200 else 0
@@ -160,7 +171,11 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         for valve in self.distribution_mode.valves.keys():
             self.release(valve)
             await valve.trigger_update()
-        
+
+        # Register material in loop
+        self.channel.well.composition = composition
+        self.channel.well.volume = pump_volume + excess_volume
+
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
         await self.channel.change_mode('PumpPrimeLoop')
 

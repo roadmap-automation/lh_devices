@@ -3,10 +3,12 @@ from typing import Coroutine, List, Dict
 from dataclasses import dataclass
 
 from aiohttp.web_app import Application as Application
+from lh_manager.liquid_handler.bedlayout import LHBedLayout, Composition, Rack, Well
 
 from ..assemblies import Network, AssemblyMode, ModeGroup
 from ..distribution import DistributionBase, DistributionSingleValveTwoSource
 from ..gilson.gsioc import GSIOC
+from ..layout import LayoutPlugin
 from ..multichannel import MultiChannelAssembly
 from ..rinse.rinsesystem import RinseSystem
 from ..waste import WasteInterfaceBase
@@ -16,7 +18,7 @@ from .channelmethods import InjectLoop, InjectLoopBubbleSensor, PrimeLoop, Roadm
 from .lhmethods import LoadLoop, LoadLoopBubbleSensor, DirectInject, DirectInjectBubbleSensor, DirectInjectPrime
 from .rinsemethods import RinseLoadLoop, RinseLoadLoopBubbleSensor, RinseDirectInjectPrime, RinseDirectInject, RinseDirectInjectBubbleSensor
 
-class RoadmapChannelAssembly(MultiChannelAssembly):
+class RoadmapChannelAssembly(MultiChannelAssembly, LayoutPlugin):
 
     def __init__(self,
                  channels: List[RoadmapChannelBubbleSensor],
@@ -69,7 +71,7 @@ class RoadmapChannelAssembly(MultiChannelAssembly):
         await asyncio.gather(*[ch.initialize() for ch in self.channels], self.distribution_system.initialize())
         await self.trigger_update()
 
-class RoadmapChannelAssemblyRinse(MultiChannelAssembly):
+class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin):
 
     def __init__(self,
                  channels: List[RoadmapChannelBubbleSensor],
@@ -77,6 +79,7 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly):
                  rinse_system: RinseSystem,
                  gsioc: GSIOC,
                  database_path: str | None = None,
+                 layout_path: str | None = None,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase(),
                  name='') -> None:
         
@@ -84,6 +87,42 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly):
                          assemblies=[distribution_system],
                          database_path=database_path,
                          name=name)
+
+        # configure layout
+        LayoutPlugin.__init__(self, self.id, self.name)
+        self.layout_path = layout_path
+
+        # attempt to load the layout from log file
+        self.load_layout()
+
+        # check if layout matches current configuration
+        current_racks = set(self.layout.racks.keys()) if self.layout is not None else set()
+        if current_racks == set(ch.sample_loop.name for ch in channels):
+            for ch in channels:
+                # reconnect channel well to layout well
+                ch.well = self.layout.racks[ch.name].wells[0]
+        else:
+            self.logger.info('Loaded layout does not match channel configuration, creating new layout...')
+            racks = {}
+            for i, ch in enumerate(channels):
+                racks[ch.sample_loop.name] = Rack(columns=1,
+                                   rows=1,
+                                   max_volume=ch.sample_loop.get_volume(),
+                                   wells=[ch.well],
+                                   style='grid',
+                                   height=300,
+                                   width=300,
+                                   x_translate=300 * i,
+                                   y_translate=0,
+                                   shape='rect',
+                                   editable=False)
+            
+            self.layout = LHBedLayout(racks=racks)
+
+        # define method completion callback
+        async def trigger_layout_update(result):
+            await self.trigger_layout_update()
+
 
         # Build network
         self.injection_port = distribution_system.injection_port
@@ -96,6 +135,7 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly):
         rinse_system.network = self.network
         # update channels with upstream information
         for i, ch in enumerate(channels):
+            ch.method_runner.methods = {}
             # update network for accurate dead volume calculation
             ch.network = self.network
             ch.injection_node = self.injection_port.nodes[0]
@@ -122,6 +162,8 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly):
                                'RinseDirectInjectBubbleSensor': RinseDirectInjectBubbleSensor(ch, rinse_direct_mode, rinse_system, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker),
                                })
             
+            ch.method_callbacks.append(trigger_layout_update)
+            
         self.distribution_system = distribution_system
         self.rinse_system = rinse_system
 
@@ -129,3 +171,10 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly):
         """Initialize the loop as a unit and the distribution valve separately"""
         await asyncio.gather(*[ch.initialize() for ch in self.channels], self.rinse_system.initialize(), self.distribution_system.initialize())
         await self.trigger_update()
+
+    def create_web_app(self, template='roadmap.html'):
+        app = super().create_web_app(template)
+
+        app.add_routes(LayoutPlugin._get_routes(self))
+
+        return app

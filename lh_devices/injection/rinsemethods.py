@@ -109,6 +109,9 @@ class RinseLoadLoop(MethodBase):
             self.release(dev)
             await dev.trigger_update()
 
+        self.channel.well.composition = composition
+        self.channel.well.volume = pump_volume + excess_volume
+
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
         await self.channel.change_mode('PumpPrimeLoop')
 

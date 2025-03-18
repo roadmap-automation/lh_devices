@@ -14,6 +14,7 @@ from .autocontrolplugin import AutocontrolPlugin
 from .assemblies import Mode, AssemblyBase
 from .components import InjectionPort
 from .device import DeviceBase, ValvePositionerBase
+from .layout import LayoutPlugin
 from .methods import MethodBase
 from .waste import WasteInterfaceBase
 
@@ -69,7 +70,7 @@ class InitiateDistribution(MethodBase):
         except asyncio.CancelledError:
             self.release_all()
 
-class DistributionSingleValveTwoSource(AutocontrolPlugin, DistributionBase):
+class DistributionSingleValveTwoSource(AutocontrolPlugin, DistributionBase, LayoutPlugin):
 
     def __init__(self,
                  distribution_valve: ValvePositionerBase,
@@ -80,6 +81,7 @@ class DistributionSingleValveTwoSource(AutocontrolPlugin, DistributionBase):
                  id: str = None) -> None:
         AutocontrolPlugin.__init__(self, database_path, id, name)
         DistributionBase.__init__(self, distribution_valve.valve.n_positions, [distribution_valve, source_valve], injection_port, name, id)
+        LayoutPlugin.__init__(self, self.id, self.name)
 
         self.modes = {str(i): Mode({distribution_valve: i}, final_node=distribution_valve.get_nodes()[i]) for i in range(self.n_positions + 1)}
         self.modes.update({'LH': Mode({source_valve: 1}),
@@ -93,6 +95,13 @@ class DistributionSingleValveTwoSource(AutocontrolPlugin, DistributionBase):
         return web.Response(text=json.dumps(dict(status=Status.BUSY if any(dev.reserved for dev in self.devices) else Status.IDLE,
                                         channel_status=[])),
                             status=200)
+
+    def create_web_app(self, template='roadmap.html'):
+        app = super().create_web_app(template)
+
+        app.add_routes(LayoutPlugin._get_routes(self))
+
+        return app
 
     async def get_info(self) -> Dict:
         d = await AutocontrolPlugin.get_info(self)
