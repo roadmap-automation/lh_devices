@@ -58,6 +58,9 @@ class CameraDeviceBase(DeviceBase):
             if cam.isOpened():
                 result, image = cam.read()
                 self.timestamp = datetime.datetime.now()
+            else:
+                self.clear()
+                self.logger.warning(f'{self.name} Camera at address {self.address} cannot be opened')
 
             # render image as base64 string
             self.raw_image = image
