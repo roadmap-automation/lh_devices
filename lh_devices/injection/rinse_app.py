@@ -64,7 +64,7 @@ async def run_injection_system():
     # connect selector and source valves
     connect_nodes(selector_valve.valve.nodes[0], source_valve.valve.nodes[1], 245.0)
 
-    waste_tracker = RoadmapWasteInterface('http://localhost:5001/Waste/AddWaste/')
+    waste_tracker = RoadmapWasteInterface('http://localhost:5001/Waste/AddWaste')
 
     rinse_system = RinseSystem(syringe_pump=syringe_pump,
                                source_valve=source_valve,
@@ -96,6 +96,9 @@ async def run_injection_system():
                                                            name='Distribution System',
                                                            id='distribution_system')
 
+    distribution_app = distribution_system.create_web_app(template='roadmap.html')
+    distribution_runner = await run_socket_app(distribution_app, 'localhost', 5002)
+
     # ============== Injection System setup =====================
     # serial communications setup
     gsioc = GSIOC(62, 'COM13', 19200)
@@ -124,9 +127,9 @@ async def run_injection_system():
     fc1 = FlowCell(139, 'flow_cell1')
     fc2 = FlowCell(139, 'flow_cell2')
 
-    sampleloop0 = FlowCell(5060., 'sample_loop0')
-    sampleloop1 = FlowCell(5060., 'sample_loop1')
-    sampleloop2 = FlowCell(5000., 'sample_loop2')
+    sampleloop0 = FlowCell(5060., 'Injection Loop 0')
+    sampleloop1 = FlowCell(5060., 'Injection Loop 1')
+    sampleloop2 = FlowCell(5000., 'Injection Loop 2')
 
     channel_0 = RoadmapChannelBubbleSensor(mvp0, sp0, fc0, sampleloop0, injection_node=ip.nodes[0], inlet_bubble_sensor=inlet_bubble_sensor0, outlet_bubble_sensor=outlet_bubble_sensor0, name='Channel 0')
     channel_1 = RoadmapChannelBubbleSensor(mvp1, sp1, fc1, sampleloop1, injection_node=ip.nodes[0], inlet_bubble_sensor=inlet_bubble_sensor1, outlet_bubble_sensor=outlet_bubble_sensor1, name='Channel 1')
@@ -201,7 +204,8 @@ async def run_injection_system():
         gsioc_task.cancel()
         asyncio.gather(
                     runner.cleanup(),
-                    rinse_runner.cleanup())
+                    rinse_runner.cleanup(),
+                    distribution_runner.cleanup())
 
 if __name__=='__main__':
 
