@@ -442,7 +442,7 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         monitor_task = asyncio.create_task(self.detect_air_gap(delay=min_pump_volume/pump_flow_rate, callback=self.channel.change_mode('LHPrime')))
         
         # submit dead volume to waste (this is the only place it is tracked; total air gap size is not tracked)
-        await self.waste_tracker.submit_water(dead_volume)
+        await self.waste_tracker.submit_water(dead_volume / 1000)
 
         # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')

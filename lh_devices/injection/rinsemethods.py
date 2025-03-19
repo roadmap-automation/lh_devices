@@ -84,13 +84,13 @@ class RinseLoadLoop(MethodBase):
             await self.rinse_system.aspirate_air_gap(air_gap)
             await self.rinse_system.change_mode('PumpLoopInject')
             actual_volume += await self.rinse_system.syringe_pump.smart_dispense(dead_volume + air_gap + rinse_volume, flow_rate)
-            await self.waste_tracker.submit_water(pump_volume + dead_volume + excess_volume + rinse_volume)
+            await self.waste_tracker.submit_water((pump_volume + dead_volume + excess_volume + rinse_volume) / 1000)
 
         else:
             # aspirate plug
             await self.rinse_system.aspirate_plug(target_well, pump_volume + excess_volume, air_gap, aspirate_flow_rate)
             await self.waste_tracker.submit(WasteItem(composition=target_well.composition,
-                                                      volume=pump_volume + excess_volume))
+                                                      volume=(pump_volume + excess_volume) / 1000))
 
             # push aspirated material through to loop
             await self.rinse_system.change_mode('PumpLoopInject')
@@ -99,7 +99,7 @@ class RinseLoadLoop(MethodBase):
 
             rinse_aspirate_dead_volume = max(500, 5 * self.rinse_system._aspirate_dead_volume())
             await self.rinse_system.primeloop(n_prime=1, volume=rinse_aspirate_dead_volume)
-            await self.waste_tracker.submit_water(dead_volume + rinse_aspirate_dead_volume)
+            await self.waste_tracker.submit_water((dead_volume + rinse_aspirate_dead_volume) / 1000)
 
         # rinse and distribution systems are done, release relevant devices
         await self.rinse_system.change_mode('Standby')
@@ -292,7 +292,7 @@ class RinseDirectInject(MethodBase):
             await self.channel.change_mode('LHPrime')
             # push excess volume to waste
             actual_volume += await self.rinse_system.syringe_pump.smart_dispense(excess_volume * 0.5 + rinse_volume, flow_rate)
-            await self.waste_tracker.submit_water(pump_volume + dead_volume + excess_volume + rinse_volume)
+            await self.waste_tracker.submit_water((pump_volume + dead_volume + excess_volume + rinse_volume) / 1000)
 
         else:
             # aspirate plug
@@ -315,7 +315,7 @@ class RinseDirectInject(MethodBase):
             # rinse aspiration pathway
             rinse_aspirate_dead_volume = max(500, 5 * self.rinse_system._aspirate_dead_volume())
             await self.rinse_system.primeloop(n_prime=1, volume=rinse_aspirate_dead_volume)
-            await self.waste_tracker.submit_water(dead_volume + rinse_volume + rinse_aspirate_dead_volume)
+            await self.waste_tracker.submit_water((dead_volume + rinse_volume + rinse_aspirate_dead_volume) / 1000)
 
 
         # switch to standby mode
@@ -404,7 +404,7 @@ class RinseDirectInjectBubbleSensor(MethodBase):
 
             # push excess volume to waste
             actual_volume += await self.rinse_system.syringe_pump.smart_dispense(excess_volume * 0.5 + rinse_volume, flow_rate)
-            await self.waste_tracker.submit_water(pump_volume + dead_volume + excess_volume + rinse_volume)
+            await self.waste_tracker.submit_water((pump_volume + dead_volume + excess_volume + rinse_volume) / 1000)
 
         else:
             # aspirate plug
@@ -426,7 +426,7 @@ class RinseDirectInjectBubbleSensor(MethodBase):
             
             rinse_aspirate_dead_volume = max(500, 5 * self.rinse_system._aspirate_dead_volume())
             await self.rinse_system.primeloop(n_prime=1, volume=rinse_aspirate_dead_volume)
-            await self.waste_tracker.submit_water(dead_volume + rinse_volume + rinse_aspirate_dead_volume)
+            await self.waste_tracker.submit_water((dead_volume + rinse_volume + rinse_aspirate_dead_volume) / 1000)
         
         # switch to standby mode
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            

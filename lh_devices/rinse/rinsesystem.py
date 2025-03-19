@@ -258,7 +258,7 @@ class PrimeRinseSource(MethodBase):
             await self.rinsesystem.aspirate_solvent(index, volume, use_dead_volume=False)
             await self.rinsesystem.primeloop(n_prime=1, volume=volume)
         
-        await self.waste_tracker.submit(WasteItem(composition=target_composition, volume=volume * float(number_of_primes)))
+        await self.waste_tracker.submit(WasteItem(composition=target_composition, volume=volume * float(number_of_primes) / 1000))
 
         self.logger.info(f'{self.rinsesystem.name}.{method.name}: Switching to Standby mode')
         await self.rinsesystem.change_mode('Standby')
@@ -344,7 +344,7 @@ class RinseSystem(AutocontrolPlugin, RinseSystemBase):
         if command == 'prime_loop':
             return self.run_method('PrimeRinseLoop', dict(name='PrimeRinseLoop', number_of_primes=int(data['n_prime'])))
         if command == 'prime_source':
-            return self.run_method('PrimeRinseSource', dict(name='PrimeRinseSource', index=int(data['n_prime']), volume=2.0))
+            return self.run_method('PrimeRinseSource', dict(name='PrimeRinseSource', index=int(data['n_prime']), volume=2.0, number_of_primes=1))
             #return await self.primeloop(int(data['n_prime']))
         if command == 'release':
             await self.release()
