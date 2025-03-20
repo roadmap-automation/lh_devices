@@ -54,7 +54,7 @@ async def run_injection_system():
 
     # hackish attempt to ensure dead volume tracing goes the correct direction
     rinse_ip = InjectionPort('loop_injection_port')
-    rinse_ip.injection_port = source_valve.valve.ports[2]
+    rinse_ip.injection_port = source_valve.valve.ports[3]
     rinse_ip._generate_nodes()
 
     # connect loop to syringe pump and selector valve
@@ -62,7 +62,7 @@ async def run_injection_system():
     connect_nodes(rinse_loop.outlet_node, source_valve.valve.nodes[0], 0.0)
 
     # connect selector and source valves
-    connect_nodes(selector_valve.valve.nodes[0], source_valve.valve.nodes[1], 245.0)
+    connect_nodes(selector_valve.valve.nodes[0], source_valve.valve.nodes[4], 265.0)
 
     waste_tracker = RoadmapWasteInterface('http://localhost:5001/Waste/AddWaste')
 
