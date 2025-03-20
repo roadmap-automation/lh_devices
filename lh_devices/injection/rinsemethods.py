@@ -78,10 +78,10 @@ class RinseLoadLoop(MethodBase):
 
         # aspirate material of interest in rinse system. If water (well_index 0), we are using the contents of the loop and the order is different
         if target_well.rack_id == 'Water':
-            await self.rinse_system.aspirate_air_gap(air_gap)
+            await self.rinse_system.aspirate_air_gap(air_gap, mode='AspirateBackAirGap')
             await self.rinse_system.change_mode('PumpLoopInject')
             actual_volume = await self.rinse_system.syringe_pump.smart_dispense(air_gap + pump_volume + excess_volume, flow_rate)
-            await self.rinse_system.aspirate_air_gap(air_gap)
+            await self.rinse_system.aspirate_air_gap(air_gap, mode='AspirateBackAirGap')
             await self.rinse_system.change_mode('PumpLoopInject')
             actual_volume += await self.rinse_system.syringe_pump.smart_dispense(dead_volume + air_gap + rinse_volume, flow_rate)
             await self.waste_tracker.submit_water((pump_volume + dead_volume + excess_volume + rinse_volume) / 1000)
@@ -280,7 +280,7 @@ class RinseDirectInject(MethodBase):
         # aspirate material of interest in rinse system. If water (well_index 0), we are using the contents of the rinse loop and the order is different
         if target_well.rack_id == 'Water':
             # aspirate air gap
-            await self.rinse_system.aspirate_air_gap(air_gap)
+            await self.rinse_system.aspirate_air_gap(air_gap, mode='AspirateBackAirGap')
             # move air gap through the dead volume
             await self.rinse_system.change_mode('PumpDirectInject')
             actual_volume = await self.rinse_system.syringe_pump.smart_dispense(dead_volume + air_gap + 0.5 * excess_volume, flow_rate)
@@ -387,7 +387,7 @@ class RinseDirectInjectBubbleSensor(MethodBase):
         # aspirate material of interest in rinse system. If water (well_index 0), we are using the contents of the rinse loop and the order is different
         if target_well.rack_id == 'Water':
             # aspirate air gap
-            await self.rinse_system.aspirate_air_gap(air_gap)
+            await self.rinse_system.aspirate_air_gap(air_gap, mode='AspirateBackAirGap')
             
             # move air gap through the dead volume. If air gap detected, stop the syringe pump
             actual_volume = await self.dispense_with_monitor(self.outlet_bubble_sensor, (dead_volume + air_gap + 0.5 * excess_volume) * 1000, flow_rate * 1000 / 60, min_pump_volume=min_pump_volume * 1000)

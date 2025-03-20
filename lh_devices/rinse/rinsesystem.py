@@ -56,8 +56,11 @@ class RinseSystemBase(InjectionChannelBase, LayoutPlugin):
                       'Aspirate': Mode({source_valve: 4,
                                         syringe_pump: 3},
                                         final_node=self.source_valve.valve.nodes[4]),
-                      'AspirateAirGap': Mode({source_valve: 1,
+                      'AspirateFrontAirGap': Mode({source_valve: 1,
                                               syringe_pump: 3}),
+                      'AspirateBackAirGap': Mode({source_valve: 4,
+                                                   selector_valve: 7,
+                                                   syringe_pump: 3}),
                       'PumpAspirate': Mode({syringe_pump: 1}),
                       'PumpPrimeLoop': Mode({source_valve: 4,
                                              selector_valve: 8,
@@ -114,7 +117,7 @@ class RinseSystemBase(InjectionChannelBase, LayoutPlugin):
 
         return 0
     
-    async def aspirate_air_gap(self, air_gap_volume: float, speed: float | None = None):
+    async def aspirate_air_gap(self, air_gap_volume: float, speed: float | None = None, mode: str = 'AspirateBackAirGap'):
         """Aspirates an air gap into the sample loop
 
         Args:
@@ -122,7 +125,7 @@ class RinseSystemBase(InjectionChannelBase, LayoutPlugin):
             speed (float, optional): Speed (ul / s). Defaults to max aspirate flow rate
         """
         
-        await self.change_mode('AspirateAirGap')
+        await self.change_mode(mode)
         if speed is None:
             speed = 3.0 * 1000 / 60 # 3 mL/min; not very fast but only takes a few seconds
         await self.syringe_pump.run_syringe_until_idle(self.syringe_pump.aspirate(air_gap_volume, speed))
@@ -170,11 +173,11 @@ class RinseSystemBase(InjectionChannelBase, LayoutPlugin):
         if speed is None:
             speed = self.syringe_pump.max_aspirate_flow_rate
 
-        await self.aspirate_air_gap(air_gap_volume)
-        actual_volume = await self.aspirate_solvent(target_well.well_number, volume, speed)
+        await self.aspirate_air_gap(air_gap_volume, mode='AspirateBackAirGap')
+        actual_volume = await self.aspirate_solvent(target_well.well_number, volume, speed, use_dead_volume=True)
         target_well.volume -= actual_volume
         self.save_layout()
-        await self.aspirate_air_gap(air_gap_volume)
+        await self.aspirate_air_gap(air_gap_volume, mode='AspirateFrontAirGap')
 
     async def primeloop(self,
                         n_prime: int = 1, # number of repeats
