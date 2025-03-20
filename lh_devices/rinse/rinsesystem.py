@@ -175,7 +175,7 @@ class RinseSystemBase(InjectionChannelBase, LayoutPlugin):
 
         await self.aspirate_air_gap(air_gap_volume, mode='AspirateBackAirGap')
         actual_volume = await self.aspirate_solvent(target_well.well_number, volume, speed, use_dead_volume=True)
-        target_well.volume -= actual_volume
+        target_well.volume -= actual_volume / 1000
         self.save_layout()
         await self.aspirate_air_gap(air_gap_volume, mode='AspirateFrontAirGap')
 
