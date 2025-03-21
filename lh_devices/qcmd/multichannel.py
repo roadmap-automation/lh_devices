@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from lh_manager.liquid_handler.bedlayout import LHBedLayout, Composition, Rack, Well
 
-from ..camera.camera import CameraDeviceBase, FIT0819
+from ..camera.camera import CameraDeviceBase, FIT0819, DFRobotCameraList
 from ..device import DeviceBase, PollTimer
 from ..assemblies import InjectionChannelBase
 from ..layout import LayoutPlugin
@@ -496,12 +496,12 @@ class QCMDAcceptTransfer(MethodBase):
     async def run(self, **kwargs):
 
         method = self.MethodDefinition(**kwargs)
-        method.contents = Composition.model_validate(method.contents)
+        contents = Composition.model_validate(method.contents)
         self.reserve_all()
-        self.logger.info(f'{self.name}: Received transfer of material {repr(method.contents)}')
+        self.logger.info(f'{self.name}: Received transfer of material {repr(contents)}')
         well, _ = self.layout.get_well_and_rack(self.channel.name, 1)
-        well.composition = method.contents
-        result = {'contents': asdict(method.contents)}
+        well.composition = contents
+        result = {'contents': contents.model_dump()}
         self.release_all()
 
         return result
@@ -611,3 +611,31 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
         app.add_routes(LayoutPlugin._get_routes(self))
 
         return app
+    
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        await super().event_handler(command, data)
+
+        if command == 'refresh_camera_list':
+            camera_list = DFRobotCameraList()
+            channels: list[QCMDMeasurementChannelwithCamera] = self.channels
+            for ch in channels:
+                ch.camera.camera_list = camera_list
+                if ch.camera.address not in camera_list.cameras.keys():
+                    ch.camera.address = list(camera_list.cameras.keys())[0]
+
+            await self.trigger_update()    
+
+    async def get_info(self):
+        d = await super().get_info()
+
+        d['controls'] = d.get('controls', {}) | {'refresh_camera_list': {'type': 'button',
+                                                                     'text': 'Refresh Cameras'}}
+
+        return d
