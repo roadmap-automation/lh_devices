@@ -144,38 +144,52 @@ class RinseLoadLoopBubbleSensor(RinseLoadLoop):
 
         air_gap = float(method.air_gap) * 1000
         pump_volume = float(method.pump_volume) * 1000
+        excess_volume = float(method.excess_volume) * 1000
 
-        # set minimum pump volume before checking for bubbles
-        min_pump_volume = 0.5 * pump_volume if pump_volume > 200 else 0
-
-        # Power the bubble sensor
+        # power the bubble sensor
         await self.channel.syringe_pump.set_digital_output(1, True)
 
-        # smart dispense the volume required to move plug quickly through loop, interrupting if sensor 2 goes low (air detected)
-        self.logger.info(f'{self.channel.name}.{method.name}: Moving plug through loop until air gap detected, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume)} uL with minimum volume {min_pump_volume} uL')
-        if min_pump_volume > 0:
-            actual_volume0 = await self.channel.syringe_pump.smart_dispense(min_pump_volume, self.channel.syringe_pump.max_dispense_flow_rate)
-            await self.waste_tracker.submit_water(actual_volume0 / 1000)
-        else:
-            actual_volume0 = 0.0
-        actual_volume = await self.channel.syringe_pump.smart_dispense(self.channel.sample_loop.get_volume() - pump_volume - min_pump_volume, self.channel.syringe_pump.max_dispense_flow_rate, 6)
-        self.logger.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume + actual_volume0} uL')
-        await self.waste_tracker.submit_water(actual_volume / 1000)
-
-        async def traverse_air_gap(nominal_air_gap: float, flow_rate: float = self.channel.syringe_pump.max_dispense_flow_rate, volume_step: float = 10) -> float:
+        async def traverse_air_gap(flow_rate: float = self.channel.syringe_pump.max_dispense_flow_rate, volume_step: float = 10) -> float:
             
             total_air_gap_volume = 0
-            total_air_gap_volume += await self.channel.syringe_pump.smart_dispense(nominal_air_gap, flow_rate)
+            #total_air_gap_volume += await self.channel.syringe_pump.smart_dispense(nominal_air_gap, flow_rate)
             while not (await self.channel.syringe_pump.get_digital_input(2)):
                 total_air_gap_volume += await self.channel.syringe_pump.smart_dispense(volume_step, flow_rate)
             
             return total_air_gap_volume
 
-        # traverse the air gap until fluid is detected at sensor 2 again
-        self.logger.info(f'{self.channel.name}.{method.name}: Traversing air gap...')
-        total_air_gap_volume = await traverse_air_gap(air_gap, self.channel.syringe_pump.max_dispense_flow_rate)
-        self.logger.info(f'{self.channel.name}.{method.name}: Total air gap volume: {total_air_gap_volume} uL')
-        await self.waste_tracker.submit_water(total_air_gap_volume / 1000)
+        air_gap_detected = False
+        max_dispense_volume = self.channel.sample_loop.get_volume() - 2 * air_gap - excess_volume - pump_volume
+        total_water_volume = 0.0
+        total_air_gap_volume = 0.0
+        while (not air_gap_detected) & (max_dispense_volume > air_gap):
+            self.logger.info(f'{self.channel.name}.{method.name}: Moving plug through loop until air gap detected, total injection volume {max_dispense_volume} uL')
+            actual_volume = await self.channel.syringe_pump.smart_dispense(max_dispense_volume, self.channel.syringe_pump.max_dispense_flow_rate, 6)
+            self.logger.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume} uL')
+            total_water_volume += actual_volume
+
+            # traverse the air gap until fluid is detected at sensor 2 again
+            self.logger.info(f'{self.channel.name}.{method.name}: Traversing air gap...')
+            # choose flow rate that would take 5 seconds to traverse the nominal flow rate
+            air_gap_volume = await traverse_air_gap(flow_rate=air_gap / 5, volume_step=10)
+            total_air_gap_volume += air_gap_volume
+            self.logger.info(f'{self.channel.name}.{method.name}: Total air gap volume: {air_gap_volume} uL')
+            total_water_volume += air_gap_volume
+
+            # if bubble size big enough to plausibly be the air gap, break the loop
+            if air_gap_volume > 0.4 * air_gap:
+                air_gap_detected = True
+            else:
+                max_dispense_volume -= (actual_volume + air_gap_volume)
+
+        # make sure that the entire air gap has been dispensed, plus half the excess volume
+        extra_dispense_volume = max(0, air_gap - total_air_gap_volume) + 0.5 * excess_volume
+        if extra_dispense_volume > 0:
+            self.logger.info(f'{self.channel.name}.{method.name}: Dispensing additional air gap volume {max(0, air_gap - total_air_gap_volume)} uL and excess volume {0.5 * excess_volume} uL')
+            extra_volume = await self.channel.syringe_pump.smart_dispense(extra_dispense_volume, self.channel.syringe_pump.max_dispense_flow_rate)
+            total_water_volume += extra_volume
+
+        await self.waste_tracker.submit_water(total_water_volume / 1000)
 
 class RinseDirectInjectPrime(MethodBase):
     """Prime direct inject line
