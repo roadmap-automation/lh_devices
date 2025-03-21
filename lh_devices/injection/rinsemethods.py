@@ -110,7 +110,7 @@ class RinseLoadLoop(MethodBase):
             await dev.trigger_update()
 
         self.channel.well.composition = composition
-        self.channel.well.volume = pump_volume + excess_volume
+        self.channel.well.volume = (pump_volume + excess_volume) / 1000
 
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
         await self.channel.change_mode('PumpPrimeLoop')
@@ -365,32 +365,37 @@ class RinseDirectInjectBubbleSensor(MethodBase):
         composition = Composition.model_validate(method.composition)
         target_well = self.rinse_system.get_well(composition)
 
-        air_gap = float(method.air_gap)
-        pump_volume = float(method.pump_volume)
-        excess_volume = float(method.excess_volume)
-        rinse_volume = float(method.rinse_volume)
-        aspirate_flow_rate = float(method.aspirate_flow_rate)
-        inject_flow_rate = float(method.inject_flow_rate)
-        flow_rate = float(method.flow_rate)
+        air_gap = float(method.air_gap) * 1000
+        pump_volume = float(method.pump_volume) * 1000
+        excess_volume = float(method.excess_volume) * 1000
+        rinse_volume = float(method.rinse_volume) * 1000
+        aspirate_flow_rate = float(method.aspirate_flow_rate) * 1000 / 60
+        inject_flow_rate = float(method.inject_flow_rate) * 1000 / 60
+        flow_rate = float(method.flow_rate) * 1000 / 60
 
         # set minimum pump volume before checking for bubbles
-        min_pump_volume = 0.5 * pump_volume if pump_volume > 0.2 else 0
+        min_pump_volume = 0.5 * pump_volume if pump_volume > 200 else 0
 
         # set source and channel selector and calculate dead volume
         await self.distribution_mode.activate()
-        dead_volume = self.channel.get_dead_volume('LHPrime', self.rinse_system.direct_injection_node)
+        dead_volume = self.channel.get_dead_volume('LHPrime', self.rinse_system.direct_injection_port.nodes[0])
         self.logger.info(f'{self.channel.name}.{method.name}: dead volume is {dead_volume}')
 
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await self.channel.change_mode('LHPrime')
 
+        # power on bubble sensors
+        await self.inlet_bubble_sensor.initialize()
+        await self.outlet_bubble_sensor.initialize()
+
         # aspirate material of interest in rinse system. If water (well_index 0), we are using the contents of the rinse loop and the order is different
         if target_well.rack_id == 'Water':
             # aspirate air gap
-            await self.rinse_system.aspirate_air_gap(air_gap, mode='AspirateBackAirGap')
+            await self.rinse_system.aspirate_air_gap(air_gap, mode='AspirateFrontAirGap')
             
             # move air gap through the dead volume. If air gap detected, stop the syringe pump
-            actual_volume = await self.dispense_with_monitor(self.outlet_bubble_sensor, (dead_volume + air_gap + 0.5 * excess_volume) * 1000, flow_rate * 1000 / 60, min_pump_volume=min_pump_volume * 1000)
+            await self.rinse_system.change_mode('PumpDirectInject')
+            actual_volume = await self.dispense_with_monitor(self.outlet_bubble_sensor, (dead_volume + air_gap + 0.5 * excess_volume), flow_rate, min_pump_volume=min_pump_volume)
             actual_air_gap_volume = await self.traverse_air_gap(air_gap, flow_rate)
 
             # switch to inject mode
@@ -408,17 +413,18 @@ class RinseDirectInjectBubbleSensor(MethodBase):
 
         else:
             # aspirate plug
-            await self.rinse_system.aspirate_plug(target_well, (pump_volume + excess_volume) / 1000, air_gap, aspirate_flow_rate)
+            await self.rinse_system.aspirate_plug(target_well, (pump_volume + excess_volume), air_gap, aspirate_flow_rate)
             await self.waste_tracker.submit(WasteItem(composition=target_well.composition,
                                                       volume=(pump_volume + excess_volume) / 1000))
 
+            await self.rinse_system.change_mode('PumpDirectInject')
             # move air gap through the dead volume. If air gap detected, stop the syringe pump
-            await self.dispense_with_monitor(self.outlet_bubble_sensor, (dead_volume + air_gap + 0.5 * excess_volume) * 1000, flow_rate * 1000 / 60, min_pump_volume=min_pump_volume * 1000)
+            await self.dispense_with_monitor(self.outlet_bubble_sensor, (dead_volume + air_gap + 0.5 * excess_volume), flow_rate, min_pump_volume=min_pump_volume)
             actual_air_gap_volume = await self.traverse_air_gap(air_gap, flow_rate)
             # switch to inject mode
             await self.channel.change_mode('LHInject')
             # inject plug. If back air gap detected, stop the pump
-            await self.dispense_with_monitor(self.inlet_bubble_sensor, (pump_volume) * 1000, inject_flow_rate * 1000 / 60, min_pump_volume=min_pump_volume * 1000)
+            await self.dispense_with_monitor(self.inlet_bubble_sensor, pump_volume, inject_flow_rate, min_pump_volume=min_pump_volume)
             # switch back to prime mode
             await self.channel.change_mode('LHPrime')
             # push excess volume to waste
@@ -450,9 +456,9 @@ class RinseDirectInjectBubbleSensor(MethodBase):
     async def traverse_air_gap(self, nominal_air_gap: float, flow_rate: float, volume_step: float = 10) -> float:
             
             total_air_gap_volume = 0
-            total_air_gap_volume += await self.channel.syringe_pump.smart_dispense(nominal_air_gap, flow_rate)
+            total_air_gap_volume += await self.rinse_system.syringe_pump.smart_dispense(nominal_air_gap, flow_rate)
             while not (await self.outlet_bubble_sensor.read()):
-                total_air_gap_volume += await self.channel.syringe_pump.smart_dispense(volume_step, flow_rate)
+                total_air_gap_volume += await self.rinse_system.syringe_pump.smart_dispense(volume_step, flow_rate)
             
             return total_air_gap_volume
 
