@@ -513,6 +513,9 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
         super().__init__(qcmd, name)
         self.devices += [camera]
 
+        self.methods.update({'QCMDRecordTag': self.QCMDRecordTagwithCamera(qcmd, camera),
+                             'QCMDCaptureImage': self.QCMDCaptureImage(qcmd, camera)})
+
     class QCMDMethodBasewithCamera(QCMDMeasurementChannel.QCMDMethodBase):
 
         def __init__(self, device: QCMDMeasurementDevice, camera: CameraDeviceBase):
@@ -537,6 +540,35 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
             self.release_all()
 
             return {'image': self.camera.image}
+
+    class QCMDRecordTagwithCamera(QCMDMethodBasewithCamera):
+
+        @dataclass
+        class MethodDefinition(MethodBase.MethodDefinition):
+            """Sets a tag after sleep_time + record_time
+
+            Args:
+                tag_name (str, optional): Tag name
+                record_time (float, optional): Time to record in seconds. Defaults to 0.0.
+                sleep_time (float, optional): Time to sleep before recording in seconds. Defaults to 0.0.
+            """
+            name: str = 'QCMDRecordTag'
+            tag_name: str = ''
+            record_time: float = 0.0
+            sleep_time: float = 0.0
+
+        async def run(self, **kwargs):
+
+            method = self.MethodDefinition(**kwargs)
+            self.reserve_all()
+            await self.camera.capture()
+            result = {'images': {'before': self.camera.image}}
+            result = result | await self.qcmd.record_tag(method.tag_name, method.record_time, method.sleep_time)
+            await self.camera.capture()
+            result['images'].update({'after': self.camera.image})
+            self.release_all()
+
+            return result
 
 class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
     """QCMD recording device simultaneously recording on multiple QCMD instruments"""
