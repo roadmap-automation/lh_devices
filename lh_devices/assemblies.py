@@ -228,6 +228,13 @@ class AssemblyBase(WebNodeBase):
             bool: True if any devices are reserved
         """
         return any(dev.reserved for dev in self.devices)
+    
+    async def release(self):
+        """Releases reservations on all devices
+        """
+        for dev in self.devices:
+            dev.reserved = False
+            await dev.trigger_update()
 
     @property
     def error(self) -> DeviceError | None:

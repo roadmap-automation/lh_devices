@@ -89,8 +89,11 @@ class RoadmapChannelBase(InjectionChannelBase):
     async def get_info(self) -> Dict:
         d = await super().get_info()
 
-        d['controls'] = d['controls'] | {'prime_loop': {'type': 'number',
-                                                'text': 'Prime loop repeats: '}}
+        d['controls'] = d.get('controls', {}) | {'release': {'type': 'button',
+                                                    'text': 'Release'},
+                                                 'prime_loop': {'type': 'number',
+                                                    'text': 'Prime loop repeats: '},
+}
         
         return d
     
@@ -99,6 +102,8 @@ class RoadmapChannelBase(InjectionChannelBase):
         if command == 'prime_loop':
             return self.run_method('PrimeLoop', dict(name='PrimeLoop', number_of_primes=int(data['n_prime'])))
             #return await self.primeloop(int(data['n_prime']))
+        elif command == 'release':
+            await self.release()
         else:
             return await super().event_handler(command, data)
 
