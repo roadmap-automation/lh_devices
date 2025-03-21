@@ -61,6 +61,7 @@ class CameraDeviceBase(DeviceBase):
             else:
                 self.clear()
                 self.logger.warning(f'{self.name} Camera at address {self.address} cannot be opened')
+                return
 
             # render image as base64 string
             self.raw_image = image
