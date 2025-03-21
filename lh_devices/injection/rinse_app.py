@@ -149,7 +149,7 @@ async def run_injection_system():
 
     # direct inject: connect distribution valve port 2 to loop valve node 3 (top right)
     # volume ~ tubing volume + 60 uL for bubble sensor
-    connect_nodes(dvp_selection.valve.nodes[2], mvp0.valve.nodes[3], 100)
+    connect_nodes(dvp_selection.valve.nodes[2], mvp0.valve.nodes[3], 120)
     connect_nodes(dvp_selection.valve.nodes[4], mvp1.valve.nodes[3], 180)
     connect_nodes(dvp_selection.valve.nodes[6], mvp2.valve.nodes[3], 180)
 
