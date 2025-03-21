@@ -437,9 +437,9 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         liquid_in_line = False
         await self.dead_volume.put(int(liquid_in_line))
 
-        # traverse air gap
+        # traverse air gap. Requires both inlet and outlet bubble sensors to contain liquid for a successful transfer (if inlet bubble sensor has air but outlet does not, likely insufficient dead volume estimation)
         while not liquid_in_line:
-            liquid_in_line = await self.outlet_bubble_sensor.read()
+            liquid_in_line = (await self.outlet_bubble_sensor.read()) & (await self.inlet_bubble_sensor.read())
             self.logger.info(f'{self.channel.name}.{method.name}:     Outlet bubble sensor value: {int(liquid_in_line)}')
             # if end condition reached, remove old queue value and put in current one
             if liquid_in_line:
