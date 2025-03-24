@@ -383,7 +383,7 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
     @dataclass
     class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
-        name: str = "DirectInject"
+        name: str = "DirectInjectBubbleSensor"
         pump_volume: str | float = 0, # uL
         pump_flow_rate: str | float = 1, # mL/min
 
@@ -498,4 +498,6 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
             self.logger.info(f'{self.channel.name}.detect_air_gap: Air detected, activating callback')            
             await callback
         except asyncio.CancelledError:
+            pass
+        finally:
             callback.close()
