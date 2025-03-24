@@ -150,8 +150,8 @@ async def run_injection_system():
     # direct inject: connect distribution valve port 2 to loop valve node 3 (top right)
     # volume ~ tubing volume + 60 uL for bubble sensor
     connect_nodes(dvp_selection.valve.nodes[2], mvp0.valve.nodes[3], 120)
-    connect_nodes(dvp_selection.valve.nodes[4], mvp1.valve.nodes[3], 180)
-    connect_nodes(dvp_selection.valve.nodes[6], mvp2.valve.nodes[3], 180)
+    connect_nodes(dvp_selection.valve.nodes[4], mvp1.valve.nodes[3], 200)
+    connect_nodes(dvp_selection.valve.nodes[6], mvp2.valve.nodes[3], 200)
 
     # connect syringe pump valve port 3 to sample loop
     connect_nodes(sp0.valve.nodes[3], sampleloop0.inlet_node, 0.0)
@@ -179,6 +179,7 @@ async def run_injection_system():
                                             distribution_system=distribution_system,
                                             rinse_system=rinse_system,
                                             gsioc=gsioc,
+                                            layout_path=LOG_PATH / 'injection_layout.json',
                                             database_path=HISTORY_PATH / 'injection_system.db',
                                             waste_tracker=waste_tracker,
                                             name='MultiChannel Injection System')

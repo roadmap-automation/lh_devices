@@ -107,7 +107,7 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin):
             for i, ch in enumerate(channels):
                 racks[ch.sample_loop.name] = Rack(columns=1,
                                    rows=1,
-                                   max_volume=ch.sample_loop.get_volume(),
+                                   max_volume=ch.sample_loop.get_volume() / 1000,
                                    wells=[ch.well],
                                    style='grid',
                                    height=300,
