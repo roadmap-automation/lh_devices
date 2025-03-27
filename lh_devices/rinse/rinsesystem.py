@@ -254,12 +254,13 @@ class PrimeRinseSource(MethodBase):
         volume = float(method.volume) * 1000
         number_of_primes = int(method.number_of_primes)
         air_gap = 200
+        aspirate_speed = 10 * 1000 / 60. # 10 um bottle filters have a max speed of 10 mL/min
 
         target_well, _ = self.rinsesystem.layout.get_well_and_rack('Rinse', index)
         target_composition = target_well.composition
 
         for _ in range(number_of_primes):
-            await self.rinsesystem.aspirate_plug(target_well, volume, air_gap)
+            await self.rinsesystem.aspirate_plug(target_well, volume, air_gap, aspirate_speed)
             await self.rinsesystem.primeloop(n_prime=1, volume=volume + 2 * air_gap + self.rinsesystem._aspirate_dead_volume())
         
         await self.waste_tracker.submit(WasteItem(composition=target_composition, volume=volume * float(number_of_primes) / 1000))
