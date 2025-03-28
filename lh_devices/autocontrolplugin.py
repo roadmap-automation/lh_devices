@@ -38,11 +38,11 @@ class AutocontrolPlugin(MethodPlugin, DatabasePlugin):
 
     async def _get_task(self, request: web.Request) -> web.Response:
         """Handles requests for information about a task. Dummy method round-trips the response through a TaskData serialization process."""
-        data = await request.json()
-        task = TaskData(**data)
+        data: dict = await request.json()
+        task_id = data.get('task_id', '')
         
-        record = self.read_from_database(task.id)
+        record = self.read_from_database(task_id)
         if record is None:
-            return web.Response(text=f'error: id {task.id} does not exist', status=400)
+            return web.Response(text=f'error: id {task_id} does not exist', status=400)
 
         return web.Response(text=json.dumps(asdict(record)), status=200)
