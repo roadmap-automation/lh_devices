@@ -112,10 +112,10 @@ class QCMDMeasurementDevice(DeviceBase):
         time_elapsed = time.time() - self._start if self._start is not None else 0.0
 
         sleep_time_remaining = max(0.0, self._sleep_time - time_elapsed)
-        fmt_sleep = time.strftime('%H:%M:%S' if sleep_time_remaining // 3600 else '%M:%S', time.gmtime(sleep_time_remaining))
+        fmt_sleep = time.strftime('%H:%M:%S' if sleep_time_remaining // 3600 else '%M:%S', time.gmtime(sleep_time_remaining)) if sleep_time_remaining > 0 else None
 
         record_time_remaining = max(0.0, min(self._record_time + self._sleep_time - time_elapsed, self._record_time))
-        fmt_record = time.strftime('%H:%M:%S' if record_time_remaining // 3600 else '%M:%S', time.gmtime(record_time_remaining))
+        fmt_record = time.strftime('%H:%M:%S' if record_time_remaining // 3600 else '%M:%S', time.gmtime(record_time_remaining)) if record_time_remaining > 0 else None
 
         return fmt_sleep, fmt_record
 
@@ -219,6 +219,15 @@ class QCMDMeasurementDevice(DeviceBase):
                      'value': {'description': description}}
 
         return await self._post(post_data)
+    
+    async def set_temperature(self, temperature: float = 25.0) -> dict | None:
+        """Sets temperature and ensures TEC is on
+        """
+
+        post_data = {'command': 'set_TEC',
+                     'value': {'on': True, 'setpoint': temperature}}
+
+        return await self._post(post_data)
 
     async def trigger_update(self):
         if not self._updating:
@@ -280,12 +289,19 @@ class QCMDMeasurementDevice(DeviceBase):
                                         'Tag': self._tag,
                                         'Sleep time remaining': sleep_time_remaining,
                                         'Record time remaining': record_time_remaining}},
-                  'controls': {'interrupt': {'type': 'button',
-                                             'text': 'Interrupt'},
+                  'controls': {'set_temperature': {'type': 'textbox',
+                                                   'text': 'Set temperature: ',
+                                                   'visible': (self.qcmd_status in [QCMDState.MEASURING, QCMDState.INITIALIZING])},
+                               'interrupt': {'type': 'button',
+                                             'text': 'Interrupt',
+                                             'visible': not self.idle},
                                'set_sleep_time': {'type': 'textbox',
-                                                  'text': 'Set sleep time (s): '},
+                                                  'text': 'Set sleep time (s): ',
+                                                  'visible': self.idle},
                                'set_record_time': {'type': 'textbox',
-                                                  'text': 'Set record time (s): '}}})
+                                                  'text': 'Set record time (s): ',
+                                                  'visible': self.idle},
+                                                  }})
         
         return d    
 
@@ -307,6 +323,11 @@ class QCMDMeasurementDevice(DeviceBase):
         elif command == 'set_record_time':
             self._record_time = float(data['value'])
             await self.trigger_update()
+        elif command == 'set_temperature':
+            async def set_temp_and_update():
+                await self.set_temperature(float(data['value']))
+                await self.trigger_update()
+            asyncio.create_task(set_temp_and_update())
 
 class QCMDMeasurementChannel(InjectionChannelBase):
 
@@ -326,8 +347,16 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
     async def get_info(self):
         d = await super().get_info()
-        d['controls'] = d['controls'] | {'add_tag': {'type': 'textbox',
-                                                     'text': 'Add tag: '}}
+        d['controls'] = d['controls'] | {'start': {'type': 'textbox',
+                                                     'text': 'Start with description:',
+                                                     'visible': (self.qcmd.qcmd_status == 'idle')},
+                                         'stop': {'type': 'button',
+                                                  'text': 'Stop',
+                                                  'visible': (self.qcmd.qcmd_status != 'idle')},
+                                        'add_tag': {'type': 'textbox',
+                                                     'text': 'Add tag: ',
+                                                     'visible': (self.qcmd.qcmd_status == 'measuring')},
+                                         }
         
         return d
 
@@ -345,6 +374,10 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             self.run_method('QCMDRecordTag', dict(tag_name=data['value'],
                                                   record_time=self.qcmd._record_time,
                                                   sleep_time=self.qcmd._sleep_time))
+        elif command == 'start':
+            self.run_method('QCMDStart', dict(description=data['value']))
+        elif command == 'stop':
+            self.run_method('QCMDStop', {})
 
     class QCMDMethodBase(MethodBase):
 
@@ -452,12 +485,15 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             name: str = 'QCMDStart'
             description: str = ''
+            temperature: float = 25.0
 
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
             self.reserve_all()
-            result = await self.qcmd.start_collection(method.description)
+            start_result = await self.qcmd.start_collection(method.description)
+            await asyncio.sleep(2)
+            temp_result = await self.qcmd.set_temperature(float(method.temperature))
             
             # wait for collection
             try:
@@ -478,7 +514,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             self.release_all()
 
-            return result
+            return {'start': start_result, 'temp': temp_result}
 
 class QCMDAcceptTransfer(MethodBase):
 
