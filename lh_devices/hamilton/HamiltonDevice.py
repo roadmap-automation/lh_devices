@@ -15,6 +15,7 @@ from ..device import (DeviceBase, DeviceState, ValvePositionerBase,
                     SyringePumpValvePositionerState,
                     SyringePumpValvePositioner, SyringeState,
                     DeviceError)
+from ..notify import notifier
 from ..valve import ValveBase, SyringeValveBase
 from ..webview import WebNodeBase
 
@@ -85,6 +86,7 @@ class HamiltonBase(DeviceBase):
             if self.error.error is not None:
                 self.logger.error(f'{self} error: {self.error}, waiting for clear, retry = {self.error.retry}')
                 await self.trigger_update()
+                notifier.notify(subject=f'Error in {self.name}', msg=f'{self.error}')
                 await self.error.pause_until_clear()
                 self.logger.info(f'{self} error cleared')
                 if self.error.retry:

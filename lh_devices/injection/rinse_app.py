@@ -17,11 +17,17 @@ from ..waste import RoadmapWasteInterface
 from .channel import RoadmapChannelBubbleSensor
 from .injectionsystem import RoadmapChannelAssemblyRinse
 from ..rinse.rinsesystem import RinseSystem
+from ..notify import notifier
 
 LOG_PATH = pathlib.Path(__file__).parent.parent.parent / 'logs'
 HISTORY_PATH = pathlib.Path(__file__).parent.parent.parent / 'history'
+NOTIFICATION_CONFIG_PATH = pathlib.Path(__file__).parent.parent.parent / 'notification_settings.json'
 
 async def run_injection_system():
+
+    # connect to error notifier
+    notifier.load_config(NOTIFICATION_CONFIG_PATH)
+    notifier.connect()
 
     # ============== Rinse System setup =========================
 

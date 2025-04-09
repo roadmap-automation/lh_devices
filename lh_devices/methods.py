@@ -13,6 +13,7 @@ from uuid import uuid4
 from .device import DeviceBase, DeviceError
 from .gilson.gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from .logutils import Loggable, MethodLogHandler, MethodLogFormatter
+from .notify import notifier
 from .webview import WebNodeBase
 from .waste import WasteInterfaceBase
 
@@ -159,6 +160,7 @@ class MethodBase(Loggable):
             self.logger.error(f'Critical error in {self.name}: {e}, retry is {e.retry}, waiting for error to be cleared')
             try:
                 await self.trigger_update()
+                notifier.notify(subject=f'Error in {self.name}', msg=e)
                 await self.error.pause_until_clear()
                 if self.error.retry:
                     # try again!
@@ -201,6 +203,8 @@ class MethodBase(Loggable):
             self.logger.error(f'Non-critical error in {self.__class__}: {error}, waiting for error to be cleared')
             self.error.error = error
             self.error.retry = retry
+            notifier.notify(subject=f'Error in {self.name}', msg=error)
+            await self.trigger_update()
             await self.error.pause_until_clear()
 
 class MethodBasewithTrigger(MethodBase):
