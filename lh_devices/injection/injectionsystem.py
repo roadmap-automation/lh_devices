@@ -100,7 +100,7 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin):
         if current_racks == set(ch.sample_loop.name for ch in channels):
             for ch in channels:
                 # reconnect channel well to layout well
-                ch.well = self.layout.racks[ch.name].wells[0]
+                ch.well = self.layout.racks[ch.sample_loop.name].wells[0]
         else:
             self.logger.info('Loaded layout does not match channel configuration, creating new layout...')
             racks = {}
