@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 
 from dataclasses import dataclass, field
 from typing import Coroutine
@@ -458,7 +459,7 @@ class RinseDirectInjectBubbleSensor(MethodBase):
 
         # move air gap through the dead volume. If air gap detected, stop the syringe pump
         dispense_task = asyncio.create_task(self.rinse_system.syringe_pump.smart_dispense(volume, flow_rate))
-        monitor_task = asyncio.create_task(self.detect_air_gap(bubble_sensor=bubble_sensor, delay=min_pump_volume/flow_rate, callback=async_cancel(dispense_task)))
+        monitor_task = asyncio.create_task(self.detect_air_gap(bubble_sensor=bubble_sensor, delay=min_pump_volume/flow_rate, callback=self.channel.change_mode('LHPrime')))
 
         # blocks until dispense is either done or cancelled
         actual_volume = await dispense_task
@@ -487,10 +488,13 @@ class RinseDirectInjectBubbleSensor(MethodBase):
             while liquid_in_line:
                 _, liquid_in_line = await asyncio.gather(asyncio.sleep(poll_interval), bubble_sensor.read())
 
-            self.logger.info(f'{self.channel.name}.detect_air_gap: Air detected, activating callback')            
+            self.logger.info(f'{self.channel.name}.detect_air_gap: Air detected, activating callback')
             await callback
         except asyncio.CancelledError:
+            self.logger.info('Cancelling callback')
             callback.close()
 
 async def async_cancel(task: asyncio.Task) -> bool:
-    return task.cancel()
+    logging.info(f'task status: {task.done()}')
+    if not task.done():
+        return task.cancel()
