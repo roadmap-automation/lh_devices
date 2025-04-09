@@ -1,4 +1,5 @@
 import time
+import uuid
 import asyncio
 
 from dataclasses import dataclass, field, asdict
@@ -32,6 +33,7 @@ class QCMDMeasurementDevice(DeviceBase):
 
         url_parts = urlsplit(http_address)
         self.session = ClientSession(f'{url_parts.scheme}://{url_parts.netloc}')
+        self.request_lock: asyncio.Lock = asyncio.Lock()
         self.url_path = url_parts.path
         self.timeout = 10
         self.qcmd_status: str = QCMDState.DISCONNECTED
@@ -119,30 +121,38 @@ class QCMDMeasurementDevice(DeviceBase):
 
         return fmt_sleep, fmt_record
 
-    async def _post(self, post_data: dict) -> dict | None:
+    async def _post(self, post_data: dict, wait: bool = True) -> dict | None:
         """Posts data to self.url
 
         Args:
             post_data (dict): data to post
+            wait (bool, optional): if True, wait; otherwise return None. Default True
 
         Returns:
             dict: response JSON
         """
 
-        self.logger.debug(f'{self.session._base_url}{self.url_path} => {post_data}')
+        if wait | (not self.request_lock.locked()):
+            
+            async with self.request_lock:
 
-        response_json: dict | None = None
+                # send an http request to QCMD server
+                self.logger.debug(f'{self.session._base_url}{self.url_path} => {post_data}')
+                response_json: dict | None = None
+                try:
+                    response = await self.session.post(self.url_path, json=post_data, timeout=self.timeout)
+                    response_json = await response.json()
+                    self.logger.debug(f'{self.session._base_url}{self.url_path} <= {response_json}')
+                except (ConnectionRefusedError, ClientConnectionError):
+                    self.logger.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
+                except TimeoutError:
+                    self.logger.error(f'request to {self.session._base_url}{self.url_path} failed: timed out')
 
-        # send an http request to QCMD server
-        try:
-            async with self.session.post(self.url_path, json=post_data, timeout=self.timeout) as resp:
-                response_json = await resp.json()
-                self.logger.debug(f'{self.session._base_url}{self.url_path} <= {response_json}')
-        except (ConnectionRefusedError, ClientConnectionError):
-            self.logger.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
-        except TimeoutError:
-            self.logger.error(f'request to {self.session._base_url}{self.url_path} failed: timed out')
+                return response_json
 
+        else:
+            return {'result': 'interface busy'}
+       
         return response_json
 
     def _reset_state(self):
@@ -200,7 +210,7 @@ class QCMDMeasurementDevice(DeviceBase):
 
         post_result = await self._post(post_data)
 
-        return result | post_result if post_result is not None else result
+        return result | post_result
 
     async def stop_collection(self) -> dict | None:
         """Sends stop signal to QCMD
@@ -230,23 +240,22 @@ class QCMDMeasurementDevice(DeviceBase):
         return await self._post(post_data)
 
     async def trigger_update(self):
-        if not self._updating:
-            asyncio.create_task(self.update_qcmd_status())
+        asyncio.create_task(self.update_qcmd_status())
         return await super().trigger_update()
 
     async def update_qcmd_status(self) -> None:
         """Updates status from QCM server
         """
-        self._updating = True
-        post_data = {'command': 'get_status',
-                     'value': None}
+        post_data = {'command': 'get_status'}
         
-        result = await self._post(post_data)
+        result = await self._post(post_data, wait=False)
+        #print('status result:', result, request_id)
         if result is None:
             self.qcmd_status = QCMDState.DISCONNECTED
         else:
-            self.qcmd_status = result.get('result', QCMDState.DISCONNECTED)
-        self._updating = False
+            status = result.get('result', QCMDState.DISCONNECTED)
+            if status != 'interface busy':
+                self.qcmd_status = status
 
     async def sleep(self, sleep_time: float = 0.0) -> float:
         """Sleep
@@ -599,7 +608,10 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
             self.reserve_all()
             await self.camera.capture()
             result = {'images': {'before': self.camera.image}}
-            result = result | await self.qcmd.record_tag(method.tag_name, method.record_time, method.sleep_time)
+            method_result = await self.qcmd.record_tag(method.tag_name, method.record_time, method.sleep_time)
+            print(method_result)
+            result = result | method_result
+            print(result)
             await self.camera.capture()
             result['images'].update({'after': self.camera.image})
             self.release_all()
