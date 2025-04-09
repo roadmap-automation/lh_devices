@@ -29,18 +29,14 @@ class EmailNotifier:
             print(f"Error: unable to connect to {self.config.host}:{self.config.port}")
 
     def notify(self, subject: str, msg: str):
-        print(self._connected, len(self.config.receivers), self.config.receivers)
+        #print(self._connected, len(self.config.receivers), self.config.receivers)
         if self._connected & (len(self.config.receivers) > 0):
-            try:
-                receiver_text = '; '.join(f'{k} <{v}>' for k, v in self.config.receivers.items())
-            except:
-                print(receiver_text)
-                receiver_text = ''
-
+            receiver_text = '; '.join(f'{k} <{v}>' for k, v in self.config.receivers.items())
+            
             message = f"From: {self.config.sender_name} <{self.config.sender}>\nTo: {receiver_text}\nSubject: {subject}\n\n{msg}\n"
-            print(message)
             try:
                 self._smtp.sendmail(self.config.sender, list(self.config.receivers.values()), message)
+                print(f'Sent message {message}')
             except smtplib.SMTPException:
                 print(f"Error: unable to send email")
     
