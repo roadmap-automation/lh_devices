@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from lh_manager.waste_manager.wastedata import WasteItem
-from lh_manager.liquid_handler.bedlayout import Composition
+from lh_manager.liquid_handler.bedlayout import Composition, Well
 
 from .logutils import Loggable
 
@@ -25,8 +25,8 @@ class WasteInterfaceBase(Loggable):
         
         return WasteResponse()
 
-    async def submit_water(self, volume: float) -> WasteResponse:
-        """Convenience function for water
+    async def submit_carrier(self, carrier_well: Well, volume: float) -> WasteResponse:
+        """Convenience function for submitting carrier waste and updating the well volume
 
         Args:
             volume (float): volume of water in mL
@@ -35,7 +35,8 @@ class WasteInterfaceBase(Loggable):
             WasteResponse: response
         """
 
-        return await self.submit(WasteItem(composition=WATER,
+        carrier_well.volume -= volume
+        return await self.submit(WasteItem(composition=carrier_well.composition,
                                     volume=volume))
 
 class RoadmapWasteInterface(WasteInterfaceBase):

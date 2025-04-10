@@ -81,10 +81,10 @@ class RinseSystemBase(InjectionChannelBase, LayoutPlugin):
         if self.layout is None:
             self.logger.info(f'Layout path {self.layout_path} does not exist, creating empty rinse system layout...')
             rinse_rack = Rack(columns=3, rows=2, max_volume=2000, style='staggered', wells=[], height=300, width=600, x_translate=300, y_translate=0, shape='circle', editable=True)
-            water_rack = Rack(columns=1, rows=1, max_volume=2000, style='grid', wells=[], height=300, width=300, x_translate=0, y_translate=0, shape='rect', editable=True)
-            self.layout = LHBedLayout(racks={'Water': water_rack,
+            carrier_rack = Rack(columns=1, rows=1, max_volume=2000, style='grid', wells=[], height=300, width=300, x_translate=0, y_translate=0, shape='rect', editable=True)
+            self.layout = LHBedLayout(racks={'Carrier': carrier_rack,
                                                 'Rinse': rinse_rack})
-            self.layout.add_well_to_rack('Water', Well(composition=WATER, volume=0, rack_id='', well_number=1))
+            self.layout.add_well_to_rack('Carrier', Well(composition=WATER, volume=0, rack_id='', well_number=1))
             self.save_layout()            
 
     async def release(self):
@@ -222,7 +222,7 @@ class PrimeRinseLoop(MethodBase):
         number_of_primes = int(method.number_of_primes)
 
         await self.rinsesystem.primeloop(number_of_primes)
-        await self.waste_tracker.submit_water(number_of_primes * self.rinsesystem.sample_loop.get_volume() / 1000)
+        await self.waste_tracker.submit_carrier(self.rinsesystem.layout.carrier_well, number_of_primes * self.rinsesystem.sample_loop.get_volume() / 1000)
 
         self.logger.info(f'{self.rinsesystem.name}.{method.name}: Switching to Standby mode')
         await self.rinsesystem.change_mode('Standby')
@@ -320,7 +320,13 @@ class RinseSystem(AutocontrolPlugin, RinseSystemBase):
         
         if database_path is not None:
             self.method_callbacks.append(self.async_save_to_database)
-            
+
+        # define method completion callback
+        async def trigger_layout_update(result):
+            await self.trigger_layout_update()
+
+        self.method_callbacks.append(trigger_layout_update)
+
     def _aspirate_dead_volume(self):
         return self.get_dead_volume('Aspirate', self.selector_valve.valve.nodes[0])
 

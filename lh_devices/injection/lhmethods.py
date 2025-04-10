@@ -88,7 +88,7 @@ class LoadLoop(MethodBaseDeadVolume):
         # smart dispense the volume required to move plug quickly through loop
         self.logger.info(f'{self.channel.name}.{method.name}: Moving plug through loop, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume + excess_volume)} uL')
         await self.channel.syringe_pump.smart_dispense(self.channel.sample_loop.get_volume() - (pump_volume + excess_volume), self.channel.syringe_pump.max_dispense_flow_rate)
-        await self.waste_tracker.submit_water((self.channel.sample_loop.get_volume() - (pump_volume + excess_volume)) / 1000)
+        await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, (self.channel.sample_loop.get_volume() - (pump_volume + excess_volume)) / 1000)
 
         # switch to standby mode
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
@@ -220,7 +220,7 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
             extra_volume = await self.channel.syringe_pump.smart_dispense(extra_dispense_volume, self.channel.syringe_pump.max_dispense_flow_rate)
             total_water_volume += extra_volume
 
-        await self.waste_tracker.submit_water(total_water_volume / 1000)
+        await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, total_water_volume / 1000)
 
         # switch to standby mode
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
@@ -277,6 +277,9 @@ class DirectInjectPrime(MethodBaseDeadVolume):
 
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await asyncio.gather(self.channel.change_mode('LHPrime'), self.distribution_mode.activate())
+
+        # submit dead volume to waste (this is the only place it is tracked; total air gap size is not tracked; assumes same carrier liquid as liquid handler)
+        await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, dead_volume / 1000)
 
         # Wait for trigger to switch to standby
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
@@ -458,8 +461,8 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         self.logger.info(f'{self.channel.name}.{method.name}: Starting air monitor on inlet bubble sensor with delay {min_pump_volume/pump_flow_rate: 0.2f} s...')
         monitor_task = asyncio.create_task(self.detect_air_gap(delay=min_pump_volume/pump_flow_rate, callback=self.channel.change_mode('LHPrime')))
         
-        # submit dead volume to waste (this is the only place it is tracked; total air gap size is not tracked)
-        await self.waste_tracker.submit_water(dead_volume / 1000)
+        # submit dead volume to waste (this is the only place it is tracked; total air gap size is not tracked; assumes same carrier liquid as liquid handler)
+        await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, dead_volume / 1000)
 
         # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')

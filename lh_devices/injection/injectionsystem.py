@@ -97,13 +97,11 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin):
 
         # check if layout matches current configuration
         current_racks = set(self.layout.racks.keys()) if self.layout is not None else set()
-        if current_racks == set(ch.sample_loop.name for ch in channels):
-            for ch in channels:
-                # reconnect channel well to layout well
-                ch.well = self.layout.racks[ch.sample_loop.name].wells[0]
-        else:
+        current_racks.discard('Carrier')
+        if current_racks != set(ch.sample_loop.name for ch in channels):
             self.logger.info('Loaded layout does not match channel configuration, creating new layout...')
-            racks = {}
+            carrier_rack = Rack(columns=1, rows=1, max_volume=2000, style='grid', wells=[], height=300, width=300, x_translate=150, y_translate=0, shape='circle', editable=True)
+            racks = {'Carrier': carrier_rack}
             for i, ch in enumerate(channels):
                 racks[ch.sample_loop.name] = Rack(columns=1,
                                    rows=1,
@@ -113,16 +111,20 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin):
                                    height=300,
                                    width=300,
                                    x_translate=300 * i,
-                                   y_translate=0,
+                                   y_translate=300,
                                    shape='rect',
                                    editable=False)
             
             self.layout = LHBedLayout(racks=racks)
 
+        # connect channel layouts to system layout
+        for ch in channels:
+            ch.layout.racks['Carrier'] = self.layout.racks['Carrier']
+            ch.layout.racks[ch.sample_loop.name] = self.layout.racks[ch.sample_loop.name]
+
         # define method completion callback
         async def trigger_layout_update(result):
             await self.trigger_layout_update()
-
 
         # Build network
         self.injection_port = distribution_system.injection_port

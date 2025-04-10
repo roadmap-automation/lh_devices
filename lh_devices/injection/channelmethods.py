@@ -75,7 +75,7 @@ class PrimeLoop(MethodBase):
         number_of_primes = int(method.number_of_primes)
 
         await self.channel.primeloop(number_of_primes)
-        await self.waste_tracker.submit_water(number_of_primes * self.channel.syringe_pump.syringe_volume / 1000)
+        await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, volume=number_of_primes * self.channel.syringe_pump.syringe_volume / 1000)
 
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
         await self.channel.change_mode('Standby')
@@ -111,11 +111,13 @@ class InjectLoop(MethodBase):
         await self.channel.change_mode('PumpInject')
         self.logger.info(f'{self.channel.name}.{method.name}: Injecting {pump_volume} uL at flow rate {pump_flow_rate} uL / s')
         await self.channel.syringe_pump.smart_dispense(pump_volume, pump_flow_rate)
-        await self.waste_tracker.submit_water(pump_volume / 1000)
+        await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, pump_volume / 1000)
+        self.channel.layout.carrier_well.volume -= pump_volume / 1000        
 
         # Prime loop
         await self.channel.primeloop()
-        await self.waste_tracker.submit_water(self.channel.syringe_pump.syringe_volume / 1000)
+        await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, self.channel.syringe_pump.syringe_volume / 1000)
+
         await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
         self.release_all()
@@ -160,16 +162,16 @@ class InjectLoopBubbleSensor(MethodBase):
         # inject, interrupting if sensor 1 goes low (air detected at end of sample loop)
         if min_pump_volume > 0:
             actual_volume0 = await self.channel.syringe_pump.smart_dispense(min_pump_volume, pump_flow_rate)
-            await self.waste_tracker.submit_water(actual_volume0 / 1000)
+            await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, actual_volume0 / 1000)
         else:
             actual_volume0 = 0.0
         actual_volume = await self.channel.syringe_pump.smart_dispense(pump_volume - min_pump_volume, pump_flow_rate, 5)
-        await self.waste_tracker.submit_water(actual_volume / 1000)
+        await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, actual_volume / 1000)
         self.logger.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume + actual_volume0} uL')
 
         # Switch to prime loop mode and flush
         await self.channel.primeloop()
-        await self.waste_tracker.submit_water(self.channel.syringe_pump.syringe_volume / 1000)
+        await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, self.channel.syringe_pump.syringe_volume / 1000)
         await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
         self.release_all()

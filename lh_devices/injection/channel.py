@@ -3,14 +3,15 @@ from typing import Dict
 from aiohttp.web_app import Application as Application
 from lh_manager.liquid_handler.bedlayout import LHBedLayout, Composition, Rack, Well
 
+from ..assemblies import InjectionChannelBase, Network, Mode
+from ..bubblesensor import BubbleSensorBase
+from ..components import FlowCell
+from ..connections import Node
 from ..device import ValvePositionerBase, SyringePumpBase
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
-from ..components import FlowCell
-from ..assemblies import InjectionChannelBase, Network, Mode
-from ..connections import Node
-from ..bubblesensor import BubbleSensorBase
+from ..layout import LayoutPlugin
 
-class RoadmapChannelBase(InjectionChannelBase):
+class RoadmapChannelBase(InjectionChannelBase, LayoutPlugin):
 
     def __init__(self, loop_valve: HamiltonValvePositioner,
                        syringe_pump: HamiltonSyringePump,
@@ -24,8 +25,21 @@ class RoadmapChannelBase(InjectionChannelBase):
         self.syringe_pump = syringe_pump
         self.flow_cell = flow_cell
         self.sample_loop = sample_loop
-        self.well: Well = Well(composition=Composition(), volume=0.0, rack_id=sample_loop.name, well_number=1, id=None)
         super().__init__([loop_valve, syringe_pump], injection_node=injection_node, name=name)
+
+        LayoutPlugin.__init__(self, self.id, self.name)
+        self.layout = LHBedLayout(racks={'Carrier': Rack(columns=1, rows=1, max_volume=2000, style='grid', wells=[], height=300, width=300, x_translate=0, y_translate=0, shape='circle', editable=True),
+                                        self.sample_loop.name: Rack(columns=1,
+                                            rows=1,
+                                            max_volume=self.sample_loop.get_volume() / 1000,
+                                            wells=[Well(composition=Composition(), volume=0.0, rack_id=sample_loop.name, well_number=1, id=None)],
+                                            style='grid',
+                                            height=300,
+                                            width=300,
+                                            x_translate=300,
+                                            y_translate=300,
+                                            shape='rect',
+                                            editable=False)})
 
         # Define node connections for dead volume estimations
         self.network = Network(self.devices + [self.flow_cell, self.sample_loop])
@@ -49,7 +63,11 @@ class RoadmapChannelBase(InjectionChannelBase):
                                       syringe_pump: 0},
                                       final_node=loop_valve.valve.nodes[3])
                     }
-        
+
+    @property
+    def well(self):
+        return self.layout.racks[self.sample_loop.name].wells[0]
+
     async def initialize(self) -> None:
         """Overwrites base initialization to ensure valves and pumps are in appropriate mode for homing syringe"""
 

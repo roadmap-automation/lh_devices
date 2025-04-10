@@ -47,7 +47,7 @@ class RinseLoadLoop(MethodBase):
         # smart dispense the volume required to move plug quickly through loop
         self.logger.info(f'{self.channel.name}.{method.name}: Moving plug through loop, total injection volume {self.channel.sample_loop.get_volume() - (pump_volume + excess_volume)} uL')
         await self.channel.syringe_pump.smart_dispense(self.channel.sample_loop.get_volume() - (pump_volume + excess_volume), self.channel.syringe_pump.max_dispense_flow_rate)
-        await self.waste_tracker.submit_water((self.channel.sample_loop.get_volume() - (pump_volume + excess_volume)) / 1000)
+        await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, (self.channel.sample_loop.get_volume() - (pump_volume + excess_volume)) / 1000)
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
@@ -78,14 +78,14 @@ class RinseLoadLoop(MethodBase):
         await self.channel.change_mode('LoadLoop')
 
         # aspirate material of interest in rinse system. If water (well_index 0), we are using the contents of the loop and the order is different
-        if target_well.rack_id == 'Water':
+        if target_well.rack_id == 'Carrier':
             await self.rinse_system.aspirate_air_gap(air_gap, mode='AspirateFrontAirGap')
             await self.rinse_system.change_mode('PumpLoopInject')
             actual_volume = await self.rinse_system.syringe_pump.smart_dispense(air_gap + pump_volume + excess_volume, flow_rate)
             await self.rinse_system.aspirate_air_gap(air_gap, mode='AspirateFrontAirGap')
             await self.rinse_system.change_mode('PumpLoopInject')
             actual_volume += await self.rinse_system.syringe_pump.smart_dispense(dead_volume + air_gap + rinse_volume, flow_rate)
-            await self.waste_tracker.submit_water((pump_volume + dead_volume + excess_volume + rinse_volume) / 1000)
+            await self.waste_tracker.submit_carrier(self.rinse_system.layout.carrier_well, (pump_volume + dead_volume + excess_volume + rinse_volume) / 1000)
 
         else:
             # aspirate plug
@@ -100,7 +100,7 @@ class RinseLoadLoop(MethodBase):
 
             rinse_aspirate_dead_volume = max(500, 5 * self.rinse_system._aspirate_dead_volume())
             await self.rinse_system.primeloop(n_prime=1, volume=rinse_aspirate_dead_volume)
-            await self.waste_tracker.submit_water((dead_volume + rinse_aspirate_dead_volume) / 1000)
+            await self.waste_tracker.submit_carrier(self.rinse_system.layout.carrier_well, (dead_volume + rinse_aspirate_dead_volume) / 1000)
 
         # rinse and distribution systems are done, release relevant devices
         await self.rinse_system.change_mode('Standby')
@@ -190,7 +190,7 @@ class RinseLoadLoopBubbleSensor(RinseLoadLoop):
             extra_volume = await self.channel.syringe_pump.smart_dispense(extra_dispense_volume, self.channel.syringe_pump.max_dispense_flow_rate)
             total_water_volume += extra_volume
 
-        await self.waste_tracker.submit_water(total_water_volume / 1000)
+        await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, total_water_volume / 1000)
 
 class RinseDirectInjectPrime(MethodBase):
     """Prime direct inject line
@@ -234,7 +234,7 @@ class RinseDirectInjectPrime(MethodBase):
 
         # prime with water
         actual_volume = await self.rinse_system.syringe_pump.smart_dispense(pump_volume + dead_volume, pump_flow_rate)
-        await self.waste_tracker.submit_water(actual_volume / 1000)
+        await self.waste_tracker.submit_carrier(self.rinse_system.layout.carrier_well, actual_volume / 1000)
 
         # switch to standby mode    
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
@@ -293,7 +293,7 @@ class RinseDirectInject(MethodBase):
         await self.channel.change_mode('LHPrime')
 
         # aspirate material of interest in rinse system. If water (well_index 0), we are using the contents of the rinse loop and the order is different
-        if target_well.rack_id == 'Water':
+        if target_well.rack_id == 'Carrier':
             # aspirate air gap
             await self.rinse_system.aspirate_air_gap(air_gap, mode='AspirateFrontAirGap')
             # move air gap through the dead volume
@@ -307,7 +307,7 @@ class RinseDirectInject(MethodBase):
             await self.channel.change_mode('LHPrime')
             # push excess volume to waste
             actual_volume += await self.rinse_system.syringe_pump.smart_dispense(excess_volume * 0.5 + rinse_volume, flow_rate)
-            await self.waste_tracker.submit_water((pump_volume + dead_volume + excess_volume + rinse_volume) / 1000)
+            await self.waste_tracker.submit_carrier(self.rinse_system.layout.carrier_well, (pump_volume + dead_volume + excess_volume + rinse_volume) / 1000)
 
         else:
             # aspirate plug
@@ -330,7 +330,7 @@ class RinseDirectInject(MethodBase):
             # rinse aspiration pathway
             rinse_aspirate_dead_volume = max(500, 5 * self.rinse_system._aspirate_dead_volume())
             await self.rinse_system.primeloop(n_prime=1, volume=rinse_aspirate_dead_volume)
-            await self.waste_tracker.submit_water((dead_volume + rinse_volume + rinse_aspirate_dead_volume) / 1000)
+            await self.waste_tracker.submit_carrier(self.rinse_system.layout.carrier_well, (dead_volume + rinse_volume + rinse_aspirate_dead_volume) / 1000)
 
 
         # switch to standby mode
@@ -404,7 +404,7 @@ class RinseDirectInjectBubbleSensor(MethodBase):
         await self.outlet_bubble_sensor.initialize()
 
         # aspirate material of interest in rinse system. If water (well_index 0), we are using the contents of the rinse loop and the order is different
-        if target_well.rack_id == 'Water':
+        if target_well.rack_id == 'Carrier':
             # aspirate air gap
             await self.rinse_system.aspirate_air_gap(air_gap, mode='AspirateFrontAirGap')
             
@@ -424,7 +424,7 @@ class RinseDirectInjectBubbleSensor(MethodBase):
 
             # push excess volume to waste
             actual_volume += await self.rinse_system.syringe_pump.smart_dispense(excess_volume * 0.5 + rinse_volume, flow_rate)
-            await self.waste_tracker.submit_water((pump_volume + dead_volume + excess_volume + rinse_volume) / 1000)
+            await self.waste_tracker.submit_carrier(self.rinse_system.layout.carrier_well, (pump_volume + dead_volume + excess_volume + rinse_volume) / 1000)
 
         else:
             # aspirate plug
@@ -447,7 +447,7 @@ class RinseDirectInjectBubbleSensor(MethodBase):
             
             rinse_aspirate_dead_volume = max(500, 5 * self.rinse_system._aspirate_dead_volume())
             await self.rinse_system.primeloop(n_prime=1, volume=rinse_aspirate_dead_volume)
-            await self.waste_tracker.submit_water((dead_volume + rinse_volume + rinse_aspirate_dead_volume) / 1000)
+            await self.waste_tracker.submit_carrier(self.rinse_system.layout.carrier_well, (dead_volume + rinse_volume + rinse_aspirate_dead_volume) / 1000)
         
         # switch to standby mode
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
