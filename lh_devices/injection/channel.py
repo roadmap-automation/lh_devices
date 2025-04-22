@@ -28,10 +28,11 @@ class RoadmapChannelBase(InjectionChannelBase, LayoutPlugin):
         super().__init__([loop_valve, syringe_pump], injection_node=injection_node, name=name)
 
         LayoutPlugin.__init__(self, self.id, self.name)
-        self.layout = LHBedLayout(racks={'Carrier': Rack(columns=1, rows=1, max_volume=2000, style='grid', wells=[], height=300, width=300, x_translate=0, y_translate=0, shape='circle', editable=True),
+        self.layout = LHBedLayout(racks={'Carrier': Rack(columns=1, rows=1, max_volume=2000, min_volume=300, style='grid', wells=[], height=300, width=300, x_translate=0, y_translate=0, shape='circle', editable=True),
                                         self.sample_loop.name: Rack(columns=1,
                                             rows=1,
                                             max_volume=self.sample_loop.get_volume() / 1000,
+                                            min_volume=0.0,
                                             wells=[Well(composition=Composition(), volume=0.0, rack_id=sample_loop.name, well_number=1, id=None)],
                                             style='grid',
                                             height=300,

@@ -100,12 +100,13 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin):
         current_racks.discard('Carrier')
         if current_racks != set(ch.sample_loop.name for ch in channels):
             self.logger.info('Loaded layout does not match channel configuration, creating new layout...')
-            carrier_rack = Rack(columns=1, rows=1, max_volume=2000, style='grid', wells=[], height=300, width=300, x_translate=150, y_translate=0, shape='circle', editable=True)
+            carrier_rack = Rack(columns=1, rows=1, max_volume=2000, min_volume=300.0, style='grid', wells=[], height=300, width=300, x_translate=150, y_translate=0, shape='circle', editable=True)
             racks = {'Carrier': carrier_rack}
             for i, ch in enumerate(channels):
                 racks[ch.sample_loop.name] = Rack(columns=1,
                                    rows=1,
                                    max_volume=ch.sample_loop.get_volume() / 1000,
+                                   min_volume=0.0,
                                    wells=[ch.well],
                                    style='grid',
                                    height=300,

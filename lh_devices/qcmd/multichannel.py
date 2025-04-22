@@ -661,6 +661,7 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
                 racks[ch.name] = Rack(columns=1,
                                    rows=1,
                                    max_volume=1,
+                                   min_volume=0.0,
                                    wells=[ch.well],
                                    style='grid',
                                    height=300,
