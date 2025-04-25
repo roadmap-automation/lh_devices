@@ -7,7 +7,7 @@ from lh_manager.liquid_handler.bedlayout import LHBedLayout, Composition, Rack, 
 
 from ..assemblies import Network, AssemblyMode, ModeGroup
 from ..distribution import DistributionBase, DistributionSingleValveTwoSource
-from ..gilson.gsioc import GSIOC
+from ..gilson.gsioc import GSIOC, GSIOCPlugin
 from ..layout import LayoutPlugin
 from ..multichannel import MultiChannelAssembly
 from ..rinse.rinsesystem import RinseSystem
@@ -71,7 +71,7 @@ class RoadmapChannelAssembly(MultiChannelAssembly, LayoutPlugin):
         await asyncio.gather(*[ch.initialize() for ch in self.channels], self.distribution_system.initialize())
         await self.trigger_update()
 
-class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin):
+class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin, GSIOCPlugin):
 
     def __init__(self,
                  channels: List[RoadmapChannelBubbleSensor],
@@ -87,6 +87,9 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin):
                          assemblies=[distribution_system],
                          database_path=database_path,
                          name=name)
+
+        # configure GSIOC
+        GSIOCPlugin.__init__(self, gsioc)
 
         # configure layout
         LayoutPlugin.__init__(self, self.id, self.name)
@@ -179,5 +182,6 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin):
         app = super().create_web_app(template)
 
         app.add_routes(LayoutPlugin._get_routes(self))
+        app.add_routes(GSIOCPlugin._get_routes(self))
 
         return app
