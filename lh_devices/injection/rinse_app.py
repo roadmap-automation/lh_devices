@@ -108,7 +108,11 @@ async def run_injection_system():
     # ============== Injection System setup =====================
     # serial communications setup
     gsioc = GSIOC(62, 'COM13', 19200)
-    #ser = HamiltonSerial(port='COM9', baudrate=38400)
+    gsioc_handler = logging.FileHandler(LOG_PATH / (datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_gsioc_log.txt'))
+    gsioc_handler.setFormatter(logging.Formatter('%(asctime)s.%(msecs)03d %(levelname)s %(message)s', '%Y-%m-%d %H:%M:%S', '%'))
+    gsioc_handler.setLevel(logging.DEBUG)
+    gsioc.logger.addHandler(gsioc_handler)
+    gsioc.logger.setLevel(logging.DEBUG)
 
     mvp0 = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve0'), name='Loop Valve 0')
     outlet_bubble_sensor0 = SMDSensoronHamiltonDevice(mvp0, 2, 1)
@@ -216,12 +220,16 @@ async def run_injection_system():
 
 if __name__=='__main__':
 
-    logging.basicConfig(handlers=[
-                        logging.FileHandler(LOG_PATH / (datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_injection_log.txt')),
-                        logging.StreamHandler()
-                    ],
+    # required for different GSIOC logging level
+    output_level = logging.INFO
+
+    file_handler = logging.FileHandler(LOG_PATH / (datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_injection_log.txt'))
+    file_handler.setLevel(output_level)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(output_level)
+    logging.basicConfig(handlers=[file_handler, stream_handler],
                     format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S',
-                    level=logging.INFO)
+                    level=output_level)
 
     asyncio.run(run_injection_system(), debug=True)
