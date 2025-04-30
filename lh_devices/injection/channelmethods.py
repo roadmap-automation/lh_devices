@@ -148,7 +148,7 @@ class InjectLoopBubbleSensor(MethodBase):
         pump_volume = float(method.pump_volume)
 
         # set minimum pump volume before checking for bubbles
-        min_pump_volume = 0.5 * pump_volume if pump_volume > 200 else 0
+        min_pump_volume = 0.7 * pump_volume if pump_volume > 200 else 0
 
         pump_flow_rate = float(method.pump_flow_rate) * 1000 / 60 # convert to uL / s
 
