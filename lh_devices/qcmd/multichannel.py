@@ -255,6 +255,8 @@ class QCMDMeasurementDevice(DeviceBase):
         else:
             status = result.get('result', QCMDState.DISCONNECTED)
             if status != 'interface busy':
+                if status != self.qcmd_status:
+                    await super().trigger_update()
                 self.qcmd_status = status
 
     async def sleep(self, sleep_time: float = 0.0) -> float:
@@ -298,16 +300,19 @@ class QCMDMeasurementDevice(DeviceBase):
                                         'Tag': self._tag,
                                         'Sleep time remaining': sleep_time_remaining,
                                         'Record time remaining': record_time_remaining}},
-                  'controls': {'set_temperature': {'type': 'textbox',
+                  'controls': { 'stop': {'type': 'button',
+                                                  'text': 'Stop',
+                                                  'visible': (self.qcmd_status in [QCMDState.MEASURING, QCMDState.INITIALIZING])},
+                                'set_temperature': {'type': 'textbox',
                                                    'text': 'Set temperature: ',
                                                    'visible': (self.qcmd_status in [QCMDState.MEASURING, QCMDState.INITIALIZING])},
-                               'interrupt': {'type': 'button',
+                                'interrupt': {'type': 'button',
                                              'text': 'Interrupt',
                                              'visible': not self.idle},
-                               'set_sleep_time': {'type': 'textbox',
+                                'set_sleep_time': {'type': 'textbox',
                                                   'text': 'Set sleep time (s): ',
                                                   'visible': self.idle},
-                               'set_record_time': {'type': 'textbox',
+                                'set_record_time': {'type': 'textbox',
                                                   'text': 'Set record time (s): ',
                                                   'visible': self.idle},
                                                   }})
@@ -337,6 +342,9 @@ class QCMDMeasurementDevice(DeviceBase):
                 await self.set_temperature(float(data['value']))
                 await self.trigger_update()
             asyncio.create_task(set_temp_and_update())
+        elif command == 'stop':
+            await self.stop_collection()
+            await self.trigger_update()
 
 class QCMDMeasurementChannel(InjectionChannelBase):
 
@@ -345,12 +353,12 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
         self.well: Well = Well(composition=Composition(), volume=1, rack_id=self.name, well_number=1, id=None)
 
-        self.methods.update({'QCMDRecord': self.QCMDRecord(qcmd),
-                'QCMDRecordTag': self.QCMDRecordTag(qcmd),
-                'QCMDSleep': self.QCMDSleep(qcmd),
+        self.methods.update({'QCMDRecord': self.QCMDRecord(self, qcmd),
+                'QCMDRecordTag': self.QCMDRecordTag(self, qcmd),
+                'QCMDSleep': self.QCMDSleep(self, qcmd),
                 #'QCMDAcceptTransfer': self.QCMDAcceptTransfer(qcmd, self.well),
-                'QCMDStart': self.QCMDStart(qcmd),
-                'QCMDStop': self.QCMDStop(qcmd)})
+                'QCMDStart': self.QCMDStart(self, qcmd),
+                'QCMDStop': self.QCMDStop(self, qcmd)})
         
         self.qcmd = qcmd
 
@@ -358,14 +366,11 @@ class QCMDMeasurementChannel(InjectionChannelBase):
         d = await super().get_info()
         d['controls'] = d['controls'] | {'start': {'type': 'textbox',
                                                      'text': 'Start with description:',
-                                                     'visible': (self.qcmd.qcmd_status == 'idle')},
-                                         'stop': {'type': 'button',
-                                                  'text': 'Stop',
-                                                  'visible': (self.qcmd.qcmd_status != 'idle')},
+                                                     'visible': (self.qcmd.qcmd_status == QCMDState.IDLE)},
                                         'add_tag': {'type': 'textbox',
                                                      'text': 'Add tag: ',
-                                                     'visible': (self.qcmd.qcmd_status == 'measuring')},
-                                         }
+                                                     'visible': (self.qcmd.qcmd_status == QCMDState.MEASURING)},
+                                        }
         
         return d
 
@@ -385,13 +390,12 @@ class QCMDMeasurementChannel(InjectionChannelBase):
                                                   sleep_time=self.qcmd._sleep_time))
         elif command == 'start':
             self.run_method('QCMDStart', dict(description=data['value']))
-        elif command == 'stop':
-            self.run_method('QCMDStop', {})
 
     class QCMDMethodBase(MethodBase):
 
-        def __init__(self, device: QCMDMeasurementDevice):
+        def __init__(self, ch: InjectionChannelBase, device: QCMDMeasurementDevice):
             super().__init__(devices=[device])
+            self.ch = ch
             self.qcmd = device
 
         async def start(self, **kwargs):
@@ -404,6 +408,9 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             await self.trigger_update()
 
             return result
+        
+        async def trigger_update(self):
+            return asyncio.gather(MethodBase.trigger_update(self), self.ch.trigger_update())
 
     class QCMDSleep(QCMDMethodBase):
 
@@ -502,16 +509,18 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             self.reserve_all()
             start_result = await self.qcmd.start_collection(method.description)
             await asyncio.sleep(2)
+            await self.trigger_update()
             temp_result = await self.qcmd.set_temperature(float(method.temperature))
             
             # wait for collection
             try:
                 timer = PollTimer(self.qcmd.poll_interval, self.name + ' monitor PollTimer')
-                await self.qcmd.trigger_update()
+                await asyncio.sleep(2)
+                await self.trigger_update()                
                 asyncio.create_task(timer.cycle())
                 while not (self.qcmd.qcmd_status == QCMDState.MEASURING):
                     await timer.wait_until_set()
-                    await asyncio.gather(timer.cycle(), self.qcmd.trigger_update())
+                    await asyncio.gather(timer.cycle(), self.trigger_update())
                     if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
                         await self.throw_error('openQCM software not responding; waiting for error to be cleared', critical=False)
                 
@@ -519,7 +528,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             except asyncio.CancelledError:
                 self.logger.debug(f'{timer.address} cancelled')
             finally:
-                await self.qcmd.trigger_update()
+                await self.trigger_update()
 
             self.release_all()
 
@@ -558,13 +567,13 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
         super().__init__(qcmd, name)
         self.devices += [camera]
 
-        self.methods.update({'QCMDRecordTag': self.QCMDRecordTagwithCamera(qcmd, camera),
-                             'QCMDCaptureImage': self.QCMDCaptureImage(qcmd, camera)})
+        self.methods.update({'QCMDRecordTag': self.QCMDRecordTagwithCamera(self, qcmd, camera),
+                             'QCMDCaptureImage': self.QCMDCaptureImage(self, qcmd, camera)})
 
     class QCMDMethodBasewithCamera(QCMDMeasurementChannel.QCMDMethodBase):
 
-        def __init__(self, device: QCMDMeasurementDevice, camera: CameraDeviceBase):
-            super().__init__(device)
+        def __init__(self, ch: QCMDMeasurementChannel, device: QCMDMeasurementDevice, camera: CameraDeviceBase):
+            super().__init__(ch, device)
             self.camera = camera
 
     class QCMDCaptureImage(QCMDMethodBasewithCamera):

@@ -135,6 +135,7 @@
                         //console.log(data)
                         $('.' + id).each(function (index) {
                             update_active_methods($(this).children(".assembly_active_methods"), id, data['active_methods'])
+                            update_controls($(this).children(".assembly_controls"), id, data['controls'])
                             set_border($(this), data['state'])
                         })
                     })
@@ -291,6 +292,7 @@
 
         function update_controls(devicediv, device_id, controls) {
             //console.log(devicediv.contents().length)
+            devicediv.empty()
             if (devicediv.contents().length == 0) {
                 for (const [cid, cdata] of Object.entries(controls)) {
                     //console.log(cid, cdata)
