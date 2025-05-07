@@ -302,7 +302,7 @@ class QCMDMeasurementDevice(DeviceBase):
                                         'Record time remaining': record_time_remaining}},
                   'controls': { 'stop': {'type': 'button',
                                                   'text': 'Stop',
-                                                  'visible': (self.qcmd_status in [QCMDState.MEASURING, QCMDState.INITIALIZING])},
+                                                  'visible': (self.qcmd_status in [QCMDState.MEASURING])},
                                 'set_temperature': {'type': 'textbox',
                                                    'text': 'Set temperature: ',
                                                    'visible': (self.qcmd_status in [QCMDState.MEASURING, QCMDState.INITIALIZING])},
@@ -507,7 +507,8 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             method = self.MethodDefinition(**kwargs)
             self.reserve_all()
-            start_result = await self.qcmd.start_collection(method.description)
+            if not (self.qcmd.qcmd_status == QCMDState.MEASURING):
+                start_result = await self.qcmd.start_collection(method.description)
             await asyncio.sleep(2)
             await self.trigger_update()
             temp_result = await self.qcmd.set_temperature(float(method.temperature))
@@ -526,7 +527,8 @@ class QCMDMeasurementChannel(InjectionChannelBase):
                 
                 self.logger.debug(f'{timer.address} ended')
             except asyncio.CancelledError:
-                self.logger.debug(f'{timer.address} cancelled')
+                self.logger.debug(f'{timer.address} cancelled, stopping collection')
+                self.qcmd.stop_collection()
             finally:
                 await self.trigger_update()
 
