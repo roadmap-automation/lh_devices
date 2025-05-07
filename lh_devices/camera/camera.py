@@ -57,7 +57,11 @@ class CameraDeviceBase(DeviceBase):
             # capture image
             if cam.isOpened():
                 result, image = cam.read()
-                self.timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self.timestamp = datetime.datetime.now()
+            else:
+                self.clear()
+                self.logger.warning(f'{self.name} Camera at address {self.address} cannot be opened')
+                return
 
             # render image as base64 string
             self.raw_image = image
@@ -125,7 +129,7 @@ class FIT0819(CameraDeviceBase):
                   'state': {'idle': self.idle,
                             'reserved': self.reserved,
                             'display': {'Address': self.address,
-                                        'Timestamp': self.timestamp},
+                                        'Timestamp': self.timestamp.strftime('%Y-%m-%d %H:%M:%S') if self.timestamp is not None else ''},
                             'image': self.image},
                   'controls': {'address': {'type': 'select',
                                            'options': [''] + list(self.camera_list.cameras.keys()),

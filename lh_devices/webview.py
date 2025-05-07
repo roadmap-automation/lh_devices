@@ -1,9 +1,11 @@
+import aiohttp_cors
 import json
 import logging
 import socketio
 
 from pathlib import Path
 from aiohttp import web
+from uuid import uuid4
 
 from .logutils import Loggable
 
@@ -24,12 +26,12 @@ Approach:
 
 TEMPLATE_PATH = Path(__file__).parent / 'templates'
 
-sio = socketio.AsyncServer()
+sio = socketio.AsyncServer(cors_allowed_origins='*')
 
 class WebNodeBase(Loggable):
 
     def __init__(self, id: str = '', name: str = ''):
-        self.id = id
+        self.id = str(uuid4()) if id is None else id
         self.name = name
         Loggable.__init__(self)
 
@@ -47,6 +49,7 @@ class WebNodeBase(Loggable):
         routes = web.RouteTableDef()
 
         @routes.get('/')
+        @routes.get(f'/{self.id}')
         async def get_handler(request: web.Request) -> web.Response:
             return web.FileResponse(TEMPLATE_PATH / template)
 
@@ -54,7 +57,12 @@ class WebNodeBase(Loggable):
         @routes.get(f'/{self.id}/state')
         async def get_state(request: web.Request) -> web.Response:
             state = await self.get_info()
-            return web.Response(text=json.dumps(state), status=200)
+            try:
+                json_state = json.dumps(state)
+            except TypeError:
+                print(state)
+
+            return web.Response(text=json_state, status=200)
 
         @sio.on(self.id)
         async def event_handler(event, data):
@@ -98,8 +106,19 @@ async def run_socket_app(app: web.Application, host='localhost', port=5003) -> w
         app (web.Application): aiohttp web application
     """
 
-    sio.attach(app)
+    cors = aiohttp_cors.setup(app, defaults={
+   "*": aiohttp_cors.ResourceOptions(
+        allow_credentials=True,
+        expose_headers="*",
+        allow_headers="*"
+    )
+    })
 
+    for route in list(app.router.routes()):
+        cors.add(route)
+   
+    sio.attach(app)
+    
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, host, port)

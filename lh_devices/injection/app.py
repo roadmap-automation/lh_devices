@@ -14,7 +14,8 @@ from ..gilson.gsioc import GSIOC
 from ..components import InjectionPort, FlowCell
 from ..connections import connect_nodes
 from ..waste import RoadmapWasteInterface
-from .injectionsystem import RoadmapChannelBubbleSensor, RoadmapChannelAssembly
+from .channel import RoadmapChannelBubbleSensor
+from .injectionsystem import RoadmapChannelAssembly
 
 LOG_PATH = pathlib.Path(__file__).parent.parent.parent / 'logs'
 HISTORY_PATH = pathlib.Path(__file__).parent.parent.parent / 'history'

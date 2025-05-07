@@ -4,14 +4,23 @@ import logging
 import pathlib
 
 from .multichannel import QCMDMultiChannelMeasurementDevice
+from ..notify import notifier
 from ..webview import run_socket_app
 
 LOG_PATH = pathlib.Path(__file__).parent.parent.parent / 'logs'
 HISTORY_PATH = pathlib.Path(__file__).parent.parent.parent / 'history'
+NOTIFICATION_CONFIG_PATH = pathlib.Path(__file__).parent.parent.parent / 'notification_settings.json'
 
 async def qcmd_multichannel_measure():
 
-    measurement_system = QCMDMultiChannelMeasurementDevice('localhost', 5011, qcmd_ids=['13117490', '13110090', '8834460'], database_path=HISTORY_PATH / 'qcmd.db')
+    # connect to error notifier
+    notifier.load_config(NOTIFICATION_CONFIG_PATH)
+    notifier.connect()
+
+    measurement_system = QCMDMultiChannelMeasurementDevice('localhost', 5011,
+                                                           qcmd_ids=['13117490', '13110090', '8834460'],
+                                                           database_path=HISTORY_PATH / 'qcmd.db',
+                                                           layout_path=LOG_PATH / 'qcmd_layout.json')
     await measurement_system.initialize()
     app = measurement_system.create_web_app(template='roadmap.html')
     runner = await run_socket_app(app, 'localhost', 5005)

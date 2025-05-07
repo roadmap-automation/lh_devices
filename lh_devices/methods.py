@@ -3,13 +3,18 @@ import copy
 import json
 import logging
 import traceback
-from uuid import uuid4
-from typing import List, Dict, Any, Callable, TypedDict, Coroutine
+
+from aiohttp import web
+from aiohttp.web_app import Application as Application
 from dataclasses import dataclass, field, fields, Field
+from typing import List, Dict, Any, Callable, TypedDict, Coroutine
+from uuid import uuid4
 
 from .device import DeviceBase, DeviceError
 from .gilson.gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from .logutils import Loggable, MethodLogHandler, MethodLogFormatter
+from .notify import notifier
+from .webview import WebNodeBase
 from .waste import WasteInterfaceBase
 
 # ======== Method base classes ==========
@@ -53,6 +58,7 @@ class MethodBase(Loggable):
         self.dead_volume_node: str | None = None
 
         self.metadata = []
+        self.active_reservations = set()
 
         # set up a unique logger for this method instance
         Loggable.__init__(self)
@@ -81,14 +87,27 @@ class MethodBase(Loggable):
         """
 
         for dev in self.devices:
+            self.active_reservations.add(dev)
             dev.reserved = True
 
-    def release_all(self) -> None:
-        """Releases all devices
+    def release(self, dev: DeviceBase):
+        """Releases a single device
         """
 
-        for dev in self.devices:
+        if dev in self.active_reservations:
+            self.logger.info(f'{self.name}: releasing device {dev.name}')
             dev.reserved = False
+            self.active_reservations.remove(dev)
+        else:
+            self.logger.warning(f'{self.name}: device {dev.name} not found in active reservations')
+
+    def release_all(self) -> None:
+        """Releases all remaining devices
+        """
+
+        # conversion to list prevents size of self.active_reservations from changing with releases
+        for dev in list(self.active_reservations):
+            self.release(dev)
 
     async def trigger_update(self) -> None:
         """Triggers update of all devices
@@ -141,6 +160,7 @@ class MethodBase(Loggable):
             self.logger.error(f'Critical error in {self.name}: {e}, retry is {e.retry}, waiting for error to be cleared')
             try:
                 await self.trigger_update()
+                notifier.notify(subject=f'Error in {self.name}', msg=e)
                 await self.error.pause_until_clear()
                 if self.error.retry:
                     # try again!
@@ -153,12 +173,13 @@ class MethodBase(Loggable):
                 await self.on_cancel()
         finally:
             self.logger.info(f'{self.name} finished')
+            await self.trigger_update()
             
             # remove method handler from device loggers
             for device in self.devices:
                 device.logger.removeHandler(self.log_handler)
         
-        return MethodResult(method_name=self.name,
+            return MethodResult(method_name=self.name,
                             method_data=kwargs,
                             log=copy.copy(self.metadata),
                             created_time=self.metadata[0]['time'],
@@ -182,18 +203,41 @@ class MethodBase(Loggable):
             self.logger.error(f'Non-critical error in {self.__class__}: {error}, waiting for error to be cleared')
             self.error.error = error
             self.error.retry = retry
+            notifier.notify(subject=f'Error in {self.name}', msg=error)
+            await self.trigger_update()
             await self.error.pause_until_clear()
 
-class MethodBasewithGSIOC(MethodBase):
+class MethodBasewithTrigger(MethodBase):
+
+    def __init__(self, devices = [], waste_tracker = WasteInterfaceBase()):
+        super().__init__(devices, waste_tracker)
+
+        # enables triggering
+        self.waiting: asyncio.Event = asyncio.Event()
+        self.trigger: asyncio.Event = asyncio.Event()
+
+    async def wait_for_trigger(self) -> None:
+        """Uses waiting and trigger events to signal that assembly is waiting for a trigger signal
+            and then release upon receiving the trigger signal"""
+        
+        self.waiting.set()
+        await self.trigger.wait()
+        self.waiting.clear()
+        self.trigger.clear()
+
+    def activate_trigger(self):
+        """Activates the trigger
+        """
+
+        self.waiting.clear()
+        self.trigger.set()
+
+class MethodBasewithGSIOC(MethodBasewithTrigger):
 
     def __init__(self, gsioc: GSIOC, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
         super().__init__(devices, waste_tracker=waste_tracker)
 
         self.gsioc = gsioc
-
-        # enables triggering
-        self.waiting: asyncio.Event = asyncio.Event()
-        self.trigger: asyncio.Event = asyncio.Event()
 
         # container for gsioc tasks 
         self._gsioc_tasks: List[asyncio.Task] = []
@@ -238,22 +282,6 @@ class MethodBasewithGSIOC(MethodBase):
     async def start(self, **kwargs):
         self.disconnect_gsioc()
         return await super().start(**kwargs)
-
-    async def wait_for_trigger(self) -> None:
-        """Uses waiting and trigger events to signal that assembly is waiting for a trigger signal
-            and then release upon receiving the trigger signal"""
-        
-        self.waiting.set()
-        await self.trigger.wait()
-        self.waiting.clear()
-        self.trigger.clear()
-
-    def activate_trigger(self):
-        """Activates the trigger
-        """
-
-        self.waiting.clear()
-        self.trigger.set()
 
     async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
         """Handles GSIOC messages. Put actions into gsioc_command_queue for async processing.
@@ -396,3 +424,124 @@ class MethodRunner:
         """
 
         return self.methods[method_name].is_ready()
+    
+class MethodPlugin(WebNodeBase):
+
+    def __init__(self, id: str = '', name: str = ''):
+
+        self.id = id
+        self.name = name
+        self.method_runner = MethodRunner()
+        self.method_callbacks: List[Coroutine] = []
+
+    @property
+    def methods(self) -> Dict[str, MethodBase]:
+        return self.method_runner.methods
+
+    @property
+    def active_methods(self) -> Dict[str, ActiveMethod]:
+        return self.method_runner.active_methods
+
+    async def process_method(self, method_name: str, method_data: dict, id: str | None = None) -> MethodResult:
+        """Chain of run tasks to accomplish. Subclass to change the logic"""
+        self.active_methods.update({method_name: ActiveMethod(method=self.methods[method_name],
+                                                        method_data=method_data)})
+        try:
+            result = await self.methods[method_name].start(**method_data)
+            result.id = id
+            result.source = self.name
+        except asyncio.CancelledError:
+            logging.debug(f'Task {method_name} with id {id} cancelled')
+        finally:
+            self.active_methods.pop(method_name)
+            await self.trigger_update()
+
+        await asyncio.gather(*[callback(result) for callback in self.method_callbacks])
+        
+        return result
+
+    def run_method(self, method_name: str, method_data: dict, id: str | None = None) -> None:
+
+        #if not self.methods[method_name].is_ready():
+        #    self.logger.error(f'{self.name}: not all devices in {method_name} are available')
+        #else:
+        self.method_runner.run_method(self.process_method(method_name, method_data, id), id, method_name)
+
+    async def get_info(self) -> Dict:
+        """Updates base class information with 
+
+        Returns:
+            Dict: _description_
+        """
+        d = await super().get_info()
+        d.update({'active_methods': {method_name: dict(method_data=active_method['method_data'],
+                                                       has_error=(active_method['method'].error.error is not None),
+                                                       has_gsioc=isinstance(active_method['method'], MethodBasewithGSIOC))
+                                      for method_name, active_method in self.active_methods.items()}
+                 }
+                )
+        return d
+    
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        await super().event_handler(command, data)
+        if command == 'clear_error':
+            target_method: MethodBase = self.active_methods.get(data['method'], None)['method']
+            if target_method is not None:
+                target_method.error.clear(retry=data['retry'])
+                await self.trigger_update()
+        elif command == 'send_trigger':
+            target_method: MethodBasewithTrigger = self.active_methods.get(data['method'], None)['method']
+            if target_method is not None:
+                target_method.activate_trigger()
+        elif command == 'cancel_method':
+            target_method = self.active_methods.get(data['method'], None)['method']
+            if target_method is not None:
+                self.method_runner.cancel_methods_by_name(data['method'])
+
+    async def _handle_task(self, request: web.Request) -> web.Response:
+        """Handles a submitted task"""
+
+        return web.Response(text='not implemented', status=500)
+
+    async def _get_status(self, request: web.Request) -> web.Response:
+        """Status request"""
+
+        return web.Response(text='not implemented', status=500)
+
+    async def _get_task(self, request: web.Request) -> web.Response:
+        """Handles requests for information about a task. Dummy method round-trips the response through a TaskData serialization process."""
+
+        return web.Response(text='not implemented', status=500)
+
+    def _get_routes(self) -> web.RouteTableDef:
+
+        routes = web.RouteTableDef()
+
+        @routes.post('/SubmitTask')
+        async def handle_task(request: web.Request) -> web.Response:
+            return await self._handle_task(request)
+       
+        @routes.get('/GetStatus')
+        async def get_status(request: web.Request) -> web.Response:
+            return await self._get_status(request)
+
+        @routes.get('/GetTaskData')
+        async def get_task(request: web.Request) -> web.Response:
+            return await self._get_task(request)            
+
+        return routes
+
+    def create_web_app(self, template='roadmap.html') -> Application:
+        app = super().create_web_app(template=template)
+        
+        app.add_routes(self._get_routes())
+
+        return app
+    

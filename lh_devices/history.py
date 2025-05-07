@@ -1,3 +1,4 @@
+import asyncio
 import os
 import json
 import sqlite3
@@ -69,3 +70,44 @@ class HistoryDB:
         res = self.db.execute(f"SELECT * FROM {self.table_name} WHERE id=?", (id,))
         record = res.fetchone()
         return MethodResult(*[json_rehydrate(f, ftype) for f, ftype in zip(record, self.columns.values())]) if record is not None else None
+
+class DatabasePlugin:
+    """Plugin for adding database functionality
+    """
+
+    def __init__(self, database_path: Path | str = None):
+
+        self.database_path = database_path
+
+    async def async_save_to_database(self, result: MethodResult):
+        """Saves a method result to the database, only if a task id is associated with it
+
+        Args:
+            result (MethodResult): result to save
+        """
+
+        await asyncio.to_thread(self.save_to_database, result)
+
+    def save_to_database(self, result: MethodResult):
+        """Saves a method result to the database, only if a task id is associated with it
+
+        Args:
+            result (MethodResult): result to save
+        """
+
+        if result.id is not None:
+            with HistoryDB(self.database_path) as db:
+                db.smart_insert(result)
+
+    def read_from_database(self, id: str) -> MethodResult | None:
+        """Reads a method result from the database
+
+        Args:
+            id (str): id of record
+
+        Returns:
+            MethodResult | None: MethodResult object if id exists, otherwise None
+        """
+
+        with HistoryDB(self.database_path) as db:
+            return db.search_id(id)

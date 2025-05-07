@@ -1,15 +1,19 @@
 import time
+import uuid
 import asyncio
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, asdict
 from typing import Dict
-from aiohttp import ClientSession, ClientConnectionError
+from aiohttp import ClientSession, ClientConnectionError, web
 from enum import Enum
 from urllib.parse import urlsplit
 
-from ..camera.camera import CameraDeviceBase, FIT0819
+from lh_manager.liquid_handler.bedlayout import LHBedLayout, Composition, Rack, Well
+
+from ..camera.camera import CameraDeviceBase, FIT0819, DFRobotCameraList
 from ..device import DeviceBase, PollTimer
 from ..assemblies import InjectionChannelBase
+from ..layout import LayoutPlugin
 from ..methods import MethodBase
 from ..multichannel import MultiChannelAssembly
 
@@ -29,6 +33,7 @@ class QCMDMeasurementDevice(DeviceBase):
 
         url_parts = urlsplit(http_address)
         self.session = ClientSession(f'{url_parts.scheme}://{url_parts.netloc}')
+        self.request_lock: asyncio.Lock = asyncio.Lock()
         self.url_path = url_parts.path
         self.timeout = 10
         self.qcmd_status: str = QCMDState.DISCONNECTED
@@ -109,37 +114,45 @@ class QCMDMeasurementDevice(DeviceBase):
         time_elapsed = time.time() - self._start if self._start is not None else 0.0
 
         sleep_time_remaining = max(0.0, self._sleep_time - time_elapsed)
-        fmt_sleep = time.strftime('%H:%M:%S' if sleep_time_remaining // 3600 else '%M:%S', time.gmtime(sleep_time_remaining))
+        fmt_sleep = time.strftime('%H:%M:%S' if sleep_time_remaining // 3600 else '%M:%S', time.gmtime(sleep_time_remaining)) if sleep_time_remaining > 0 else None
 
         record_time_remaining = max(0.0, min(self._record_time + self._sleep_time - time_elapsed, self._record_time))
-        fmt_record = time.strftime('%H:%M:%S' if record_time_remaining // 3600 else '%M:%S', time.gmtime(record_time_remaining))
+        fmt_record = time.strftime('%H:%M:%S' if record_time_remaining // 3600 else '%M:%S', time.gmtime(record_time_remaining)) if record_time_remaining > 0 else None
 
         return fmt_sleep, fmt_record
 
-    async def _post(self, post_data: dict) -> dict | None:
+    async def _post(self, post_data: dict, wait: bool = True) -> dict | None:
         """Posts data to self.url
 
         Args:
             post_data (dict): data to post
+            wait (bool, optional): if True, wait; otherwise return None. Default True
 
         Returns:
             dict: response JSON
         """
 
-        self.logger.debug(f'{self.session._base_url}{self.url_path} => {post_data}')
+        if wait | (not self.request_lock.locked()):
+            
+            async with self.request_lock:
 
-        response_json: dict | None = None
+                # send an http request to QCMD server
+                self.logger.debug(f'{self.session._base_url}{self.url_path} => {post_data}')
+                response_json: dict | None = None
+                try:
+                    response = await self.session.post(self.url_path, json=post_data, timeout=self.timeout)
+                    response_json = await response.json()
+                    self.logger.debug(f'{self.session._base_url}{self.url_path} <= {response_json}')
+                except (ConnectionRefusedError, ClientConnectionError):
+                    self.logger.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
+                except TimeoutError:
+                    self.logger.error(f'request to {self.session._base_url}{self.url_path} failed: timed out')
 
-        # send an http request to QCMD server
-        try:
-            async with self.session.post(self.url_path, json=post_data, timeout=self.timeout) as resp:
-                response_json = await resp.json()
-                self.logger.debug(f'{self.session._base_url}{self.url_path} <= {response_json}')
-        except (ConnectionRefusedError, ClientConnectionError):
-            self.logger.error(f'request to {self.session._base_url}{self.url_path} failed: connection refused')
-        except TimeoutError:
-            self.logger.error(f'request to {self.session._base_url}{self.url_path} failed: timed out')
+                return response_json
 
+        else:
+            return {'result': 'interface busy'}
+       
         return response_json
 
     def _reset_state(self):
@@ -197,7 +210,7 @@ class QCMDMeasurementDevice(DeviceBase):
 
         post_result = await self._post(post_data)
 
-        return result | post_result if post_result is not None else result
+        return result | post_result
 
     async def stop_collection(self) -> dict | None:
         """Sends stop signal to QCMD
@@ -216,25 +229,35 @@ class QCMDMeasurementDevice(DeviceBase):
                      'value': {'description': description}}
 
         return await self._post(post_data)
+    
+    async def set_temperature(self, temperature: float = 25.0) -> dict | None:
+        """Sets temperature and ensures TEC is on
+        """
+
+        post_data = {'command': 'set_TEC',
+                     'value': {'on': True, 'setpoint': temperature}}
+
+        return await self._post(post_data)
 
     async def trigger_update(self):
-        if not self._updating:
-            asyncio.create_task(self.update_qcmd_status())
+        asyncio.create_task(self.update_qcmd_status())
         return await super().trigger_update()
 
     async def update_qcmd_status(self) -> None:
         """Updates status from QCM server
         """
-        self._updating = True
-        post_data = {'command': 'get_status',
-                     'value': None}
+        post_data = {'command': 'get_status'}
         
-        result = await self._post(post_data)
+        result = await self._post(post_data, wait=False)
+        #print('status result:', result, request_id)
         if result is None:
             self.qcmd_status = QCMDState.DISCONNECTED
         else:
-            self.qcmd_status = result['result']
-        self._updating = False
+            status = result.get('result', QCMDState.DISCONNECTED)
+            if status != 'interface busy':
+                if status != self.qcmd_status:
+                    await super().trigger_update()
+                self.qcmd_status = status
 
     async def sleep(self, sleep_time: float = 0.0) -> float:
         """Sleep
@@ -277,12 +300,22 @@ class QCMDMeasurementDevice(DeviceBase):
                                         'Tag': self._tag,
                                         'Sleep time remaining': sleep_time_remaining,
                                         'Record time remaining': record_time_remaining}},
-                  'controls': {'interrupt': {'type': 'button',
-                                             'text': 'Interrupt'},
-                               'set_sleep_time': {'type': 'textbox',
-                                                  'text': 'Set sleep time (s): '},
-                               'set_record_time': {'type': 'textbox',
-                                                  'text': 'Set record time (s): '}}})
+                  'controls': { 'stop': {'type': 'button',
+                                                  'text': 'Stop',
+                                                  'visible': (self.qcmd_status in [QCMDState.MEASURING])},
+                                'set_temperature': {'type': 'textbox',
+                                                   'text': 'Set temperature: ',
+                                                   'visible': (self.qcmd_status in [QCMDState.MEASURING, QCMDState.INITIALIZING])},
+                                'interrupt': {'type': 'button',
+                                             'text': 'Interrupt',
+                                             'visible': not self.idle},
+                                'set_sleep_time': {'type': 'textbox',
+                                                  'text': 'Set sleep time (s): ',
+                                                  'visible': self.idle},
+                                'set_record_time': {'type': 'textbox',
+                                                  'text': 'Set record time (s): ',
+                                                  'visible': self.idle},
+                                                  }})
         
         return d    
 
@@ -304,25 +337,40 @@ class QCMDMeasurementDevice(DeviceBase):
         elif command == 'set_record_time':
             self._record_time = float(data['value'])
             await self.trigger_update()
+        elif command == 'set_temperature':
+            async def set_temp_and_update():
+                await self.set_temperature(float(data['value']))
+                await self.trigger_update()
+            asyncio.create_task(set_temp_and_update())
+        elif command == 'stop':
+            await self.stop_collection()
+            await self.trigger_update()
 
 class QCMDMeasurementChannel(InjectionChannelBase):
 
     def __init__(self, qcmd: QCMDMeasurementDevice, name='QCMD Channel'):
         super().__init__([qcmd], name=name)
 
-        self.methods.update({'QCMDRecord': self.QCMDRecord(qcmd),
-                'QCMDRecordTag': self.QCMDRecordTag(qcmd),
-                'QCMDSleep': self.QCMDSleep(qcmd),
-                'QCMDAcceptTransfer': self.QCMDAcceptTransfer(qcmd),
-                'QCMDStart': self.QCMDStart(qcmd),
-                'QCMDStop': self.QCMDStop(qcmd)})
+        self.well: Well = Well(composition=Composition(), volume=1, rack_id=self.name, well_number=1, id=None)
+
+        self.methods.update({'QCMDRecord': self.QCMDRecord(self, qcmd),
+                'QCMDRecordTag': self.QCMDRecordTag(self, qcmd),
+                'QCMDSleep': self.QCMDSleep(self, qcmd),
+                #'QCMDAcceptTransfer': self.QCMDAcceptTransfer(qcmd, self.well),
+                'QCMDStart': self.QCMDStart(self, qcmd),
+                'QCMDStop': self.QCMDStop(self, qcmd)})
         
         self.qcmd = qcmd
 
     async def get_info(self):
         d = await super().get_info()
-        d['controls'] = d['controls'] | {'add_tag': {'type': 'textbox',
-                                                     'text': 'Add tag: '}}
+        d['controls'] = d['controls'] | {'start': {'type': 'textbox',
+                                                     'text': 'Start with description:',
+                                                     'visible': (self.qcmd.qcmd_status == QCMDState.IDLE)},
+                                        'add_tag': {'type': 'textbox',
+                                                     'text': 'Add tag: ',
+                                                     'visible': (self.qcmd.qcmd_status == QCMDState.MEASURING)},
+                                        }
         
         return d
 
@@ -340,11 +388,14 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             self.run_method('QCMDRecordTag', dict(tag_name=data['value'],
                                                   record_time=self.qcmd._record_time,
                                                   sleep_time=self.qcmd._sleep_time))
+        elif command == 'start':
+            self.run_method('QCMDStart', dict(description=data['value']))
 
     class QCMDMethodBase(MethodBase):
 
-        def __init__(self, device: QCMDMeasurementDevice):
+        def __init__(self, ch: InjectionChannelBase, device: QCMDMeasurementDevice):
             super().__init__(devices=[device])
+            self.ch = ch
             self.qcmd = device
 
         async def start(self, **kwargs):
@@ -357,6 +408,9 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             await self.trigger_update()
 
             return result
+        
+        async def trigger_update(self):
+            return asyncio.gather(MethodBase.trigger_update(self), self.ch.trigger_update())
 
     class QCMDSleep(QCMDMethodBase):
 
@@ -425,24 +479,6 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             return result
 
-    class QCMDAcceptTransfer(QCMDMethodBase):
-
-        @dataclass
-        class MethodDefinition(MethodBase.MethodDefinition):
-
-            name: str = 'QCMDAcceptTransfer'
-            contents: str = ''
-
-        async def run(self, **kwargs):
-
-            method = self.MethodDefinition(**kwargs)
-            self.reserve_all()
-            self.logger.info(f'{self.name}: Received transfer of material {method.contents}')
-            result = {'contents': method.contents}
-            self.release_all()
-
-            return result
-
     class QCMDStop(QCMDMethodBase):
 
         @dataclass
@@ -465,34 +501,67 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             name: str = 'QCMDStart'
             description: str = ''
+            temperature: float = 25.0
 
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
             self.reserve_all()
-            result = await self.qcmd.start_collection(method.description)
+            if not (self.qcmd.qcmd_status == QCMDState.MEASURING):
+                start_result = await self.qcmd.start_collection(method.description)
+            await asyncio.sleep(2)
+            await self.trigger_update()
+            temp_result = await self.qcmd.set_temperature(float(method.temperature))
             
             # wait for collection
             try:
                 timer = PollTimer(self.qcmd.poll_interval, self.name + ' monitor PollTimer')
-                await self.qcmd.trigger_update()
+                await asyncio.sleep(2)
+                await self.trigger_update()                
                 asyncio.create_task(timer.cycle())
                 while not (self.qcmd.qcmd_status == QCMDState.MEASURING):
                     await timer.wait_until_set()
-                    await asyncio.gather(timer.cycle(), self.qcmd.trigger_update())
+                    await asyncio.gather(timer.cycle(), self.trigger_update())
                     if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
                         await self.throw_error('openQCM software not responding; waiting for error to be cleared', critical=False)
                 
                 self.logger.debug(f'{timer.address} ended')
             except asyncio.CancelledError:
-                self.logger.debug(f'{timer.address} cancelled')
+                self.logger.debug(f'{timer.address} cancelled, stopping collection')
+                self.qcmd.stop_collection()
             finally:
-                await self.qcmd.trigger_update()
+                await self.trigger_update()
 
             self.release_all()
 
-            return result
-        
+            return {'start': start_result, 'temp': temp_result}
+
+class QCMDAcceptTransfer(MethodBase):
+
+    def __init__(self, channel: QCMDMeasurementChannel, layout: LHBedLayout):
+        super().__init__([channel.qcmd])
+        self.channel = channel
+        self.layout = layout
+
+    @dataclass
+    class MethodDefinition(MethodBase.MethodDefinition):
+
+        name: str = 'QCMDAcceptTransfer'
+        contents: dict = field(default_factory=dict)
+
+    async def run(self, **kwargs):
+
+        method = self.MethodDefinition(**kwargs)
+        contents = Composition.model_validate(method.contents)
+        self.reserve_all()
+        self.logger.info(f'{self.name}: Received transfer of material {repr(contents)}')
+        well, _ = self.layout.get_well_and_rack(self.channel.name, 1)
+        well.composition = contents
+        result = {'contents': contents.model_dump()}
+        self.release_all()
+
+        return result
+
 class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
 
     def __init__(self, qcmd: QCMDMeasurementDevice, camera: CameraDeviceBase, name='QCMD Channel with Camera'):
@@ -500,10 +569,13 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
         super().__init__(qcmd, name)
         self.devices += [camera]
 
+        self.methods.update({'QCMDRecordTag': self.QCMDRecordTagwithCamera(self, qcmd, camera),
+                             'QCMDCaptureImage': self.QCMDCaptureImage(self, qcmd, camera)})
+
     class QCMDMethodBasewithCamera(QCMDMeasurementChannel.QCMDMethodBase):
 
-        def __init__(self, device: QCMDMeasurementDevice, camera: CameraDeviceBase):
-            super().__init__(device)
+        def __init__(self, ch: QCMDMeasurementChannel, device: QCMDMeasurementDevice, camera: CameraDeviceBase):
+            super().__init__(ch, device)
             self.camera = camera
 
     class QCMDCaptureImage(QCMDMethodBasewithCamera):
@@ -525,7 +597,39 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
 
             return {'image': self.camera.image}
 
-class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly):
+    class QCMDRecordTagwithCamera(QCMDMethodBasewithCamera):
+
+        @dataclass
+        class MethodDefinition(MethodBase.MethodDefinition):
+            """Sets a tag after sleep_time + record_time
+
+            Args:
+                tag_name (str, optional): Tag name
+                record_time (float, optional): Time to record in seconds. Defaults to 0.0.
+                sleep_time (float, optional): Time to sleep before recording in seconds. Defaults to 0.0.
+            """
+            name: str = 'QCMDRecordTag'
+            tag_name: str = ''
+            record_time: float = 0.0
+            sleep_time: float = 0.0
+
+        async def run(self, **kwargs):
+
+            method = self.MethodDefinition(**kwargs)
+            self.reserve_all()
+            await self.camera.capture()
+            result = {'images': {'before': self.camera.image}}
+            method_result = await self.qcmd.record_tag(method.tag_name, method.record_time, method.sleep_time)
+            print(method_result)
+            result = result | method_result
+            print(result)
+            await self.camera.capture()
+            result['images'].update({'after': self.camera.image})
+            self.release_all()
+
+            return result
+
+class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
     """QCMD recording device simultaneously recording on multiple QCMD instruments"""
 
     def __init__(self,
@@ -534,6 +638,7 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly):
                  n_channels: int = 1,
                  qcmd_ids: list | None = None,
                  database_path: str | None = None,
+                 layout_path: str | None = None,
                  name='MultiChannel QCMD Measurement Device') -> None:
 
         if qcmd_ids is not None:
@@ -553,3 +658,76 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly):
                          assemblies=[],
                          database_path=database_path,
                          name=name)
+
+        # set up layout        
+        LayoutPlugin.__init__(self, self.id, self.name)
+        self.layout_path = layout_path
+
+        # attempt to load the layout from log file
+        self.load_layout()
+
+        if self.layout is None:
+            racks = {}
+            for i, ch in enumerate(channels):
+                racks[ch.name] = Rack(columns=1,
+                                   rows=1,
+                                   max_volume=1,
+                                   min_volume=0.0,
+                                   wells=[ch.well],
+                                   style='grid',
+                                   height=300,
+                                   width=300,
+                                   x_translate=300 * i,
+                                   y_translate=0,
+                                   shape='circle',
+                                   editable=False)
+            
+            self.layout = LHBedLayout(racks=racks)
+        else:
+            for ch in channels:
+                # connect channel well to method (this is clumsy)
+                ch.well = self.layout.racks[ch.name].wells[0]
+
+        # add AcceptTransfer method, which updates the layout
+        # trigger a layout update whenever any method runs
+        async def trigger_layout_update(result):
+            await self.trigger_layout_update()
+
+        for ch in self.channels:
+            ch.methods.update({'QCMDAcceptTransfer': QCMDAcceptTransfer(ch, self.layout)})
+            ch.method_callbacks.append(trigger_layout_update)
+    
+    def create_web_app(self, template='roadmap.html'):
+        app = super().create_web_app(template)
+
+        app.add_routes(LayoutPlugin._get_routes(self))
+
+        return app
+    
+    async def event_handler(self, command: str, data: dict) -> None:
+        """Handles events from web interface
+
+        Args:
+            command (str): command name
+            data (dict): any data required by the command
+        """
+
+        await super().event_handler(command, data)
+
+        if command == 'refresh_camera_list':
+            camera_list = DFRobotCameraList()
+            channels: list[QCMDMeasurementChannelwithCamera] = self.channels
+            for ch in channels:
+                ch.camera.camera_list = camera_list
+                if ch.camera.address not in camera_list.cameras.keys():
+                    ch.camera.address = list(camera_list.cameras.keys())[0]
+
+            await self.trigger_update()    
+
+    async def get_info(self):
+        d = await super().get_info()
+
+        d['controls'] = d.get('controls', {}) | {'refresh_camera_list': {'type': 'button',
+                                                                     'text': 'Refresh Cameras'}}
+
+        return d

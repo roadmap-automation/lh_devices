@@ -1,9 +1,13 @@
+import asyncio
+import aioserial
+import json
 import logging
+
+from aiohttp import web
 from enum import Enum
 from dataclasses import dataclass
 
-import asyncio
-import aioserial
+from ..logutils import Loggable
 
 """ Configuration using com0com and hub4com:
 
@@ -35,7 +39,7 @@ class GSIOCMessage:
     messagetype: str
     data: str
 
-class GSIOC(aioserial.AioSerial):
+class GSIOC(aioserial.AioSerial, Loggable):
     """
     Virtual GSIOC object.
     """
@@ -53,6 +57,7 @@ class GSIOC(aioserial.AioSerial):
         8 bits, 1 stop bit are defaults and part of the GSIOC spec.
         """
         super().__init__(port=port, baudrate=baudrate, parity=parity)
+        Loggable.__init__(self)
 
         self.address = gsioc_address    # between 1 and 63
         self.interrupt: bool = False
@@ -61,13 +66,26 @@ class GSIOC(aioserial.AioSerial):
         self.gsioc_name = gsioc_name
         self.message_queue: asyncio.Queue = asyncio.Queue(1)
         self.response_queue: asyncio.Queue = asyncio.Queue(1)
+        self._listen_task: asyncio.Task | None = None
+        self._restart_listener = False
 
     async def listen(self) -> None:
         """
         Starts GSIOC listener. Only ends when an interrupt signal is received.
         """
 
-        logging.info('Starting GSIOC listener... Ctrl+C to exit.')
+        self._restart_listener = True
+        while self._restart_listener:
+            self._restart_listener = False
+            self._listen_task = asyncio.create_task(self._listen())
+            try:
+                await self._listen_task
+            except asyncio.CancelledError:
+                self._listen_task.cancel()
+
+    async def _listen(self) -> None:
+
+        self.logger.info('Starting GSIOC listener... Ctrl+C to exit.')
 
         if not self.is_open:
             self.open()
@@ -79,18 +97,18 @@ class GSIOC(aioserial.AioSerial):
         try:
             while True:
 
-                logging.debug('GSIOC: Waiting for connection...')
+                self.logger.debug('GSIOC: Waiting for connection...')
 
                 await self.wait_for_connection()
 
                 if self.connected: # address received
-                    logging.debug('GSIOC: Connection established, waiting for command')
+                    self.logger.debug('GSIOC: Connection established, waiting for command')
                     # waits for a command
                     cmd = await self.wait_for_command()
 
                     if cmd:
 
-                        logging.debug(f'{self.port} (GSIOC) <= {cmd}')
+                        self.logger.debug(f'{self.port} (GSIOC) <= {cmd}')
 
                         # process ID request immediately
                         if cmd == '%':
@@ -105,7 +123,7 @@ class GSIOC(aioserial.AioSerial):
                             if recovery_data is not None:
                                 # if we're handling a repeated command, use recovery data, otherwise proceed as normal
                                 if recovery_data['command'] == cmd:
-                                    logging.debug(f"GSIOC: Using recovery data for repeat command {recovery_data['command']} with response {recovery_data['response']}")
+                                    self.logger.debug(f"GSIOC: Using recovery data for repeat command {recovery_data['command']} with response {recovery_data['response']}")
                                     response = recovery_data['response']                                
                                 else:
                                     recovery_data = None
@@ -119,7 +137,7 @@ class GSIOC(aioserial.AioSerial):
 
                                 if data.messagetype == GSIOCCommandType.IMMEDIATE:
                                     if self.client_lock.locked():
-                                        logging.debug('GSIOC: Waiting for response to immediate command')
+                                        self.logger.debug('GSIOC: Waiting for response to immediate command')
                                         response: str = await self.response_queue.get()
                                     else:
                                         response: str = f'GSIOC error: no client connected on address {self.address}'
@@ -133,9 +151,9 @@ class GSIOC(aioserial.AioSerial):
                                                     'response': response}
 
 
-                logging.debug('GSIOC: Connection reset...')
+                self.logger.debug('GSIOC: Connection reset...')
         except asyncio.CancelledError:
-            logging.info('Closing GSIOC connection...')
+            self.logger.info('Closing GSIOC connection...')
             #await self.write1(chr(10))
         except Exception:
             raise
@@ -146,6 +164,12 @@ class GSIOC(aioserial.AioSerial):
             self.message_queue.empty()
             self.response_queue.empty()
             self.close()
+
+    def reset(self):
+        # allow reset only if listener is started
+        if self._listen_task is not None:
+            self._restart_listener = True
+            self._listen_task.cancel()
 
     async def wait_for_connection(self):
         """
@@ -158,13 +182,13 @@ class GSIOC(aioserial.AioSerial):
         # if address matches, echo the address
         if comm == self.address + 128:
             await self.write1(chr(self.address + 128))
-            logging.debug(f'GSIOC: address matches, writing {chr(self.address + 128).encode()}')
+            self.logger.debug(f'GSIOC: address matches, writing {chr(self.address + 128).encode()}')
             self.connected = True
         
         # if result is byte 255, send a break character
         # TODO: check if this should be self.ser.send_break
         elif comm == 255:
-            logging.debug('GSIOC: sending break')
+            self.logger.debug('GSIOC: sending break')
             await self.write1(chr(10))
             self.connected = False
 
@@ -179,7 +203,7 @@ class GSIOC(aioserial.AioSerial):
 
             # buffered command...read until line feed is sent
             if comm == 10:
-                logging.debug(f'GSIOC: got LF, starting buffered command read')
+                self.logger.debug(f'GSIOC: got LF, starting buffered command read')
                 await self.write1(chr(comm))
                 msg = ''
                 while comm != 13:
@@ -191,7 +215,7 @@ class GSIOC(aioserial.AioSerial):
 
                     msg += chr(comm)
 
-                logging.debug(f'GSIOC: got CR, end of message: {msg}')
+                self.logger.debug(f'GSIOC: got CR, end of message: {msg}')
 
                 return msg
             
@@ -215,7 +239,7 @@ class GSIOC(aioserial.AioSerial):
             cmd = cmd[:-1]
 
             # TODO: do stuff
-            logging.debug(f'GSIOC: Buffered command received: {cmd}')
+            self.logger.debug(f'GSIOC: Buffered command received: {cmd}')
             return GSIOCMessage(GSIOCCommandType.BUFFERED, cmd)
 
             #await self.send(f'You sent me buffered command {cmd}')
@@ -230,7 +254,7 @@ class GSIOC(aioserial.AioSerial):
         comm = await self.read_async()
         if len(comm):
             #print(comm)
-            logging.debug(f'GSIOC: received character {int(comm.hex(), base=16)}') #, len(comm), [ord(c) for c in comm])
+            self.logger.debug(f'GSIOC: received character {int(comm.hex(), base=16)}') #, len(comm), [ord(c) for c in comm])
             return int(comm.hex(), base=16)
         else:
             return None
@@ -241,7 +265,7 @@ class GSIOC(aioserial.AioSerial):
         """
         ret = await self.read1()
         if ret != 6:
-            logging.warning(f'GSIOC: wrong acknowledgement character received: {ret}; attempting to repair comms')
+            self.logger.warning(f'GSIOC: wrong acknowledgement character received: {ret}; attempting to repair comms')
             #await self.repair_comms()
             return False
 
@@ -270,16 +294,16 @@ class GSIOC(aioserial.AioSerial):
         Returns True if successful, False if read acknowledgement error
         """
         for char in msg[:-1]:
-            logging.debug(f'GSIOC: sending character {char}')
+            self.logger.debug(f'GSIOC: sending character {char}')
             await self.write1(char)
             if not await self.read_ack():
-                logging.warning(f'GSIOC: Terminating send of message {msg} due to wrong acknowledgement character, waiting for new connection')
+                self.logger.warning(f'GSIOC: Terminating send of message {msg} due to wrong acknowledgement character, waiting for new connection')
                 return False
 
         # last character gets sent with high bit (add ASCII 128)
         await self.write1(chr(ord(msg[-1]) + 128))
 
-        logging.debug(f'{self.port} (GSIOC) => {msg}')
+        self.logger.debug(f'{self.port} (GSIOC) => {msg}')
 
         return True
 
@@ -296,7 +320,7 @@ class SimulatedGSIOC(GSIOC):
         Starts simulated GSIOC listener. Only ends when an interrupt signal is received.
         """
 
-        logging.info('Starting Simulated GSIOC listener... Ctrl+C to exit.')
+        self.logger.info('Starting Simulated GSIOC listener... Ctrl+C to exit.')
 
         # infinite loop to wait for a command. Break by cancelling the task
         try:
@@ -305,7 +329,7 @@ class SimulatedGSIOC(GSIOC):
                 await asyncio.wait(0.5)
 
         except asyncio.CancelledError:
-            logging.info('Closing GSIOC connection...')
+            self.logger.info('Closing GSIOC connection...')
         except Exception:
             raise
 
@@ -314,6 +338,23 @@ class SimulatedGSIOC(GSIOC):
             # close serial port before exiting when interrupt is received
             self.message_queue.empty()
             self.response_queue.empty()
+
+class GSIOCPlugin:
+
+    def __init__(self, gsioc: GSIOC):
+
+        self.gsioc = gsioc
+
+    def _get_routes(self) -> web.RouteTableDef:
+
+        routes = web.RouteTableDef()
+
+        @routes.post('/GSIOC/Reset')
+        async def reset_gsioc(request: web.Request) -> web.Response:
+            self.gsioc.reset()
+            return web.Response(text=json.dumps({'result': 'GSIOC reset sent'}), status=200)
+
+        return routes        
 
 async def main():
 
