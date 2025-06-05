@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 
@@ -5,7 +6,7 @@ from aiohttp import web
 from aiohttp.web_app import Application as Application
 from pathlib import Path
 
-from lh_manager.liquid_handler.bedlayout import LHBedLayout, Well
+from lh_manager.liquid_handler.bedlayout import LHBedLayout, Well, Rack
 
 from .webview import WebNodeBase, sio
 
@@ -64,6 +65,16 @@ class LayoutPlugin(WebNodeBase):
         await self.trigger_layout_update()
         return web.Response(text=json.dumps({"well definition removed": data}), status=200)
 
+    async def _update_rack(self, request: web.Request) -> web.Response:
+        data = await request.json()
+        assert isinstance(data, dict)
+        rack_id = data.get('rack_id')
+        new_rack = Rack.model_validate(data.get('rack'))
+        new_rack.wells = self.layout.racks[rack_id].wells
+        self.layout.racks[rack_id] = new_rack
+        await self.trigger_layout_update()
+        return web.Response(text=new_rack.model_dump_json(), status=200)
+
     def _get_routes(self) -> web.RouteTableDef:
 
         routes = web.RouteTableDef()
@@ -79,6 +90,10 @@ class LayoutPlugin(WebNodeBase):
         @routes.post('/GUI/UpdateWell')
         async def update_well(request: web.Request) -> web.Response:
             return await self._update_well(request)
+
+        @routes.post('/GUI/UpdateRack')
+        async def update_rack(request: web.Request) -> web.Response:
+            return await self._update_rack(request)
 
         @routes.post('/GUI/RemoveWellDefinition')
         async def remove_well(request: web.Request) -> web.Response:
