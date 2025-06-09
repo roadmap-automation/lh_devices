@@ -56,7 +56,7 @@ class HamiltonSerial(aioserial.AioSerial):
         super().__init__(**kwargs)
         self.write_lock: asyncio.Lock = asyncio.Lock()
         
-        self.wait_timeout = 0.5
+        self.wait_timeout = 2.0
         self.max_retries = 3
         self.sequence_number = 1
 
