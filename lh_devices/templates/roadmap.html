@@ -273,6 +273,12 @@
                                 issue_command(id, 'cancel_method', {'method': method_name})
                             })
                             .appendTo(newdiv);
+                        $('<button>')
+                            .text('Restart')
+                            .on('click', function () {
+                                issue_command(id, 'restart_method', {'method': method_name})
+                            })
+                            .appendTo(newdiv);                            
                         if (active_method['has_error']) {
                             newdiv.addClass("error_text")
                             $('<button>')

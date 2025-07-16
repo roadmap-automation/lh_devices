@@ -504,6 +504,21 @@ class MethodPlugin(WebNodeBase):
             target_method = self.active_methods.get(data['method'], None)['method']
             if target_method is not None:
                 self.method_runner.cancel_methods_by_name(data['method'])
+        elif command == 'restart_method':
+            target_method: ActiveMethod = self.active_methods.get(data['method'], None)
+            if target_method is not None:
+                # get method id from task info
+                method_name = target_method['method'].name
+                method_id = None
+                for task, iinfo in self.method_runner._running_tasks.items():
+                    if method_name == iinfo['method_name']:
+                        method_id = iinfo['id']
+
+                self.run_method(target_method['method'].name, target_method['method_data'], method_id)
+
+                # relies on fact that tasks should be added in order and so the oldest one should be grabbed first
+                # cancelling is done in this order so the device never goes idle
+                self.method_runner.cancel_methods_by_name(method_name)
 
     async def _handle_task(self, request: web.Request) -> web.Response:
         """Handles a submitted task"""
