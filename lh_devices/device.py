@@ -165,7 +165,11 @@ class DeviceBase(WebNodeBase):
         pass
 
     async def get_info(self):
-        return asdict(self.state)
+        d = await super().get_info()
+        d.update({'type': 'device',
+                  'state': asdict(self.state),
+                  'controls': {}})
+        return d
 
 class PollTimer:
     """Async timer for polling delay
