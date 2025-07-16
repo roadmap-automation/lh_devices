@@ -3,7 +3,7 @@ import copy
 import logging
 from uuid import uuid4
 from typing import List, Literal
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 from .connections import Node
 from .valve import ValveState, ValveBase
@@ -163,6 +163,9 @@ class DeviceBase(WebNodeBase):
         """
 
         pass
+
+    async def get_info(self):
+        return asdict(self.state)
 
 class PollTimer:
     """Async timer for polling delay
