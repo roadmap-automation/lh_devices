@@ -456,7 +456,7 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
                            reserved=self.reserved,
                            error=self.error,
                            digital_outputs=self.digital_outputs,
-                           valve_state=self.valve.state)
+                           positioner_state=self.valve.state)
 
     async def initialize(self) -> None:
         await super().initialize()
@@ -635,7 +635,7 @@ class SimulatedHamiltonValvePositioner(SimulatedHamiltonBase, ValvePositionerBas
                            reserved=self.reserved,
                            error=self.error,
                            digital_outputs=self.digital_outputs,
-                           valve_state=self.valve.state)
+                           positioner_state=self.valve.state)
 
     async def initialize(self) -> None:
         await super().initialize()
@@ -742,7 +742,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
                            reserved=self.reserved,
                            error=self.error,
                            digital_outputs=self.digital_outputs,
-                           valve_state=self.valve.state,
+                           positioner_state=self.valve.state,
                            syringe_state=self.syringe_state)
 
     async def initialize(self) -> None:
@@ -1237,7 +1237,7 @@ class SimulatedHamiltonSyringePump(SimulatedHamiltonValvePositioner, SyringePump
                            reserved=self.reserved,
                            error=self.error,
                            digital_outputs=self.digital_outputs,
-                           valve_state=self.valve.state,
+                           positioner_state=self.valve.state,
                            syringe_state=self.syringe_state)
 
     async def get_info(self) -> dict:

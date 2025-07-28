@@ -165,10 +165,10 @@
                                     }
                             });
                             }
-                            if ('valve_state' in data['state']) {
-                                let valvestatecontainer = $('<div>').text('Valve position: ').appendTo(statediv)
-                                $('<text>').addClass("valve_position").text(data['state']['valve_state']['valve_position']).appendTo(valvestatecontainer)
-                                $('<div>').addClass("valve_svg").html(data['state']['valve_state']['valve_svg']).appendTo(statediv)
+                            if ('positioner_state' in data['state']) {
+                                let positionerstatecontainer = $('<div>').text('Position: ').appendTo(statediv)
+                                $('<text>').addClass("position").text(data['state']['positioner_state']['position']).appendTo(positionerstatecontainer)
+                                $('<div>').addClass("svg").html(data['state']['positioner_state']['svg']).appendTo(statediv)
                             }
                             if ('syringe_state' in data['state']) {
                                 statediv.append(progressbar(data['state']['syringe_state']['position'], data['state']['syringe_state']['syringe_volume']))
@@ -367,7 +367,7 @@
                             let newtext = $('<input type=number>')
                                             .addClass('input_number')
                                             .attr("min", 1)
-                                            .val(1).appendTo(inputcontainer)
+                                            .val(cdata.current ?? 1).appendTo(inputcontainer)
                             let newtextbutton = $('<button>')
                                 .addClass('textbutton')
                                 .text('Go')
@@ -532,7 +532,7 @@
     .textbox_controls {
         display: flex;
     }
-    .valve_position {
+    .position {
         font-weight: bold;
     }
     .titletext-connected {
@@ -609,7 +609,7 @@
         overflow: auto;
         width: 90%;
     }
-    .valve_svg {
+    .svg {
         margin:auto;
         aspect-ratio: 1/1;
         width: 30%;

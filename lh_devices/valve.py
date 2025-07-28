@@ -6,16 +6,13 @@ from typing import List
 
 from .connections import Port
 from .components import ComponentBase
+from .positioner import PositionerState, PositionerBase
 
 @dataclass
-class ValveState:
-    name: str
-    valve_position: int
-    number_positions: int
+class ValveState(PositionerState):
     number_ports: int
-    valve_svg: str
 
-class ValveBase(ComponentBase):
+class ValveBase(ComponentBase, PositionerBase):
     """
     Valve base representation.
     
@@ -93,32 +90,16 @@ class ValveBase(ComponentBase):
             self.clear_connections()
             self.update_connections()
     
-    def validate_move(self, position: int) -> bool:
-        """Validate a move to a desired position
-
-        Args:
-            position (int): desired position
-
-        Returns:
-            bool: True if valid, False if not
-        """
-
-        if position not in range(0, self.n_positions + 1):
-            logging.error(f'{self.name} Move validation error: requested position {position} is not an integer between 0 (off) and {self.n_positions}')
-            return False
-        
-        return True
-
     @property
     def state(self) -> ValveState:
         """Gets the current state
         """
 
         return ValveState(name=self.name,
-                          valve_position=self.position,
+                          position=self.position,
                           number_positions=self.n_positions,
                           number_ports=self.n_ports,
-                          valve_svg=self._render_valve())
+                          svg=self._render_valve())
 
 
     def get_info(self) -> ValveState:

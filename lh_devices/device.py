@@ -218,7 +218,7 @@ class PollTimer:
 # ========= Valve positioners ===========
 @dataclass
 class ValvePositionerState(DeviceState):
-    valve_state: ValveState
+    positioner_state: ValveState
 
 class ValvePositionerBase(DeviceBase):
 
@@ -238,7 +238,7 @@ class ValvePositionerBase(DeviceBase):
                                     initialized=self.initialized,
                                     reserved=self.reserved,
                                     error=self.error,
-                                    valve_state=self.valve.state)
+                                    positioner_state=self.valve.state)
 
     def get_nodes(self) -> List[Node]:
         
@@ -406,7 +406,7 @@ class SyringePumpValvePositioner(ValvePositionerBase, SyringePumpBase):
                 initialized=self.initialized,
                 reserved=self.reserved,
                 error=self.error,
-                valve_state=self.valve.state,
+                positioner_state=self.valve.state,
                 syringe_state=SyringeState(self.syringe_position / 1000,
                                            self.syringe_volume / 1000,
                                            self.syringe_speed * 60. / 1000.,
