@@ -61,7 +61,10 @@ class HamiltonSerial(aioserial.AioSerial):
         self.sequence_number = 1
 
     async def get_value(self, rv: dict):
-        rv['value'] = await self.reader_async()
+        try:
+            rv['value'] = await self.reader_async()
+        except asyncio.CancelledError:
+            logging.debug('get_value cancelled')
 
     async def _write_message(self, data: HamiltonMessage, response_queue: asyncio.Queue):
         """Basic write/read operation
@@ -79,7 +82,8 @@ class HamiltonSerial(aioserial.AioSerial):
         trial = 0
         while trial < self.max_retries:
             try:
-                await asyncio.wait_for(self.get_value(return_value), timeout=self.wait_timeout)
+                get_value_task = asyncio.create_task(self.get_value(return_value))
+                await asyncio.wait_for(get_value_task, timeout=self.wait_timeout)
 
                 # break out of while if return_value is not None, else try again (finally)
                 if return_value['value']:
@@ -87,6 +91,7 @@ class HamiltonSerial(aioserial.AioSerial):
                     break
             except asyncio.TimeoutError:
                 logging.warning(f'{self.port} => {repr(data)}: serial connection timed out!')
+                get_value_task.cancel()
 
             # if not successful try again up to max_retries, changing repeat bit
             trial += 1
