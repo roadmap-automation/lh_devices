@@ -344,6 +344,7 @@
                             let newtext = $('<input type=text>')
                                 .addClass('input_text')
                                 .prop('disabled', !(cdata.enabled ?? true))
+                                .val(cdata.current ?? '')
                                 .appendTo(inputcontainer)
                             let newtextbutton = $('<button>')
                                 .addClass('textbutton')
