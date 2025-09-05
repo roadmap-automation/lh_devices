@@ -395,9 +395,16 @@
                                             .appendTo(inputcontainer)
                             newfile.on("change", function (e) {
                                 const file = e.target.files[0];
-                                issue_command(device_id, cid, {'file_contents': file});
+                                issue_command(device_id, cid, {'file_name': file.name, 'file_contents': file});
                                             });
-                            //newctrl.append(newtextbutton)
+                            let newfilebutton = $('<button>')
+                                .addClass('textbutton')
+                                .text('Choose file')
+                                .attr('for', newfile)
+                                .prop('disabled', !(cdata.enabled ?? true))
+                            newfilebutton.appendTo(inputcontainer)          
+                            newfilebutton.on("click", function () {newfile.click();})
+                            $('<div>').text(cdata.current ?? '').appendTo(inputcontainer)
 
                         }                                 
                         //devicediv.append(newctrl)
