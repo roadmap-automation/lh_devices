@@ -391,7 +391,7 @@
                             inputcontainer.appendTo(newctrl)
                             $('<div>').text(cdata['text']).appendTo(inputcontainer)                    
                             let newfile = $('<input type=file>')
-                                            .addClass('input_file')
+                                            .css('display', 'none')
                                             .appendTo(inputcontainer)
                             newfile.on("change", function (e) {
                                 const file = e.target.files[0];
