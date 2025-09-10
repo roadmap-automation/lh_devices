@@ -386,13 +386,14 @@
                                             .addClass(ctype)
                                             .prop('disabled', !(cdata.enabled ?? true))
                                             .appendTo(devicediv);
-                            
+                            inputdiv = $('<div>')
+                                            //.text(cdata['text'])
+                                            .appendTo(newctrl)                            
                             let inputcontainer = $('<div>').addClass("textbox_controls")
                             inputcontainer.appendTo(newctrl)
-                            $('<div>').text(cdata['text']).appendTo(inputcontainer)                    
                             let newfile = $('<input type=file>')
                                             .css('display', 'none')
-                                            .appendTo(inputcontainer)
+                                            .appendTo(inputdiv)
                             newfile.on("change", function (e) {
                                 const file = e.target.files[0];
                                 const fileData = {
@@ -406,16 +407,23 @@
                                             });
                             let newfilebutton = $('<button>')
                                 .addClass('textbutton')
-                                .text('Choose file')
+                                .text(cdata['text'])
                                 .attr('for', newfile)
                                 .prop('disabled', !(cdata.enabled ?? true))
-                            newfilebutton.appendTo(inputcontainer)          
+                            newfilebutton.appendTo(inputdiv)
                             newfilebutton.on("click", function () {newfile.click();})
-                            $('<div>').text(cdata.current.name ?? '').appendTo(inputcontainer)
+                            //$('<div>').text(cdata.current.name ?? '').appendTo(inputcontainer)
                             if (cdata.current.type == 'application/json') {
-                                $('<pre>').text(cdata.current.contents ?? '').appendTo(inputcontainer)
+                                displaydiv = $('<div>').appendTo(inputcontainer)
+                                newdetails = $('<details>')
+                                                .css('margin-left', '1em')
+                                                .appendTo(displaydiv)
+                                $('<summary>').text(cdata.current.name ?? '').appendTo(newdetails)
+                                $('<pre>').text(JSON.stringify(cdata.current.contents ?? '', null, 2))
+                                    .css('white-space', 'pre-wrap')
+                                    .appendTo(newdetails)
                             }
-                        }                                 
+                        }                                     
                         //devicediv.append(newctrl)
                     }
                 }
