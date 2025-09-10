@@ -395,7 +395,14 @@
                                             .appendTo(inputcontainer)
                             newfile.on("change", function (e) {
                                 const file = e.target.files[0];
-                                issue_command(device_id, cid, {'file_name': file.name, 'file_contents': file});
+                                const fileData = {
+                                    name: file.name,
+                                    lastModified: file.lastModified,
+                                    size: file.size,
+                                    type: file.type,
+                                    contents: file,
+                                };
+                                issue_command(device_id, cid, {'file': fileData});
                                             });
                             let newfilebutton = $('<button>')
                                 .addClass('textbutton')
@@ -404,8 +411,10 @@
                                 .prop('disabled', !(cdata.enabled ?? true))
                             newfilebutton.appendTo(inputcontainer)          
                             newfilebutton.on("click", function () {newfile.click();})
-                            $('<div>').text(cdata.current ?? '').appendTo(inputcontainer)
-
+                            $('<div>').text(cdata.current.name ?? '').appendTo(inputcontainer)
+                            if (cdata.current.type == 'application/json') {
+                                $('<pre>').text(cdata.current.contents ?? '').appendTo(inputcontainer)
+                            }
                         }                                 
                         //devicediv.append(newctrl)
                     }
