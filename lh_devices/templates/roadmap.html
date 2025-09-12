@@ -413,7 +413,7 @@
                             newfilebutton.appendTo(inputdiv)
                             newfilebutton.on("click", function () {newfile.click();})
                             //$('<div>').text(cdata.current.name ?? '').appendTo(inputcontainer)
-                            if (cdata.current.type == 'application/json') {
+                            if ((cdata.current?.type ?? '') == 'application/json') {
                                 displaydiv = $('<div>').appendTo(inputcontainer)
                                 newdetails = $('<details>')
                                                 .css('margin-left', '1em')
