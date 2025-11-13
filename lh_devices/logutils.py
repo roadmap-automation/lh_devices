@@ -35,7 +35,30 @@ class MethodLogHandler(logging.Handler):
         rval = [v for v in self.log_queue]
         self.log_queue = []
         return rval
+
+"""
+    Custom stream handler for reassigning stdout to method logger,
+        for use to catch print statements in methods from third party
+        packages.
     
+    Usage:
+        sys.stdout = StreamToLogger(self.logger, self.log_level)
+        ...
+        sys.stdout = sys.__stdout__ # reset the connection
+
+"""    
+class StreamToLogger:
+    def __init__(self, logger: logging.Logger, log_level: int):
+        self.logger = logger
+        self.log_level = log_level
+
+    def write(self, message: str):
+        if message.strip():  # Avoid logging empty lines
+            self.logger.log(self.log_level, message.strip())
+
+    def flush(self):
+        pass  # Required for compatibility with sys.stdout    
+
 class Loggable:
     """Attaches a unique logger"""
     def __init__(self):
