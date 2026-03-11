@@ -171,6 +171,13 @@ class MethodBase(Loggable):
                     result = newresult.result
             except asyncio.CancelledError:
                 await self.on_cancel()
+        except Exception as e:
+            # these are unexpected errors that should be logged and notified about, but not retried            
+            import traceback
+            error_trace = traceback.format_exc()
+            self.logger.error(f'Unhandled Python Exception in {self.name}:\n{error_trace}')
+            self.error.error = str(e)
+            result = {'error': str(e), 'traceback': error_trace}
         finally:
             self.logger.info(f'{self.name} finished')
             await self.trigger_update()
@@ -179,12 +186,12 @@ class MethodBase(Loggable):
             for device in self.devices:
                 device.logger.removeHandler(self.log_handler)
         
-            return MethodResult(method_name=self.name,
-                            method_data=kwargs,
-                            log=copy.copy(self.metadata),
-                            created_time=self.metadata[0]['time'],
-                            finished_time=self.metadata[-1]['time'],
-                            result=result)
+        return MethodResult(method_name=self.name,
+                        method_data=kwargs,
+                        log=copy.copy(self.metadata),
+                        created_time=self.metadata[0]['time'],
+                        finished_time=self.metadata[-1]['time'],
+                        result=result)
 
     async def throw_error(self, error: str, critical: bool = False, retry: bool = False) -> None:
         """Populates the method error. If a critical error, stops method execution. If not critical,
