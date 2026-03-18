@@ -24,6 +24,7 @@ Approach:
 
 """
 
+STATIC_PATH = Path(__file__).parent / 'static'
 TEMPLATE_PATH = Path(__file__).parent / 'templates'
 
 sio = socketio.AsyncServer(cors_allowed_origins='*')
@@ -47,6 +48,8 @@ class WebNodeBase(Loggable):
 
         app = web.Application()
         routes = web.RouteTableDef()
+
+        app.router.add_static("/static/", STATIC_PATH, name="static")
 
         @routes.get('/')
         @routes.get(f'/{self.id}')
