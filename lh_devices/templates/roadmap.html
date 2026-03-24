@@ -291,7 +291,11 @@
         }
 
         function update_controls(devicediv, device_id, controls) {
-            //console.log(devicediv.contents().length)
+            // if user is interacting with any of the device controls, bail out of updating the controls to avoid interfering with user input
+            if (devicediv.find('input:focus, select:focus').length > 0) {
+                return; 
+            }
+
             devicediv.empty()
             if (devicediv.contents().length == 0) {
                 for (const [cid, cdata] of Object.entries(controls)) {
