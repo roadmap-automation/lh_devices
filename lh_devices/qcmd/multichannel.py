@@ -528,7 +528,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
                 self.logger.debug(f'{timer.address} ended')
             except asyncio.CancelledError:
                 self.logger.debug(f'{timer.address} cancelled, stopping collection')
-                self.qcmd.stop_collection()
+                await self.qcmd.stop_collection()
             finally:
                 await self.trigger_update()
 
