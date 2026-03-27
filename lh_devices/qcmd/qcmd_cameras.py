@@ -82,7 +82,7 @@ class FIT0819Collection(CameraCollectionBase):
         self.physical_cameras = new_cameras
         self._verify_assignments()
 
-    async def discover_via_acroname(self, hub_manager: USBHubManager, port_map: Dict[int, FIT0819], mount_delay: float = 3.0):
+    async def discover_via_acroname(self, hub_manager: USBHubManager, port_map: Dict[int, FIT0819], mount_delay: float = 6.0):
         """Orchestrates Acroname sequential power-up for FIT0819s."""
         ports = list(port_map.keys())
         hub_manager.disable_ports(ports)
