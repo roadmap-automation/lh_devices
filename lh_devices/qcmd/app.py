@@ -30,6 +30,7 @@ async def qcmd_multichannel_measure():
         pass
     finally:
         logging.info('Closing QCMD Multichannel Measurement Device...')
+        measurement_system.acroname_hub.disconnect()  # Ensure the hub is properly disconnected to free threads
         await runner.cleanup()
 
 if __name__ == '__main__':

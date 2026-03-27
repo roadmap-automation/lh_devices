@@ -10,7 +10,10 @@ from urllib.parse import urlsplit
 
 from lh_manager.liquid_handler.bedlayout import LHBedLayout, Composition, Rack, Well
 
-from ..camera.camera import CameraDeviceBase, FIT0819, DFRobotCameraList
+from .qcmd_cameras import FIT0819, FIT0819Collection
+
+from ..camera.camera import CameraDeviceBase
+from ..camera.acroname_hub import USBHubManager
 from ..device import DeviceBase, PollTimer
 from ..assemblies import InjectionChannelBase
 from ..layout import LayoutPlugin
@@ -639,20 +642,37 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
                  qcmd_ids: list | None = None,
                  database_path: str | None = None,
                  layout_path: str | None = None,
+                 hub_ports: list | None = None, # NEW: Allow mapping specific camera usb hub ports
                  name='MultiChannel QCMD Measurement Device') -> None:
 
+        # initialize camera collection and Acroname hub manager
+        self.camera_collection = FIT0819Collection()
+        self.acroname_hub = USBHubManager()
+        # Default to ports 0, 1, 2... if not explicitly provided
+        self.hub_ports = hub_ports if hub_ports is not None else list(range(max(n_channels, len(qcmd_ids or []))))
+
         if qcmd_ids is not None:
-            channels = [QCMDMeasurementChannelwithCamera(QCMDMeasurementDevice(f'http://{qcmd_address}:{qcmd_port}/QCMD/id/{qcmd_id}/',
-                                                                          name=f'QCMD Measurement Device {i}, Serial Number {qcmd_id}'),
-                                                         camera=FIT0819(None),
-                                                    name=f'QCMD Measurement Channel {i}')
-                                for i, qcmd_id in enumerate(qcmd_ids)]
+            channels: list[QCMDMeasurementChannelwithCamera] = []
+            for i, qcmd_id in enumerate(qcmd_ids):
+                # 1. Create the Logical Slot
+                camera_slot = FIT0819(name=f'QCMD Camera {i}')
+                # 2. Register it with the broker
+                self.camera_collection.register_slot(camera_slot)
+                
+                device = QCMDMeasurementDevice(f'http://{qcmd_address}:{qcmd_port}/QCMD/id/{qcmd_id}/',
+                                               name=f'QCMD Measurement Device {i}, Serial Number {qcmd_id}')
+                channels.append(QCMDMeasurementChannelwithCamera(device, camera=camera_slot, name=f'QCMD Measurement Channel {i}'))
         else:
-            channels = [QCMDMeasurementChannelwithCamera(QCMDMeasurementDevice(f'http://{qcmd_address}:{qcmd_port}/QCMD/{i}/',
-                                                                          name=f'QCMD Measurement Device {i}'),
-                                                         camera=None,
-                                                    name=f'QCMD Measurement Device {i}')
-                                for i in range(n_channels)]
+            channels = []
+            for i in range(n_channels):
+                # 1. Create the Logical Slot
+                camera_slot = FIT0819(name=f'QCMD Camera {i}')
+                # 2. Register it with the broker
+                self.camera_collection.register_slot(camera_slot)
+                
+                device = QCMDMeasurementDevice(f'http://{qcmd_address}:{qcmd_port}/QCMD/{i}/',
+                                               name=f'QCMD Measurement Device {i}')
+                channels.append(QCMDMeasurementChannelwithCamera(device, camera=camera_slot, name=f'QCMD Measurement Channel {i}'))
 
         super().__init__(channels=channels,
                          assemblies=[],
@@ -696,7 +716,24 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
         for ch in self.channels:
             ch.methods.update({'QCMDAcceptTransfer': QCMDAcceptTransfer(ch, self.layout)})
             ch.method_callbacks.append(trigger_layout_update)
-    
+
+    async def initialize(self):
+        await super().initialize()
+        
+        # Attempt to connect to the Acroname Hub
+        if self.acroname_hub.connect():
+            # Map the requested hub ports to the created camera slots
+            port_map = {}
+            for i, ch in enumerate(self.channels):
+                if i < len(self.hub_ports):
+                    port_map[self.hub_ports[i]] = ch.camera
+                    
+            self.logger.info("Acroname hub connected. Running sequential discovery...")
+            await self.camera_collection.discover_via_acroname(self.acroname_hub, port_map)
+        else:
+            self.logger.warning("Acroname hub not found. Falling back to free auto-assignment.")
+            self.camera_collection.auto_assign_freely()
+
     def create_web_app(self, template='roadmap.html'):
         app = super().create_web_app(template)
 
@@ -715,14 +752,20 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
         await super().event_handler(command, data)
 
         if command == 'refresh_camera_list':
-            camera_list = DFRobotCameraList()
-            channels: list[QCMDMeasurementChannelwithCamera] = self.channels
-            for ch in channels:
-                ch.camera.camera_list = camera_list
-                if ch.camera.address not in camera_list.cameras.keys():
-                    ch.camera.address = list(camera_list.cameras.keys())[0]
+            async def run_discovery():
+                if self.acroname_hub.connected:
+                    port_map = {self.hub_ports[i]: ch.camera for i, ch in enumerate(self.channels) if i < len(self.hub_ports)}
+                    await self.camera_collection.discover_via_acroname(self.acroname_hub, port_map)
+                else:
+                    self.camera_collection.auto_assign_freely()
+                    
+                # Trigger a UI update for all channels once discovery is done
+                for ch in self.channels:
+                    await ch.camera.trigger_update()
+                await self.trigger_update()
 
-            await self.trigger_update()    
+            # Run in the background so we don't block the web socket!
+            asyncio.create_task(run_discovery())
 
     async def get_info(self):
         d = await super().get_info()
