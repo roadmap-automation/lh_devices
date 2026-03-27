@@ -3,6 +3,7 @@ aiohttp_cors
 aiohttp-jinja2
 aioserial
 aioconsole
+brainstem
 python-socketio
 pygrabber
 pywin32
