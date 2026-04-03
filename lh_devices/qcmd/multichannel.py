@@ -717,22 +717,46 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
             ch.methods.update({'QCMDAcceptTransfer': QCMDAcceptTransfer(ch, self.layout)})
             ch.method_callbacks.append(trigger_layout_update)
 
+    async def run_camera_discovery(self):
+        """Runs the camera discovery sequence safely in the background."""
+        
+        # 1. We only need to check self.idle. If ANY component (like a QCMD 
+        #    or a camera) is busy, self.idle evaluates to False automatically!
+        if not self.idle:
+            self.logger.warning("Ignored refresh command: Device or cameras are currently busy.")
+            return
+
+        # 2. Lock the cameras. This automatically makes self.idle evaluate to False.
+        for ch in self.channels:
+            ch.camera.idle = False
+            await ch.camera.trigger_update()
+        
+        # Trigger an update on the main device so the UI hides the button
+        await self.trigger_update()
+
+        # 3. Run the discovery safely
+        try:
+            if self.acroname_hub.connected or self.acroname_hub.connect():
+                port_map = {self.hub_ports[i]: ch.camera for i, ch in enumerate(self.channels) if i < len(self.hub_ports)}
+                await self.camera_collection.discover_via_acroname(self.acroname_hub, port_map)
+            else:
+                self.logger.warning("Acroname hub not found. Falling back to free auto-assignment.")
+                self.camera_collection.auto_assign_freely()
+        
+        # 4. Restore the cameras. This automatically makes self.idle True again.
+        finally:
+            for ch in self.channels:
+                ch.camera.idle = True
+                await ch.camera.trigger_update()
+            
+            # Trigger an update on the main device so the button comes back
+            await self.trigger_update()
+
     async def initialize(self):
         await super().initialize()
         
-        # Attempt to connect to the Acroname Hub
-        if self.acroname_hub.connect():
-            # Map the requested hub ports to the created camera slots
-            port_map = {}
-            for i, ch in enumerate(self.channels):
-                if i < len(self.hub_ports):
-                    port_map[self.hub_ports[i]] = ch.camera
-                    
-            self.logger.info("Acroname hub connected. Running sequential discovery...")
-            await self.camera_collection.discover_via_acroname(self.acroname_hub, port_map)
-        else:
-            self.logger.warning("Acroname hub not found. Falling back to free auto-assignment.")
-            self.camera_collection.auto_assign_freely()
+        self.logger.info("Triggering background camera discovery...")
+        asyncio.create_task(self.run_camera_discovery())
 
     def create_web_app(self, template='roadmap.html'):
         app = super().create_web_app(template)
@@ -742,35 +766,20 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
         return app
     
     async def event_handler(self, command: str, data: dict) -> None:
-        """Handles events from web interface
-
-        Args:
-            command (str): command name
-            data (dict): any data required by the command
-        """
-
+        """Handles events from web interface"""
         await super().event_handler(command, data)
 
         if command == 'refresh_camera_list':
-            async def run_discovery():
-                if self.acroname_hub.connected:
-                    port_map = {self.hub_ports[i]: ch.camera for i, ch in enumerate(self.channels) if i < len(self.hub_ports)}
-                    await self.camera_collection.discover_via_acroname(self.acroname_hub, port_map)
-                else:
-                    self.camera_collection.auto_assign_freely()
-                    
-                # Trigger a UI update for all channels once discovery is done
-                for ch in self.channels:
-                    await ch.camera.trigger_update()
-                await self.trigger_update()
-
-            # Run in the background so we don't block the web socket!
-            asyncio.create_task(run_discovery())
+            asyncio.create_task(self.run_camera_discovery())
 
     async def get_info(self):
         d = await super().get_info()
 
-        d['controls'] = d.get('controls', {}) | {'refresh_camera_list': {'type': 'button',
-                                                                     'text': 'Refresh Cameras'}}
-
+        d['controls'] = d.get('controls', {}) | {
+            'refresh_camera_list': {
+                'type': 'button',
+                'text': 'Refreshing cameras...' if not self.idle else 'Refresh Cameras',
+                'enabled': self.idle
+            }
+        }
         return d
