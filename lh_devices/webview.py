@@ -124,7 +124,7 @@ async def run_socket_app(app: web.Application, host='localhost', port=5003) -> w
     
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
-    site = web.TCPSite(runner, host, port)
+    site = web.TCPSite(runner, host, port, shutdown_timeout=1.0)
     await site.start()
 
     return runner

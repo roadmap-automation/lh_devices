@@ -25,12 +25,29 @@ async def qcmd_multichannel_measure():
     app = measurement_system.create_web_app(template='roadmap.html')
     runner = await run_socket_app(app, 'localhost', 5005)
     try:
-        await asyncio.Event().wait()
-    except asyncio.CancelledError:
+        while True:
+            await asyncio.sleep(0.5)
+    except (asyncio.CancelledError, KeyboardInterrupt):
         pass
     finally:
         logging.info('Closing QCMD Multichannel Measurement Device...')
+        
+        # 1. Tell the measurement system to cleanly shut down HTTP sessions
+        await measurement_system.shutdown()
+                
+        # 2. Tell the web server to shut itself down
         await runner.cleanup()
+        
+        logging.info('Application closed successfully.')
+
+        # 3. Required to force terminate the Acroname threads
+        import os
+        import subprocess
+        subprocess.run(
+            ['taskkill', '/F', '/T', '/PID', str(os.getpid())], 
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.DEVNULL
+        )
 
 if __name__ == '__main__':
 

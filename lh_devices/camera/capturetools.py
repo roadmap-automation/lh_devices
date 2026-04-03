@@ -12,6 +12,10 @@ def get_input_devices(prop):
 def _get_available_filters(category_clsid, prop):
     system_device_enum = client.CreateObject(clsids.CLSID_SystemDeviceEnum, interface=ICreateDevEnum)
     filter_enumerator = system_device_enum.CreateClassEnumerator(GUID(category_clsid), dwFlags=0)
+    
+    if not filter_enumerator:
+        return []
+
     moniker, count = filter_enumerator.Next(1)
     result = []
     while count > 0:

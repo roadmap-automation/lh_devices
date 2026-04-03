@@ -120,9 +120,6 @@ class DeviceBase(WebNodeBase):
             # run update_status and start the poll_delay timer
             await asyncio.gather(self.update_status(), timer.cycle())
 
-            # wait until poll_delay timer has ended before asking for new status.
-            await timer.wait_until_set()
-
     async def run_until_idle(self, cmd: asyncio.Future) -> None:
         """
         Sends from serial connection and waits until idle
@@ -196,19 +193,20 @@ class PollTimer:
         self.expired = asyncio.Event()
 
     async def cycle(self) -> None:
-        """Cycle the timer
-        """
-
-        # clear the event
         self.expired.clear()
         logging.debug(f'timer {self.address} started')
-
-        # sleep the required delay
-        await asyncio.sleep(self.poll_delay)
-        logging.debug(f'timer {self.address} ended')
-
-        # set the event
-        self.expired.set()
+        
+        try:
+            # Chunked sleep prevents Windows asyncio loops from ignoring Ctrl-C
+            time_left = self.poll_delay
+            while time_left > 0:
+                await asyncio.sleep(min(0.1, time_left))
+                time_left -= 0.1
+                
+        finally:
+            # ALWAYS set the event, even if cancelled, to prevent deadlocks
+            logging.debug(f'timer {self.address} ended')
+            self.expired.set()
 
     async def wait_until_set(self) -> None:
         """Waits until the internal timer has expired"""
