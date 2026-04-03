@@ -135,6 +135,9 @@ class QCMDMeasurementDevice(DeviceBase):
             dict: response JSON
         """
 
+        if self.session is None or self.session.closed:
+            return {'result': 'no client connected'}
+
         if wait | (not self.request_lock.locked()):
             
             async with self.request_lock:
@@ -757,6 +760,20 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
         
         self.logger.info("Triggering background camera discovery...")
         asyncio.create_task(self.run_camera_discovery())
+
+    async def shutdown(self):
+        """Safely tears down HTTP sessions. Hardware is left to OS cleanup."""
+        self.logger.info("Initiating device shutdown...")
+
+        # 1. Close all aiohttp ClientSessions for the QCMD hardware
+        for ch in self.channels:
+            if hasattr(ch, 'qcmd') and ch.qcmd.session and not ch.qcmd.session.closed:
+                await ch.qcmd.session.close()
+
+        # 2. Yield to the event loop to let Windows TCP sockets close
+        await asyncio.sleep(0.25)
+        
+        self.logger.info("Device shutdown complete.")
 
     def create_web_app(self, template='roadmap.html'):
         app = super().create_web_app(template)
