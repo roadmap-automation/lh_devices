@@ -23,6 +23,8 @@ setup(
               "numpy",
               "scipy",
               "plotly",
-              "svg.py"
+              "svg.py",
+              "aio-pika",
+              "roadmap-broker-client",
     ],
 )

@@ -1,4 +1,3 @@
-import aiohttp_cors
 import json
 import logging
 import socketio
@@ -46,7 +45,7 @@ class WebNodeBase(Loggable):
             web.Application: web application for this device
         """
 
-        app = web.Application()
+        app = web.Application(middlewares=[_cors_middleware])
         routes = web.RouteTableDef()
 
         app.router.add_static("/static/", STATIC_PATH, name="static")
@@ -102,6 +101,19 @@ class WebNodeBase(Loggable):
 
         await sio.emit(self.id)
 
+@web.middleware
+async def _cors_middleware(request: web.Request, handler) -> web.Response:
+    if request.method == 'OPTIONS':
+        return web.Response(headers={
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        })
+    response = await handler(request)
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
+
+
 async def run_socket_app(app: web.Application, host='localhost', port=5003) -> web.AppRunner:
     """Connects socketio app to aiohttp application and runs it
 
@@ -109,17 +121,6 @@ async def run_socket_app(app: web.Application, host='localhost', port=5003) -> w
         app (web.Application): aiohttp web application
     """
 
-    cors = aiohttp_cors.setup(app, defaults={
-   "*": aiohttp_cors.ResourceOptions(
-        allow_credentials=True,
-        expose_headers="*",
-        allow_headers="*"
-    )
-    })
-
-    for route in list(app.router.routes()):
-        cors.add(route)
-   
     sio.attach(app)
     
     runner = web.AppRunner(app, access_log=None)

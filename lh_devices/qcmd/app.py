@@ -4,12 +4,14 @@ import logging
 import pathlib
 
 from .multichannel import QCMDMultiChannelMeasurementDevice
+from ..broker_plugin import DeviceBrokerWorker
 from ..notify import notifier
 from ..webview import run_socket_app
 
 LOG_PATH = pathlib.Path(__file__).parent.parent.parent / 'logs'
 HISTORY_PATH = pathlib.Path(__file__).parent.parent.parent / 'history'
 NOTIFICATION_CONFIG_PATH = pathlib.Path(__file__).parent.parent.parent / 'notification_settings.json'
+DEVICE_ID = 'qcmd'
 
 async def qcmd_multichannel_measure():
 
@@ -22,6 +24,10 @@ async def qcmd_multichannel_measure():
                                                            database_path=HISTORY_PATH / 'qcmd.db',
                                                            layout_path=LOG_PATH / 'qcmd_layout.json')
     await measurement_system.initialize()
+
+    broker_worker = DeviceBrokerWorker(DEVICE_ID, measurement_system, local_port=5005)
+    await broker_worker.start()
+
     app = measurement_system.create_web_app(template='roadmap.html')
     runner = await run_socket_app(app, 'localhost', 5005)
     try:

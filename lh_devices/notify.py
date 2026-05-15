@@ -25,8 +25,8 @@ class EmailNotifier:
         try:
             self._smtp = smtplib.SMTP(host=self.config.host, port=self.config.port)
             self._connected = True
-        except smtplib.SMTPException:
-            print(f"Error: unable to connect to {self.config.host}:{self.config.port}")
+        except (smtplib.SMTPException, OSError):
+            print(f"Warning: unable to connect to SMTP server {self.config.host}:{self.config.port}")
 
     def disconnect(self):
         if self._smtp is not None:

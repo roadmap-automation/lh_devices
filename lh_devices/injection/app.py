@@ -16,9 +16,11 @@ from ..connections import connect_nodes
 from ..waste import RoadmapWasteInterface
 from .channel import RoadmapChannelBubbleSensor
 from .injectionsystem import RoadmapChannelAssembly
+from ..broker_plugin import BrokerWasteInterface, DeviceBrokerWorker
 
 LOG_PATH = pathlib.Path(__file__).parent.parent.parent / 'logs'
 HISTORY_PATH = pathlib.Path(__file__).parent.parent.parent / 'history'
+DEVICE_ID = 'injection'
 
 async def run_injection_system():
     # serial communications setup
@@ -97,7 +99,7 @@ async def run_injection_system():
     connect_nodes(mvp1.valve.nodes[5], fc1.outlet_node, 0.0)
     connect_nodes(mvp2.valve.nodes[5], fc2.outlet_node, 0.0)
 
-    waste_tracker = RoadmapWasteInterface('http://localhost:5001/Waste/AddWaste/')
+    waste_tracker = BrokerWasteInterface()
 
     qcmd_system = RoadmapChannelAssembly([channel_0, channel_1, channel_2],
                                             distribution_system=distribution_system,
@@ -106,12 +108,16 @@ async def run_injection_system():
                                             waste_tracker=waste_tracker,
                                             name='MultiChannel Injection System')
     
+    broker_worker = DeviceBrokerWorker(DEVICE_ID, qcmd_system, local_port=5003)
+    broker_worker.waste_interface = waste_tracker
+
     app = qcmd_system.create_web_app(template='roadmap.html')
     runner = await run_socket_app(app, 'localhost', 5003)
 
     try:
         await qcmd_system.initialize()
         gsioc_task = asyncio.create_task(gsioc.listen())
+        await broker_worker.start()
         await asyncio.Event().wait()
 
     finally:

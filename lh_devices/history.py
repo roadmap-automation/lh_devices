@@ -37,6 +37,7 @@ class HistoryDB:
         self.open()
 
     def open(self) -> None:
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         db_exists = os.path.exists(self.db_path)
         self.db = sqlite3.connect(self.db_path)
         if not db_exists:

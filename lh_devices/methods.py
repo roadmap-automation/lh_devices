@@ -42,6 +42,14 @@ class MethodResult:
     log: list = field(default_factory=list)
     result: dict = field(default_factory=dict)
 
+    def __post_init__(self):
+        if self.result is None:
+            self.result = {}
+        if self.method_data is None:
+            self.method_data = {}
+        if self.log is None:
+            self.log = []
+
 class MethodBase(Loggable):
     """Base class for defining a method for LH serial devices. Contains information about:
         1. dead volume calculations
