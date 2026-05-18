@@ -28,9 +28,9 @@ class USBHubManager:
         self.hub = brainstem.stem.USBHub3p()
 
         # disable Aether (direct connections only)
-        config = self.hub.getConfig()
-        config.value.enabled = False
-        self.hub.setConfig(config.value)
+        config = self.hub.getConfig().value
+        config.enabled = False
+        self.hub.setConfig(config)
 
         result = self.hub.discoverAndConnect(brainstem.link.Spec.USB)
         
