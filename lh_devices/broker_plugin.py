@@ -63,7 +63,8 @@ class BrokerAssembly(Protocol):
     length enforces it again at the device side.
     """
     database_path: pathlib.Path | None
-    channels: list  # elements must have method_callbacks: list and run_method()
+    channels: list          # elements must have method_callbacks: list and run_method()
+    layout_callbacks: list  # zero-arg async callables; fired by trigger_layout_update()
 
 
 class DeviceBrokerWorker:
@@ -107,6 +108,8 @@ class DeviceBrokerWorker:
 
         for ch in self.assembly.channels:
             ch.method_callbacks.append(self._completion_callback)
+
+        self.assembly.layout_callbacks.append(self._emit_layout_updated)
 
         asyncio.create_task(consume(cmd_queue, self._on_command))
         logger.info("DeviceBrokerWorker [%s] running on port %d.", self.device_id, self.local_port)

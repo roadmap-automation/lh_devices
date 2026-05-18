@@ -18,6 +18,7 @@ class LayoutPlugin(WebNodeBase):
         self.name = name
         self.layout: LHBedLayout | None = None
         self.layout_path: Path | None = None
+        self.layout_callbacks: list = []
 
     def save_layout(self):
         """Saves the layout to a JSON file
@@ -114,3 +115,5 @@ class LayoutPlugin(WebNodeBase):
         self.logger.debug('triggering layout update')
         await sio.emit('update_layout', data={'msg': 'update_layout'})
         self.save_layout()
+        for cb in self.layout_callbacks:
+            await cb()
