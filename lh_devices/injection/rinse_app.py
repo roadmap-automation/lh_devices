@@ -13,12 +13,15 @@ from ..webview import run_socket_app
 from ..gilson.gsioc import GSIOC
 from ..components import InjectionPort, FlowCell
 from ..connections import connect_nodes
-from ..waste import RoadmapWasteInterface
+from ..broker_plugin import BrokerWasteInterface, DeviceBrokerWorker
 from .channel import RoadmapChannelBubbleSensor
 from .injectionsystem import RoadmapChannelAssemblyRinse
 from ..rinse.rinsesystem import RinseSystem
 from ..notify import notifier
 
+DEVICE_ID_INJECTION = 'injection'
+DEVICE_ID_RINSE = 'rinse'
+DEVICE_ID_DISTRIBUTION = 'distribution'
 LOG_PATH = pathlib.Path(__file__).parent.parent.parent / 'logs'
 HISTORY_PATH = pathlib.Path(__file__).parent.parent.parent / 'history'
 NOTIFICATION_CONFIG_PATH = pathlib.Path(__file__).parent.parent.parent / 'notification_settings.json'
@@ -70,7 +73,7 @@ async def run_injection_system():
     # connect selector and source valves
     connect_nodes(selector_valve.valve.nodes[0], source_valve.valve.nodes[4], 265.0)
 
-    waste_tracker = RoadmapWasteInterface('http://localhost:5001/Waste/AddWaste')
+    waste_tracker = BrokerWasteInterface()
 
     rinse_system = RinseSystem(syringe_pump=syringe_pump,
                                source_valve=source_valve,
@@ -183,8 +186,6 @@ async def run_injection_system():
     connect_nodes(mvp1.valve.nodes[5], fc1.outlet_node, 0.0)
     connect_nodes(mvp2.valve.nodes[5], fc2.outlet_node, 0.0)
 
-    #waste_tracker = RoadmapWasteInterface('http://localhost:5001/Waste/AddWaste/')
-
     qcmd_system = RoadmapChannelAssemblyRinse([channel_0, channel_1, channel_2],
                                             distribution_system=distribution_system,
                                             rinse_system=rinse_system,
@@ -194,6 +195,12 @@ async def run_injection_system():
                                             waste_tracker=waste_tracker,
                                             name='MultiChannel Injection System')
     
+    injection_worker = DeviceBrokerWorker(DEVICE_ID_INJECTION, qcmd_system, local_port=5003)
+    injection_worker.waste_interface = waste_tracker
+    rinse_worker = DeviceBrokerWorker(DEVICE_ID_RINSE, rinse_system, local_port=5014)
+    rinse_worker.waste_interface = waste_tracker
+    distribution_worker = DeviceBrokerWorker(DEVICE_ID_DISTRIBUTION, distribution_system, local_port=5002)
+
     app = qcmd_system.create_web_app(template='roadmap.html')
     runner = await run_socket_app(app, 'localhost', 5003)
 
@@ -206,7 +213,11 @@ async def run_injection_system():
         #rinse_system.layout.add_well_to_rack('Rinse', Well(composition=Composition(solvents=[Solvent(name='D2O', fraction=1)]), volume=2000, rack_id='Rinse', well_number=3))
         #rinse_system.save_layout()
 
-
+        await asyncio.gather(
+            injection_worker.start(),
+            rinse_worker.start(),
+            distribution_worker.start(),
+        )
         gsioc_task = asyncio.create_task(gsioc.listen())
         await asyncio.Event().wait()
 

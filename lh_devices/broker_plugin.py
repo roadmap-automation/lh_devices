@@ -25,7 +25,8 @@ Claim Check:
 
 import asyncio
 import logging
-from typing import Optional
+import pathlib
+from typing import Optional, Protocol, runtime_checkable
 
 import aio_pika
 
@@ -51,6 +52,20 @@ from .waste import WasteInterfaceBase, WasteResponse
 logger = logging.getLogger(__name__)
 
 
+@runtime_checkable
+class BrokerAssembly(Protocol):
+    """Structural interface required by DeviceBrokerWorker.
+
+    Satisfied by any AutocontrolPlugin subclass (single-channel, channels=[self])
+    or any multi-channel assembly that sets self.channels = [...] in __init__.
+    The channel count here must match the multichannel/n_channels declaration in
+    lh_manager — autocontrol enforces this at dispatch time, and the channels list
+    length enforces it again at the device side.
+    """
+    database_path: pathlib.Path | None
+    channels: list  # elements must have method_callbacks: list and run_method()
+
+
 class DeviceBrokerWorker:
     """Broker consumer/publisher for a single lh_devices service instance.
 
@@ -59,7 +74,7 @@ class DeviceBrokerWorker:
     so that broker events fire automatically on method completion.
     """
 
-    def __init__(self, device_id: str, assembly, local_port: int) -> None:
+    def __init__(self, device_id: str, assembly: BrokerAssembly, local_port: int) -> None:
         self.device_id = device_id
         self.assembly = assembly
         self.local_port = local_port

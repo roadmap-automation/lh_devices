@@ -13,10 +13,20 @@ from .history import DatabasePlugin
 from .methods import MethodPlugin
 
 class AutocontrolPlugin(MethodPlugin, DatabasePlugin):
+    """Mixin for single-channel broker-capable assemblies.
+
+    Exposes a single-element `channels` list so DeviceBrokerWorker can treat
+    this device the same way it treats multi-channel assemblies.  Multi-channel
+    assemblies shadow this property by setting self.channels = [...] in __init__.
+    """
 
     def __init__(self, database_path: Path | None = None, id = '', name = ''):
         MethodPlugin.__init__(self, id, name)
         DatabasePlugin.__init__(self, database_path=database_path)
+
+    @property
+    def channels(self) -> list:
+        return [self]
 
     async def _handle_task(self, request: web.Request) -> web.Response:
         """Handles a submitted task"""
