@@ -26,7 +26,11 @@ class AutocontrolPlugin(MethodPlugin, DatabasePlugin):
 
     @property
     def channels(self) -> list:
-        return [self]
+        return self.__dict__.get('_channels', [self])
+
+    @channels.setter
+    def channels(self, value: list) -> None:
+        self.__dict__['_channels'] = value
 
     async def _handle_task(self, request: web.Request) -> web.Response:
         """Handles a submitted task"""
