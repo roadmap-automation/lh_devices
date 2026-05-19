@@ -108,7 +108,12 @@ async def run_injection_system():
                                             waste_tracker=waste_tracker,
                                             name='MultiChannel Injection System')
     
-    broker_worker = DeviceBrokerWorker(DEVICE_ID, qcmd_system, local_port=5003)
+    broker_worker = DeviceBrokerWorker(
+        DEVICE_ID, qcmd_system, local_port=5003,
+        display_name='Multichannel Injection System',
+        device_type='injection',
+        allow_sample_mixing=True,
+    )
     broker_worker.waste_interface = waste_tracker
 
     app = qcmd_system.create_web_app(template='roadmap.html')

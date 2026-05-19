@@ -37,6 +37,7 @@ from roadmap_broker_client.publisher import publish
 from roadmap_broker_client.topology import declare_node_queue, declare_topology
 from roadmap_broker_client.topics import (
     CHANNEL_STATUS_CHANGED,
+    DEVICE_REGISTERED,
     INSTRUMENT_EXCHANGE,
     LAYOUT_UPDATED,
     TASK_ACCEPTED,
@@ -75,10 +76,23 @@ class DeviceBrokerWorker:
     so that broker events fire automatically on method completion.
     """
 
-    def __init__(self, device_id: str, assembly: BrokerAssembly, local_port: int) -> None:
+    def __init__(
+        self,
+        device_id: str,
+        assembly: BrokerAssembly,
+        local_port: int,
+        display_name: str = '',
+        device_type: str = '',
+        num_channels: Optional[int] = None,
+        allow_sample_mixing: bool = True,
+    ) -> None:
         self.device_id = device_id
         self.assembly = assembly
         self.local_port = local_port
+        self.display_name = display_name
+        self.device_type = device_type
+        self._num_channels = num_channels  # resolved to len(channels) in start() if None
+        self.allow_sample_mixing = allow_sample_mixing
 
         # Maps task_id → inbound Envelope so the completion callback can build
         # the correct outbound envelope (sample_id, assigned_channel, policy).
@@ -101,6 +115,9 @@ class DeviceBrokerWorker:
 
         self._exchange = await channel.get_exchange(INSTRUMENT_EXCHANGE)
 
+        if self._num_channels is None:
+            self._num_channels = len(self.assembly.channels)
+
         if self.waste_interface is not None:
             self.waste_interface._exchange = self._exchange
 
@@ -111,8 +128,32 @@ class DeviceBrokerWorker:
 
         self.assembly.layout_callbacks.append(self._emit_layout_updated)
 
+        await self._emit_device_registered()
         asyncio.create_task(consume(cmd_queue, self._on_command))
         logger.info("DeviceBrokerWorker [%s] running on port %d.", self.device_id, self.local_port)
+
+    # ------------------------------------------------------------------
+    # Service discovery
+    # ------------------------------------------------------------------
+
+    async def _emit_device_registered(self) -> None:
+        if self._exchange is None:
+            return
+        nc = self._num_channels
+        msg = build(
+            device_id=self.device_id,
+            routing_key=DEVICE_REGISTERED,
+            payload={
+                "device_id": self.device_id,
+                "display_name": self.display_name,
+                "device_type": self.device_type,
+                "num_channels": nc,
+                "allow_sample_mixing": self.allow_sample_mixing,
+                "address": f"http://localhost:{self.local_port}",
+            },
+        )
+        await publish(self._exchange, DEVICE_REGISTERED, msg)
+        logger.info("[%s] device.registered published (%d channels).", self.device_id, nc)
 
     # ------------------------------------------------------------------
     # Inbound: command.<device_id>.submit_task

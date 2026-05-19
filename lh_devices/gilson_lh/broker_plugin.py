@@ -36,6 +36,7 @@ from roadmap_broker_client.envelope import Envelope, build
 from roadmap_broker_client.publisher import publish
 from roadmap_broker_client.topology import declare_node_queue, declare_event_queue, declare_topology
 from roadmap_broker_client.topics import (
+    DEVICE_REGISTERED,
     INSTRUMENT_EXCHANGE,
     LAYOUT_UPDATED,
     TASK_ACCEPTED,
@@ -102,6 +103,7 @@ class GilsonLHBrokerWorker:
         asyncio.create_task(consume(step_queue, self._on_step_completed))
 
         # Announce presence
+        await self._emit_device_registered()
         await self._emit_layout_updated()
         logger.info("GilsonLHBrokerWorker [%s] running on port %d.", self.device_id, self.local_port)
 
@@ -263,6 +265,24 @@ class GilsonLHBrokerWorker:
             payload=payload,
         )
         await publish(self._exchange, TASK_COMPLETED, msg)
+
+    async def _emit_device_registered(self) -> None:
+        if self._exchange is None:
+            return
+        msg = build(
+            device_id=self.device_id,
+            routing_key=DEVICE_REGISTERED,
+            payload={
+                "device_id": self.device_id,
+                "display_name": "Gilson 271 Liquid Handler",
+                "device_type": "lh",
+                "num_channels": 1,
+                "allow_sample_mixing": True,
+                "address": f"http://localhost:{self.local_port}",
+            },
+        )
+        await publish(self._exchange, DEVICE_REGISTERED, msg)
+        logger.info("[%s] device.registered published.", self.device_id)
 
     async def _emit_layout_updated(self) -> None:
         if self._exchange is None:
