@@ -17,11 +17,10 @@ from ..device import SyringePumpBase, ValvePositionerBase
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
 from ..layout import LayoutPlugin
 from ..methods import MethodBase, MethodResult, MethodError
-from ..waste import WasteInterfaceBase, WasteItem
+from ..waste import WasteInterfaceBase, WasteItem, WATER
 from ..webview import sio
 
-from lh_manager.liquid_handler.bedlayout import LHBedLayout, find_composition, Rack, Well
-from lh_manager.waste_manager.wastedata import Composition, WATER
+from lh_devices.core.bedlayout import LHBedLayout, Composition, find_composition, Rack, Well
 
 class RinseSystemBase(InjectionChannelBase, LayoutPlugin):
 

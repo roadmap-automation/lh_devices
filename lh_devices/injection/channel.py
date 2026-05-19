@@ -1,7 +1,7 @@
 from typing import Dict
 
 from aiohttp.web_app import Application as Application
-from lh_manager.liquid_handler.bedlayout import LHBedLayout, Composition, Rack, Well
+from lh_devices.core.bedlayout import LHBedLayout, Composition, Rack, Well
 
 from ..assemblies import InjectionChannelBase, Network, Mode
 from ..bubblesensor import BubbleSensorBase

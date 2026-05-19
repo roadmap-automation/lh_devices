@@ -6,10 +6,12 @@ from aiohttp import ClientSession, ClientConnectionError
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-from lh_manager.waste_manager.wastedata import WasteItem
-from lh_manager.liquid_handler.bedlayout import Composition, Well
+from lh_devices.core.bedlayout import Composition, Solution, Well
 
 from .logutils import Loggable
+
+class WasteItem(Solution):
+    ...
 
 WATER = Composition(solvents=[dict(name='H2O',
                                    fraction=1.0)])

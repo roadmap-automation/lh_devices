@@ -3,7 +3,7 @@ from typing import Coroutine, List, Dict
 from dataclasses import dataclass
 
 from aiohttp.web_app import Application as Application
-from lh_manager.liquid_handler.bedlayout import LHBedLayout, Composition, Rack, Well
+from lh_devices.core.bedlayout import LHBedLayout, Composition, Rack, Well
 
 from ..assemblies import Network, AssemblyMode, ModeGroup
 from ..distribution import DistributionBase, DistributionSingleValveTwoSource

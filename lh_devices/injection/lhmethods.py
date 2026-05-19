@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Coroutine
 
-from lh_manager.liquid_handler.bedlayout import Composition
+from lh_devices.core.bedlayout import Composition
 
 from ..assemblies import Mode
 from ..bubblesensor import BubbleSensorBase

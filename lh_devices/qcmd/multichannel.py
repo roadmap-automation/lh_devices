@@ -8,7 +8,7 @@ from aiohttp import ClientSession, ClientConnectionError, web
 from enum import Enum
 from urllib.parse import urlsplit
 
-from lh_manager.liquid_handler.bedlayout import LHBedLayout, Composition, Rack, Well
+from lh_devices.core.bedlayout import LHBedLayout, Composition, Rack, Well
 
 from .qcmd_cameras import FIT0819, FIT0819Collection
 

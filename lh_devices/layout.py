@@ -6,7 +6,7 @@ from aiohttp import web
 from aiohttp.web_app import Application as Application
 from pathlib import Path
 
-from lh_manager.liquid_handler.bedlayout import LHBedLayout, Well, Rack
+from lh_devices.core.bedlayout import LHBedLayout, Well, Rack
 
 from .webview import WebNodeBase, sio
 
