@@ -183,6 +183,15 @@
                                     Plotly.react(newdiv.get(0), plotobj['data'], plotobj['layout'], {responsive: true})
                                 }
                             }
+                            if ('pre' in data['state']) {
+                                if (data['state']['pre'] != null) {
+                                    let details = $('<details>').appendTo(statediv)
+                                    $('<summary>').text(data['state']['pre']['label'] ?? 'Details').appendTo(details)
+                                    $('<pre>').text(JSON.stringify(data['state']['pre']['data'], null, 2))
+                                        .css('white-space', 'pre-wrap')
+                                        .appendTo(details)
+                                }
+                            }
                             if ('image' in data['state']) {
                                 if (data['state']['image'] != null) {
                                     console.log(data['state'])

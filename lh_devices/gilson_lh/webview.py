@@ -1,18 +1,15 @@
 """Gilson Trilution LH 4.0 aiohttp callback endpoints.
 
-Replaces lh_manager/lh_api/endpoints.py (Flask) with aiohttp routes.
-Routes are built by get_routes(layout_plugin, lh_interface_inst) and
-added to the app in app.py.
+Routes are built by get_routes(lh_iface) and added to the app in app.py.
+lh_iface is both the LHInterface and the LayoutPlugin after the refactor.
 """
 
 import json
-import traceback
 import logging
 
 from aiohttp import web
 
 from lh_devices.core.bedlayout import Composition
-from lh_devices.webview import sio
 
 from .formulation import solve_formulation
 from .lhinterface import LHJob, LHJobHistory, InterfaceStatus, LHInterface
@@ -25,20 +22,10 @@ def _json(data, status: int = 200) -> web.Response:
     return web.Response(text=json.dumps(data), status=status, content_type='application/json')
 
 
-def get_routes(layout_plugin, lh_iface: LHInterface) -> web.RouteTableDef:
-    """Returns route table wired to layout_plugin and lh_iface."""
+def get_routes(lh_iface: LHInterface) -> web.RouteTableDef:
+    """Returns route table wired to lh_iface (which is also the layout plugin)."""
 
     routes = web.RouteTableDef()
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    async def _emit_lh_update():
-        await sio.emit('update_lh_job', {'msg': 'update_lh_job'})
-
-    async def _emit_layout_update():
-        await layout_plugin.trigger_layout_update()
 
     # ------------------------------------------------------------------
     # Management / introspection
@@ -82,23 +69,6 @@ def get_routes(layout_plugin, lh_iface: LHInterface) -> web.RouteTableDef:
         return _json({'sampleList': job.get_method_data(listonly=False)})
 
     # ------------------------------------------------------------------
-    # Job submission (called by broker_plugin, not Trilution)
-    # ------------------------------------------------------------------
-
-    @routes.post('/LH/SubmitJob')
-    async def SubmitJob(request: web.Request) -> web.Response:
-        if lh_iface.get_status() != InterfaceStatus.UP:
-            return _json({'error': 'job rejected, LH interface busy'}, 400)
-        data = await request.json()
-        try:
-            job = LHJob(**data)
-        except Exception:
-            return _json({'error': 'job rejected, cannot be deserialized'}, 400)
-        lh_iface.activate_job(job, layout_plugin.layout)
-        await _emit_lh_update()
-        return _json({'success': 'job accepted'})
-
-    # ------------------------------------------------------------------
     # Formulation check
     # ------------------------------------------------------------------
 
@@ -110,7 +80,7 @@ def get_routes(layout_plugin, lh_iface: LHInterface) -> web.RouteTableDef:
             target_volume = float(data.get('target_volume', 0.0))
             exact_match = bool(data.get('exact_match', True))
             result = solve_formulation(
-                layout=layout_plugin.layout,
+                layout=lh_iface.layout,
                 target_composition=target_composition,
                 target_volume=target_volume,
                 exact_match=exact_match,
@@ -136,18 +106,19 @@ def get_routes(layout_plugin, lh_iface: LHInterface) -> web.RouteTableDef:
             return _json({'error': f'validation job ID {sample_list_id} does not match active job ID {job.LH_id}'}, 400)
 
         job.validation = data
-        lh_iface.update_job_validation(job, job.get_validation_status()[0])
+        await lh_iface.update_job_validation(job, job.get_validation_status()[0])
 
         error = None
-        if job.get_validation_status()[0] != ValidationStatus.SUCCESS:
+        validation_status, _ = job.get_validation_status()
+        if validation_status != ValidationStatus.SUCCESS:
             error = 'Error in validation. Full message: ' + data['validation']['message']
             lh_iface.has_error = True
-            lh_iface.deactivate()
+            await lh_iface.deactivate()
+            await lh_iface.trigger_update()
         else:
             lh_iface.has_error = False
 
-        await _emit_lh_update()
-        return _json({sample_list_id: job.get_validation_status()[0], 'error': error})
+        return _json({sample_list_id: validation_status, 'error': error})
 
     # ------------------------------------------------------------------
     # Trilution callbacks — results
@@ -171,20 +142,13 @@ def get_routes(layout_plugin, lh_iface: LHInterface) -> web.RouteTableDef:
             return _json({'error': f'PutSampleData method name mismatch'}, 400)
 
         job.results.append(data)
-        lh_iface.update_job_result(job, method_number, method_name, job.get_result_status())
+        result_status = job.get_result_status()
+        await lh_iface.update_job_result(job, method_number, method_name, result_status)
 
-        error = None
-        if job.get_result_status() == ResultStatus.FAIL:
-            error = 'Error in results. Full message: ' + repr(data)
-            lh_iface.throw_error(error)
-        elif job.get_result_status() == ResultStatus.SUCCESS:
-            try:
-                job.execute_methods(layout_plugin.layout)
-            except Exception:
-                lh_iface.throw_error(traceback.format_exc())
-            await _emit_layout_update()
+        if result_status == ResultStatus.FAIL:
+            await lh_iface.throw_error('Error in results. Full message: ' + repr(data))
+        # execute_methods is now called by GilsonLHMethod._run_job after done.wait()
 
-        await _emit_lh_update()
         return _json({'data': data})
 
     # ------------------------------------------------------------------
@@ -194,14 +158,13 @@ def get_routes(layout_plugin, lh_iface: LHInterface) -> web.RouteTableDef:
     @routes.post('/LH/ReportError')
     async def ReportError(request: web.Request) -> web.Response:
         data = await request.json()
-        lh_iface.throw_error('Error in results. Full message: ' + repr(data))
-        await _emit_lh_update()
+        await lh_iface.throw_error('Error in results. Full message: ' + repr(data))
         return _json({'data': data})
 
     @routes.post('/LH/ResetErrorState')
     async def ResetErrorState(request: web.Request) -> web.Response:
         lh_iface.has_error = False
-        await _emit_lh_update()
+        await lh_iface.trigger_update()
         return _json({'success': 'error state reset'})
 
     @routes.post('/LH/ResubmitActiveJob')
@@ -209,19 +172,19 @@ def get_routes(layout_plugin, lh_iface: LHInterface) -> web.RouteTableDef:
         if lh_iface._active_job is None:
             return _json({'error': 'no active job'}, 400)
         lh_iface._active_job.LH_id += 1
-        await _emit_lh_update()
+        await lh_iface.trigger_update()
         return _json({'success': f'LH_id incremented to {lh_iface._active_job.LH_id}'})
 
     @routes.post('/LH/Deactivate')
     async def Deactivate(request: web.Request) -> web.Response:
-        lh_iface.deactivate()
-        await _emit_lh_update()
+        await lh_iface.deactivate()
+        await lh_iface.trigger_update()
         return _json({'success': 'deactivated'})
 
     @routes.post('/LH/PauseResume')
     async def PauseResume(request: web.Request) -> web.Response:
         lh_iface.running = not lh_iface.running
-        await _emit_lh_update()
+        await lh_iface.trigger_update()
         return _json({'status': lh_iface.get_status()})
 
     return routes

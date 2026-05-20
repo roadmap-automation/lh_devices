@@ -1,7 +1,7 @@
 """Gilson LH device service entrypoint.
 
 Starts:
-  - LayoutPlugin (aiohttp + socket.io webview with Trilution callbacks)
+  - lh_interface (LHInterface: AutocontrolPlugin + DeviceBase + LayoutPlugin)
   - GilsonLHBrokerWorker (AMQP consumer on exchange.instrument)
 
 Port 5001 (matches lh_manager's legacy lhdevice.address).
@@ -10,44 +10,42 @@ Port 5001 (matches lh_manager's legacy lhdevice.address).
 import asyncio
 import datetime
 import logging
-from pathlib import Path
 
-from lh_devices.layout import LayoutPlugin
+from lh_devices.core.bedlayout import LHBedLayout
 from lh_devices.webview import run_socket_app
 
 from .app_config import config
 from .broker_plugin import GilsonLHBrokerWorker
 from .lhinterface import lh_interface
 from .notify import notifier
-from .webview import get_routes
 
 LOG_PATH = config.log_path
 HOST = 'localhost'
-PORT = 5001
-DEVICE_ID = 'gilson_lh'
+PORT = 5002
+DEVICE_ID = 'lh'
 
 
 async def run():
     # Notifications
     notifier.load_config(config.notify_path)
 
-    # Layout
-    layout_plugin = LayoutPlugin(id=DEVICE_ID, name='Gilson 271 Liquid Handler')
-    layout_plugin.layout_path = config.layout_path
+    # lh_interface IS the layout plugin — configure its layout path and load
+    lh_interface.layout_path = config.layout_path
     config.persistent_path.mkdir(parents=True, exist_ok=True)
-    layout_plugin.load_layout()
+    lh_interface.load_layout()
+    if lh_interface.layout is None:
+        logging.warning("No layout file at %s — starting with empty layout.", config.layout_path)
+        lh_interface.layout = LHBedLayout()
 
-    # Broker worker
+    # Broker worker: lh_interface serves as both layout_plugin and lh_iface
     broker_worker = GilsonLHBrokerWorker(
-        layout_plugin=layout_plugin,
         lh_iface=lh_interface,
         local_port=PORT,
         device_id=DEVICE_ID,
     )
 
-    # Web app: LayoutPlugin base + Trilution callback routes
-    app = layout_plugin.create_web_app(template='roadmap.html')
-    app.add_routes(get_routes(layout_plugin, lh_interface))
+    # Web app: create_web_app() combines AutocontrolPlugin + LayoutPlugin + Trilution routes
+    app = lh_interface.create_web_app(template='roadmap.html')
 
     # Start broker (must happen after layout is loaded)
     await broker_worker.start()

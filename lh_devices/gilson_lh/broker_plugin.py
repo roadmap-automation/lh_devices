@@ -5,15 +5,14 @@ Inbound (broker → gilson_lh):
 
 Outbound (gilson_lh → broker):
   task.accepted          — immediately on valid command receipt
-  task.completed         — after Trilution job completes; payload includes resolved_composition
+  task.completed         — after Trilution job completes
   task.failed            — after Trilution job fails
-  layout.updated         — after job completes and layout is mutated
+  layout.updated         — after job completes
   waste.generated        — per-method waste stream
 
 Sequential dispatch:
-  prefetch_count=1 + awaiting job completion before acking naturally gates
-  the queue. One LHJob runs at a time; the next submit_task is not delivered
-  until the current job is done.
+  prefetch_count=1 + await method.start() naturally gates the queue.
+  One job runs at a time; the next submit_task is not delivered until done.
 
 Idempotency:
   LHJobHistory is checked for task_id before activating. If already present,
@@ -47,16 +46,13 @@ from roadmap_broker_client.topics import (
     PROTOCOL_EXCHANGE,
 )
 
-from lh_devices.core.methods import method_manager
-from lh_devices.core.bedlayout import Composition
-
-from .lhinterface import LHInterface, LHJob, LHJobHistory, InterfaceStatus
+from .lhinterface import LHInterface, LHJobHistory
 from .job import ResultStatus
 from .reservation import reservation_store
 
 logger = logging.getLogger(__name__)
 
-DEVICE_ID = 'gilson_lh'
+DEVICE_ID = 'lh'
 
 
 class GilsonLHBrokerWorker:
@@ -67,13 +63,11 @@ class GilsonLHBrokerWorker:
 
     def __init__(
         self,
-        layout_plugin,
         lh_iface: LHInterface,
         local_port: int = 5001,
         device_id: str = DEVICE_ID,
     ) -> None:
         self.device_id = device_id
-        self.layout_plugin = layout_plugin
         self.lh_iface = lh_iface
         self.local_port = local_port
         self._exchange: Optional[aio_pika.abc.AbstractExchange] = None
@@ -127,106 +121,38 @@ class GilsonLHBrokerWorker:
         task_id = str(envelope.task_id)
         payload = envelope.payload
         sample_id = str(envelope.sample_id or payload.get('sample_id', ''))
+        method_name = payload.get('method_name', '')
+        parameters = {**payload.get('parameters', {}), 'sample_id': sample_id, 'task_id': task_id}
 
         # Idempotency: if this task_id is already in job history, re-publish completed
         with LHJobHistory() as history:
             existing = history.get_job_by_uuid(task_id)
         if existing is not None and existing.get_result_status() == ResultStatus.SUCCESS:
             logger.info("[%s] task %s already complete — re-publishing.", self.device_id, task_id)
-            await self._publish_completed(existing, envelope)
+            await self._emit(TASK_COMPLETED, envelope, {})
             return
 
-        method_name = payload.get('method_name', '')
-        parameters = payload.get('parameters', {})
-
-        # Resolve method and build LH method list
-        method_cls = method_manager.get_method_by_name(method_name)
-        if method_cls is None:
+        if method_name not in self.lh_iface.methods:
             logger.error("[%s] Unknown method: %s", self.device_id, method_name)
             await self._emit(TASK_FAILED, envelope, {'error': f'Unknown method: {method_name}'})
             return
 
-        layout = self.layout_plugin.layout
-        if layout is None:
-            logger.error("[%s] Layout not loaded", self.device_id)
-            await self._emit(TASK_FAILED, envelope, {'error': 'Layout not loaded'})
-            return
-
-        method = method_cls(**parameters)
-        # explode() resolves Formulation → list of transfer/mix methods
-        flat_methods = method.explode(layout)
-
-        method_list = [
-            {
-                'sample_name': sample_id,
-                'sample_description': '',
-                'method_name': m.method_name,
-                'method_data': m.model_dump(exclude={'status', 'tasks', 'id'}),
-            }
-            for m in flat_methods
-        ]
-
-        job = LHJob(id=task_id, method_data={'method_list': method_list})
-
         await self._emit(TASK_ACCEPTED, envelope, {})
 
-        # Gate: wait for interface to be idle (sequential dispatch)
-        while self.lh_iface.get_status() != InterfaceStatus.UP:
-            await asyncio.sleep(0.5)
+        method = self.lh_iface.methods[method_name]
+        result = await method.start(**parameters)  # blocks; message un-acked until complete
 
-        # Set up completion gate
-        done = asyncio.Event()
-        resolved_composition: list[Composition] = []
-
-        def _on_result(completed_job: LHJob, *args, **kwargs) -> None:
-            if completed_job.id != task_id:
-                return
-            # Collect resolved composition from layout mutations
-            try:
-                carrier = layout.carrier_well
-                if carrier is not None:
-                    resolved_composition.append(carrier.composition)
-            except Exception:
-                pass
-            asyncio.ensure_future(self._on_job_done(completed_job, envelope, resolved_composition, done))
-
-        self.lh_iface.results_callbacks.append(_on_result)
-
-        try:
-            self.lh_iface.activate_job(job, layout)
-        except RuntimeError as exc:
-            logger.error("[%s] activate_job failed: %s", self.device_id, exc)
-            self.lh_iface.results_callbacks.remove(_on_result)
-            await self._emit(TASK_FAILED, envelope, {'error': str(exc)})
-            return
-
-        # Wait for Trilution to call back and complete the job
-        await done.wait()
-        self.lh_iface.results_callbacks.remove(_on_result)
-
-    async def _on_job_done(
-        self,
-        job: LHJob,
-        envelope: Envelope,
-        resolved_composition: list,
-        done: asyncio.Event,
-    ) -> None:
-        status = job.get_result_status()
-
-        if status == ResultStatus.SUCCESS:
-            await self._publish_completed(job, envelope, resolved_composition)
-            # Publish waste for each method
-            for m in (job.LH_methods or []):
-                try:
-                    waste = m.waste(self.layout_plugin.layout)
-                    await self._emit_waste(waste)
-                except Exception:
-                    pass
-            await self._emit_layout_updated()
+        if result.result.get('error'):
+            await self._emit(TASK_FAILED, envelope, {'error': result.result['error']})
         else:
-            await self._emit(TASK_FAILED, envelope, {'error': f'Job result: {status}'})
-
-        done.set()
+            payload_out: dict = {}
+            rc = result.result.get('resolved_composition')
+            if rc:
+                payload_out['resolved_composition'] = rc
+            for waste_data in result.result.get('waste', []):
+                await self._emit_waste_raw(waste_data)
+            await self._emit_layout_updated()
+            await self._emit(TASK_COMPLETED, envelope, payload_out)
 
     # ------------------------------------------------------------------
     # Inbound: protocol_studio.run.step_completed (reservation cleanup)
@@ -244,27 +170,6 @@ class GilsonLHBrokerWorker:
     # ------------------------------------------------------------------
     # Outbound helpers
     # ------------------------------------------------------------------
-
-    async def _publish_completed(
-        self,
-        job: LHJob,
-        envelope: Envelope,
-        resolved_composition: list | None = None,
-    ) -> None:
-        payload: dict = {'method_name': job.method_data.get('method_list', [{}])[0].get('method_name', '')}
-        if resolved_composition:
-            payload['resolved_composition'] = resolved_composition[0].model_dump()
-
-        msg = build(
-            device_id=self.device_id,
-            routing_key=TASK_COMPLETED,
-            task_id=envelope.task_id,
-            sample_id=envelope.sample_id,
-            assigned_channel=envelope.assigned_channel,
-            execution_policy=envelope.execution_policy or 'irreversible',
-            payload=payload,
-        )
-        await publish(self._exchange, TASK_COMPLETED, msg)
 
     async def _emit_device_registered(self) -> None:
         if self._exchange is None:
@@ -297,12 +202,8 @@ class GilsonLHBrokerWorker:
         )
         await publish(self._exchange, LAYOUT_UPDATED, msg)
 
-    async def _emit_waste(self, waste) -> None:
+    async def _emit_waste_raw(self, payload: dict) -> None:
         if self._exchange is None:
-            return
-        try:
-            payload = waste.model_dump()
-        except AttributeError:
             return
         msg = build(device_id=self.device_id, routing_key=WASTE_GENERATED, payload=payload)
         await publish(self._exchange, WASTE_GENERATED, msg)

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 LOG_PATH = Path(__file__).parent.parent.parent / 'logs'
-PERSISTENT_PATH = Path(__file__).parent.parent.parent / 'persistent_state' / 'gilson_lh'
+PERSISTENT_PATH = Path(__file__).parent.parent.parent / 'history' / 'gilson_lh'
 NOTIFICATION_SETTINGS = PERSISTENT_PATH / 'notification_settings.json'
 LAYOUT_LOG = PERSISTENT_PATH / 'layout.json'
 HISTORY_LOG = PERSISTENT_PATH / 'lh_jobs.sqlite'

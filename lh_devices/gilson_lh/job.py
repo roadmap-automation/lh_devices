@@ -1,9 +1,16 @@
 from enum import Enum
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dataclasses import field
 from typing import List, Tuple
 
-from lh_devices.core.items import Item
+
+class Item(BaseModel):
+    id: str
+    stage: str
+    data: dict = Field(default_factory=dict)
+
+    def __repr__(self) -> str:
+        return f'Sample {self.id} Stage {self.stage} with data {self.data}'
 
 
 class ValidationStatus(str, Enum):

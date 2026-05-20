@@ -1,4 +1,4 @@
-import os
+import asyncio
 import copy
 import json
 import logging
@@ -9,19 +9,24 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import List, Callable, Tuple
+
 from pydantic import BaseModel
+
+from lh_devices.autocontrolplugin import AutocontrolPlugin
+from lh_devices.device import DeviceBase
+from lh_devices.layout import LayoutPlugin
+from lh_devices.core.bedlayout import LHBedLayout
+from lh_devices.waste import WasteInterfaceBase
 
 from .job import JobBase, ResultStatus, ValidationStatus
 from .notify import notifier
 from .lhmethods import BaseLHMethod
 from .app_config import config
 
-from lh_devices.core.bedlayout import LHBedLayout
-from lh_devices.core.methods import method_manager
-
 DATE_FORMAT = '%Y-%m-%dT%H:%M:%S.%f'
 
 LH_JOB_HISTORY = config.persistent_path / 'lh_jobs.sqlite'
+
 
 class InterfaceStatus(str, Enum):
     UP = 'up'
@@ -29,9 +34,10 @@ class InterfaceStatus(str, Enum):
     DOWN = 'down'
     ERROR = 'error'
 
+
 class SampleList(BaseModel):
     """Class representing a sample list in JSON
-        serializable format for Gilson Trilution LH Web Service """
+        serializable format for Gilson Trilution LH Web Service"""
     name: str
     id: str | None
     createdBy: str
@@ -41,6 +47,7 @@ class SampleList(BaseModel):
     endDate: str
     columns: List[dict] | None
 
+
 class LHJob(JobBase):
     """Container for a single liquid handler sample list"""
 
@@ -49,8 +56,6 @@ class LHJob(JobBase):
     LH_method_data: dict | None = None
 
     def get_validation_status(self) -> Tuple[ValidationStatus, dict | None]:
-        """Returns true if validation exists """
-
         if not len(self.validation):
             return ValidationStatus.UNVALIDATED, None
 
@@ -60,21 +65,17 @@ class LHJob(JobBase):
             return ValidationStatus.FAIL, self.validation
 
     def get_result_status(self) -> ResultStatus:
-        # if no results
         if not len(self.results):
             return ResultStatus.EMPTY
 
         results = self.get_results()
 
-        # check for any failures in existing results
         if ResultStatus.FAIL in results:
             return ResultStatus.FAIL
 
-        # check for incomplete results (should be one per method in columns)
         if ResultStatus.INCOMPLETE in results:
             return ResultStatus.INCOMPLETE
 
-        # if all checks pass, we were successful
         return ResultStatus.SUCCESS
 
     def get_number_of_methods(self) -> int:
@@ -92,69 +93,35 @@ class LHJob(JobBase):
 
         return results
 
-    def generate_method_data(self, layout: LHBedLayout) -> None:
-        """Gets the sample list formatted for Gilson LH (populates self.LH_method_data)
-
-        Args:
-            layout (LHBedLayout): current bed layout
-        """
-
-        sample_name = self.method_data['method_list'][0]['sample_name']
-        sample_description = self.method_data['method_list'][0]['sample_description']
-        logging.info(self.method_data)
-
+    def setup_method_data(self, sample_name: str, sample_description: str,
+                          lh_methods: List[BaseLHMethod], layout: LHBedLayout) -> None:
         createdDate = datetime.now().strftime(DATE_FORMAT)
-
-        all_methods: List[BaseLHMethod] = [method_manager.get_method_by_name(md['method_name'])(**md['method_data']) for md in self.method_data['method_list']]
-
-        method_list = [m2
-                    for m in all_methods
-                    for m2 in m.render_lh_method(sample_name=sample_name,
-                                            sample_description=sample_description,
-                                            layout=layout)]
-
-        # Get unique keys across all the methods
-        all_columns = set.union(*(set(m.keys()) for m in method_list))
-
-        # Ensure that all keys exist in all dictionaries
+        method_list = [m2 for m in lh_methods
+                       for m2 in m.render_lh_method(sample_name, sample_description, layout)]
+        all_columns = set.union(*(set(m.keys()) for m in method_list)) if method_list else set()
         for m in method_list:
             for column in all_columns:
                 if column not in m:
                     m[column] = None
-
         self.LH_method_data = SampleList(
             name=sample_name,
-            id=str(self.LH_id),
+            id='0',  # placeholder; updated to real LH_id in _sync_activate_job
             createdBy='System',
             description=sample_description,
             createDate=str(createdDate),
             startDate=str(createdDate),
             endDate=str(createdDate),
             columns=method_list).model_dump()
-
-        self.LH_methods = all_methods
+        self.LH_methods = lh_methods
 
     def get_method_data(self, listonly=False) -> dict:
-        """Gets the sample list formatted for Gilson LH.
-
-        Returns:
-            dict: sample list prepared for Gilson LH
-        """
-
         samplelist = copy.copy(self.LH_method_data)
         samplelist['id'] = str(self.LH_id)
         if listonly:
             samplelist['columns'] = None
-
         return samplelist
 
     def execute_methods(self, layout: LHBedLayout) -> None:
-        """Update layout with job methods
-
-        Args:
-            layout (LHBedLayout): layout to update
-        """
-
         for m in self.LH_methods:
             result = m.execute(layout)
 
@@ -181,6 +148,7 @@ class LHJobHistory:
         self.close()
 
     def open(self) -> None:
+        import os
         db_exists = os.path.exists(self.db_path)
         self.db = sqlite3.connect(self.db_path)
         if not db_exists:
@@ -190,174 +158,274 @@ class LHJobHistory:
         self.db.close()
 
     def smart_insert(self, job: LHJob) -> None:
-        """Inserts or, if job already exists, updates a liquid handler job. Uses id as unique identifier
-
-        Args:
-            job (LHJob): liquid handler job to update or insert into the history
-        """
-        res = self.db.execute(f"""\
+        self.db.execute(f"""\
             INSERT INTO {self.table_name}(uuid, LH_id, job) VALUES (?, ?, ?)
             ON CONFLICT(uuid) DO UPDATE SET
               LH_id=excluded.LH_id,
               job=excluded.job;
-        """, (job.id, job.LH_id, job.model_dump_json()))
-
+        """, (job.id, job.LH_id, job.model_dump_json(exclude={'LH_methods'})))
         self.db.commit()
 
     def get_job_by_uuid(self, uuid: str) -> LHJob | None:
-        """Queries database and returns job based on internal UUID.
-
-        Args:
-            uuid (str): uuid
-
-        Returns:
-            LHJob: returned job, None if not found
-        """
-
         res = self.db.execute(f"SELECT job FROM {self.table_name} WHERE uuid='{uuid}'")
         results = res.fetchall()
         return None if not len(results) else LHJob(**json.loads(results[0][0]))
 
     def get_job_by_LH_id(self, LH_id: str) -> LHJob | None:
-        """Queries database and returns sample based on LH_id (should be unique)
-
-        Args:
-            LH_id (int): LH_id
-
-        Returns:
-            LHJob: returned job, None if not found
-        """
         res = self.db.execute(f"SELECT job FROM {self.table_name} WHERE LH_id='{LH_id}'")
         results = res.fetchall()
         return None if not len(results) else LHJob(**json.loads(results[0][0]))
 
     def get_max_LH_id(self) -> int:
-        """Gets maximum LH_id from database"""
-
         res = self.db.execute(f"SELECT MAX(LH_id) FROM {self.table_name}")
         maxval = res.fetchone()
         return maxval[0]
 
 
-class LHInterface:
-    """Basic interface for the liquid handler. Accepts only one job at a time."""
-    def __init__(self) -> None:
+class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
+    """Gilson LH interface device.
+
+    Inherits:
+        AutocontrolPlugin — channels property, method_callbacks, /SubmitTask routes
+        DeviceBase        — idle/state/get_info/event_handler/trigger_update web pattern
+        LayoutPlugin      — bed layout management and /GUI/* routes
+    """
+
+    def __init__(self,
+                 device_id: str = 'lh',
+                 name: str = 'Gilson LH Interface',
+                 database_path: Path | None = None) -> None:
+        # Explicit base inits following the RinseSystem pattern
+        DeviceBase.__init__(self, device_id=device_id, name=name)
+        AutocontrolPlugin.__init__(self, database_path=database_path, id=self.id, name=self.name)
+        LayoutPlugin.__init__(self, id=self.id, name=self.name)
+
         self._active_job: LHJob | None = None
         self.running: bool = True
         self.has_error: bool = False
-        self.activation_callbacks: List[Callable] = []
+
+        # Async callables: f(job, *args, **kwargs) -> None
         self.validation_callbacks: List[Callable] = []
         self.results_callbacks: List[Callable] = []
-        self.name = 'LHInterface'
 
-    def update_history(self) -> None:
-        """Updates the active job in history
-        """
+        # Set by deactivate() to unblock any waiting _run_job; cleared before each activate_job
+        self._job_cancelled: asyncio.Event = asyncio.Event()
 
+        # Waste tracker; replaced with a broker-aware implementation in app.py if needed
+        self.waste_tracker = WasteInterfaceBase()
+
+        # Device is always ready; no hardware handshake at startup
+        self.initialized = True
+
+        # Register all Gilson LH methods in the lh_devices MethodRunner
+        from .lhmethods import (GilsonTransferWithRinse, GilsonMixWithRinse, GilsonInjectWithRinse,
+                                 GilsonSleep, GilsonPrime, GilsonQCMDLoadLoop, GilsonQCMDDirectInject,
+                                 GilsonFormulation, GilsonSoluteFormulation)
+        self.methods.update({
+            'NCNR_TransferWithRinse': GilsonTransferWithRinse(self),
+            'NCNR_MixWithRinse': GilsonMixWithRinse(self),
+            'NCNR_InjectWithRinse': GilsonInjectWithRinse(self),
+            'NCNR_Sleep': GilsonSleep(self),
+            'NCNR_Prime': GilsonPrime(self),
+            'ROADMAP_QCMD_LoadLoop': GilsonQCMDLoadLoop(self),
+            'ROADMAP_QCMD_DirectInject': GilsonQCMDDirectInject(self),
+            'Formulation': GilsonFormulation(self),
+            'SoluteFormulation': GilsonSoluteFormulation(self),
+        })
+
+    # ------------------------------------------------------------------
+    # Status
+    # ------------------------------------------------------------------
+
+    def get_status(self) -> InterfaceStatus:
+        if not self.running:
+            return InterfaceStatus.DOWN
+        if self.has_error:
+            return InterfaceStatus.ERROR
+        if self._active_job is not None:
+            return InterfaceStatus.BUSY
+        return InterfaceStatus.UP
+
+    def get_active_job(self) -> LHJob | None:
+        return self._active_job
+
+    # ------------------------------------------------------------------
+    # History (async wrapper over blocking SQLite)
+    # ------------------------------------------------------------------
+
+    def _sync_update_history(self) -> None:
         if self._active_job is not None:
             with LHJobHistory() as history:
                 history.smart_insert(self._active_job)
 
-    def get_status(self) -> InterfaceStatus:
-        """Gets status of the interface"""
+    async def _async_update_history(self) -> None:
+        await asyncio.to_thread(self._sync_update_history)
 
-        if not self.running:
-            return InterfaceStatus.DOWN
+    # ------------------------------------------------------------------
+    # Job management (all async; callers are aiohttp handlers or coroutines)
+    # ------------------------------------------------------------------
 
-        if self.has_error:
-            return InterfaceStatus.ERROR
-
-        if self._active_job is not None:
-            return InterfaceStatus.BUSY
-
-        return InterfaceStatus.UP
-
-    def get_active_job(self) -> LHJob | None:
-        """Gets LHJob"""
-
-        return self._active_job
-
-    def update_job(self, job: LHJob):
-        """Updates the active job. Active job must exist and have
-            same id as the updated job"""
-
+    def _sync_update_job(self, job: LHJob) -> None:
         if self._active_job is not None:
             if job.id != self._active_job.id:
                 raise RuntimeError(f'Received update for job {job.id} but active job is {self._active_job.id}')
         else:
             raise RuntimeError(f'Received update for job {job.id} but no active job exists')
-
         self._active_job = job
-        self.update_history()
 
-    def update_job_result(self, job: LHJob, *args, **kwargs):
-        """Handles updates specifically to job results. Triggers callbacks, which
-            must have syntax f(job, *args, **kwargs)
-
-        Args:
-            job (LHJob): updated job
-        """
-
-        self.update_job(job)
+    async def update_job_result(self, job: LHJob, *args, **kwargs) -> None:
+        self._sync_update_job(job)
+        await self._async_update_history()
         if job.get_result_status() == ResultStatus.SUCCESS:
-            self.deactivate()
+            await self.deactivate()
+        await asyncio.gather(*[cb(job, *args, **kwargs) for cb in self.results_callbacks])
+        await self.trigger_update()
 
-        for callback in self.results_callbacks:
-            callback(job, *args, **kwargs)
+    async def update_job_validation(self, job: LHJob, *args, **kwargs) -> None:
+        self._sync_update_job(job)
+        await self._async_update_history()
+        await asyncio.gather(*[cb(job, *args, **kwargs) for cb in self.validation_callbacks])
+        await self.trigger_update()
 
-    def update_job_validation(self, job: LHJob, *args, **kwargs):
-        """Handles updates specifically to job validation. Triggers callbacks, which
-            must have syntax f(job, *args, **kwargs)
-        Args:
-            job (LHJob): updated job
-        """
-
-        self.update_job(job)
-        for callback in self.validation_callbacks:
-            callback(job, *args, **kwargs)
-
-    def throw_error(self, msg: str):
+    async def throw_error(self, msg: str) -> None:
         self.has_error = True
         logging.error(f'Error in {self.name}\n' + msg)
         notifier.notify(f'Error in {self.name}', msg)
+        await self.trigger_update()
 
-    def activate_job(self, job: LHJob, layout: LHBedLayout, *args, **kwargs):
-        """Activates an LHJob"""
-
-        # check that interface is idle
-        if self.get_status() != InterfaceStatus.UP:
-
-            raise RuntimeError('Attempted to activate job but LHInterface is not idle')
-
+    def _sync_activate_job(self, job: LHJob) -> None:
+        """Synchronous part of activate_job: ID assignment (method_data pre-built by caller)."""
         with LHJobHistory() as history:
-            """get max existing ID"""
             max_LH_id = history.get_max_LH_id()
 
-        # set to zero if no records yet
         if max_LH_id is None:
             max_LH_id = 0
 
-        # assign new ID
         job.LH_id = max_LH_id + 1
-        try:
-            job.generate_method_data(layout)
-        except:
-            self.throw_error(traceback.format_exc())
-
-        # activate job
+        if job.LH_method_data is not None:
+            job.LH_method_data['id'] = str(job.LH_id)
         self._active_job = job
 
-        self.update_history()
+    async def activate_job(self, job: LHJob) -> None:
+        if self.get_status() != InterfaceStatus.UP:
+            raise RuntimeError('Attempted to activate job but LHInterface is not idle')
 
-        # run callbacks
-        for callback in self.activation_callbacks:
-            callback(job, *args, **kwargs)
+        self._job_cancelled.clear()
 
-    def deactivate(self):
-        """Removes current job and goes idle
-        """
+        try:
+            await asyncio.to_thread(self._sync_activate_job, job)
+        except Exception:
+            await self.throw_error(traceback.format_exc())
+            return
 
-        self.update_history()
+        self.idle = False
+        await self._async_update_history()
+        await self.trigger_update()
+
+    async def deactivate(self) -> None:
+        if self._active_job is not None:
+            self._job_cancelled.set()
+        await self._async_update_history()
         self._active_job = None
+        self.idle = True
+
+    # ------------------------------------------------------------------
+    # get_info — merge AutocontrolPlugin (active_methods) + DeviceBase (state/controls)
+    # ------------------------------------------------------------------
+
+    async def get_info(self) -> dict:
+        d = await AutocontrolPlugin.get_info(self)
+        d.update(await DeviceBase.get_info(self))
+
+        status = self.get_status()
+        d['lh_status'] = status
+        d['active_job'] = self._active_job.model_dump() if self._active_job is not None else None
+
+        display: dict = {'Status': status.value}
+        if self._active_job is not None:
+            md = self._active_job.LH_method_data or {}
+            display['Job ID'] = self._active_job.LH_id
+            display['Name'] = md.get('name', '')
+            display['Description'] = md.get('description', '') or None
+        d['state']['display'] = display
+        d['state']['pre'] = (
+            {'label': f'Active job (LH_id={self._active_job.LH_id})', 'data': self._active_job.model_dump()}
+            if self._active_job is not None else None
+        )
+        d['method_schemas'] = {
+            name: m.get_pydantic_schema()
+            for name, m in self.methods.items()
+            if hasattr(m, 'get_pydantic_schema')
+        }
+        d['controls'] = d['controls'] | {
+            'pause_resume': {
+                'type': 'button',
+                'text': 'Resume' if not self.running else 'Pause',
+                'enabled': True,
+            },
+            'clear_lh_error': {
+                'type': 'button',
+                'text': 'Clear Error',
+                'visible': self.has_error,
+                'enabled': self.has_error,
+            },
+            'resubmit_active_job': {
+                'type': 'button',
+                'text': 'Resubmit Active Job',
+                'visible': self._active_job is not None,
+                'enabled': self._active_job is not None,
+            },
+            'deactivate': {
+                'type': 'button',
+                'text': 'Clear Active Job',
+                'visible': self._active_job is not None,
+                'enabled': self._active_job is not None,
+            },
+        }
+        return d
+
+    # ------------------------------------------------------------------
+    # event_handler — four UI buttons, delegate remainder to AutocontrolPlugin
+    # ------------------------------------------------------------------
+
+    async def event_handler(self, command: str, data: dict) -> None:
+        if command == 'pause_resume':
+            self.running = not self.running
+            await self.trigger_update()
+        elif command == 'clear_lh_error':
+            if self.has_error:
+                self.has_error = False
+                await self.trigger_update()
+        elif command == 'resubmit_active_job':
+            if self._active_job is not None:
+                self._active_job.LH_id += 1
+                await self.trigger_update()
+        elif command == 'deactivate':
+            if self._active_job is not None:
+                await self.deactivate()
+                await self.trigger_update()
+        else:
+            await AutocontrolPlugin.event_handler(self, command, data)
+
+    # ------------------------------------------------------------------
+    # create_web_app — combine MethodPlugin routes + layout routes + Trilution routes
+    # ------------------------------------------------------------------
+
+    def create_web_app(self, template='roadmap.html'):
+        from .webview import get_routes
+        from aiohttp import web
+
+        # MethodPlugin.create_web_app adds /SubmitTask, /GetStatus, /GetTaskData
+        # and calls WebNodeBase.create_web_app for the base socket.io app
+        app = super().create_web_app(template)
+
+        # Layout routes: /GUI/GetLayout, /GUI/GetWells, /GUI/UpdateWell, etc.
+        app.add_routes(LayoutPlugin._get_routes(self))
+
+        # Trilution callback routes: /LH/GetState, /LH/PutSampleData, etc.
+        app.add_routes(get_routes(self))
+
+        return app
+
 
 lh_interface = LHInterface()
