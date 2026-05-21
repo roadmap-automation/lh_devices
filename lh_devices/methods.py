@@ -355,9 +355,13 @@ class ActiveMethod(TypedDict):
 class MethodRunner:
 
     def __init__(self):
-        
+
         # Dictionary of known methods
         self.methods: Dict[str, MethodBase] = {}
+
+        # Task type reported in the broker schema for each registered method.
+        # Values are plain strings ('none', 'measure', 'prepare', 'transfer').
+        self.method_types: Dict[str, str] = {}
 
         # Active method with its initialization data
         self.active_methods: Dict[str, ActiveMethod] = {}
@@ -367,6 +371,11 @@ class MethodRunner:
 
         # Event that is triggered when all methods are completed
         self.event_finished: asyncio.Event = asyncio.Event()
+
+    def register(self, name: str, method: MethodBase, task_type: str = 'none') -> None:
+        """Register a method and its broker task type."""
+        self.methods[name] = method
+        self.method_types[name] = task_type
 
     @property
     def method_schema(self) -> Dict[str, tuple[Field,...]]:
@@ -452,6 +461,10 @@ class MethodPlugin(WebNodeBase):
     @property
     def methods(self) -> Dict[str, MethodBase]:
         return self.method_runner.methods
+
+    def register(self, name: str, method: MethodBase, task_type: str = 'none') -> None:
+        """Register a method and its broker task type."""
+        self.method_runner.register(name, method, task_type)
 
     @property
     def active_methods(self) -> Dict[str, ActiveMethod]:

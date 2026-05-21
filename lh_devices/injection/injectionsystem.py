@@ -25,13 +25,38 @@ class RoadmapChannelAssembly(MultiChannelAssembly, LayoutPlugin):
                  distribution_system: DistributionBase,
                  gsioc: GSIOC,
                  database_path: str | None = None,
+                 layout_path: str | None = None,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase(),
                  name='') -> None:
-        
+
         super().__init__(channels=channels,
                          assemblies=[distribution_system],
                          database_path=database_path,
                          name=name)
+
+        LayoutPlugin.__init__(self, self.id, self.name)
+        self.layout_path = layout_path
+        self.load_layout()
+        current_racks = set(self.layout.racks.keys()) if self.layout is not None else set()
+        current_racks.discard('Carrier')
+        if current_racks != set(ch.sample_loop.name for ch in channels):
+            self.logger.info('Loaded layout does not match channel configuration, creating new layout...')
+            carrier_rack = Rack(columns=1, rows=1, max_volume=2000, min_volume=300.0, style='grid', wells=[], height=300, width=300, x_translate=150, y_translate=0, shape='circle', editable=True)
+            racks = {'Carrier': carrier_rack}
+            for i, ch in enumerate(channels):
+                racks[ch.sample_loop.name] = Rack(columns=1,
+                                   rows=1,
+                                   max_volume=ch.sample_loop.get_volume() / 1000,
+                                   min_volume=0.0,
+                                   wells=[ch.well],
+                                   style='grid',
+                                   height=300,
+                                   width=300,
+                                   x_translate=300 * i,
+                                   y_translate=300,
+                                   shape='rect',
+                                   editable=False)
+            self.layout = LHBedLayout(racks=racks)
 
         """TODO:
             1. Generalize methods to have specific upstream and downstream connection points (if necessary)
@@ -52,19 +77,24 @@ class RoadmapChannelAssembly(MultiChannelAssembly, LayoutPlugin):
             ch.injection_node = self.injection_port.nodes[0]
 
             # add system-specific methods to the channel
-            ch.methods.update({'LoadLoop': LoadLoop(ch, distribution_system.modes[str(1 + 2 * i)], gsioc, waste_tracker=waste_tracker),
-                               'LoadLoopBubbleSensor': LoadLoopBubbleSensor(ch, distribution_system.modes[str(1 + 2 * i)], gsioc, waste_tracker=waste_tracker),
-                               'InjectLoop': InjectLoop(ch, waste_tracker=waste_tracker),
-                               'InjectLoopBubbleSensor': InjectLoopBubbleSensor(ch, waste_tracker=waste_tracker),
-                               'DirectInjectPrime': DirectInjectPrime(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, waste_tracker=waste_tracker),
-                               'DirectInject': DirectInject(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, waste_tracker=waste_tracker),
-                               'DirectInjectBubbleSensor': DirectInjectBubbleSensor(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker),
-                               'RoadmapChannelInit': RoadmapChannelInit(ch),
-                               'RoadmapChannelSleep': RoadmapChannelSleep(ch),
-                               'PrimeLoop': PrimeLoop(ch, waste_tracker=waste_tracker)
-                               })
+            ch.register('LoadLoop', LoadLoop(ch, distribution_system.modes[str(1 + 2 * i)], gsioc, waste_tracker=waste_tracker), task_type='none')
+            ch.register('LoadLoopBubbleSensor', LoadLoopBubbleSensor(ch, distribution_system.modes[str(1 + 2 * i)], gsioc, waste_tracker=waste_tracker), task_type='none')
+            ch.register('InjectLoop', InjectLoop(ch, waste_tracker=waste_tracker), task_type='inject')
+            ch.register('InjectLoopBubbleSensor', InjectLoopBubbleSensor(ch, waste_tracker=waste_tracker), task_type='none')
+            ch.register('DirectInjectPrime', DirectInjectPrime(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, waste_tracker=waste_tracker), task_type='none')
+            ch.register('DirectInject', DirectInject(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, waste_tracker=waste_tracker), task_type='none')
+            ch.register('DirectInjectBubbleSensor', DirectInjectBubbleSensor(ch, distribution_system.modes[str(2 + 2 * i)], gsioc, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker), task_type='none')
+            ch.register('RoadmapChannelInit', RoadmapChannelInit(ch), task_type='none')
+            ch.register('RoadmapChannelSleep', RoadmapChannelSleep(ch), task_type='none')
+            ch.register('PrimeLoop', PrimeLoop(ch, waste_tracker=waste_tracker), task_type='none')
 
         self.distribution_system = distribution_system
+
+    def create_web_app(self, template='roadmap.html'):
+        from ..layout import LayoutPlugin
+        app = super().create_web_app(template)
+        app.add_routes(LayoutPlugin._get_routes(self))
+        return app
 
     async def initialize(self) -> None:
         """Initialize the loop as a unit and the distribution valve separately"""
@@ -142,6 +172,7 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin, GSIOCPlugi
         # update channels with upstream information
         for i, ch in enumerate(channels):
             ch.method_runner.methods = {}
+            ch.method_runner.method_types = {}
             # update network for accurate dead volume calculation
             ch.network = self.network
             ch.injection_node = self.injection_port.nodes[0]
@@ -151,22 +182,21 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin, GSIOCPlugi
             rinse_loop_mode = ModeGroup([distribution_system.modes[str(1 + 2 * i)], distribution_system.modes['Rinse']])
             lh_direct_mode = ModeGroup([distribution_system.modes[str(2 + 2 * i)], distribution_system.modes['LH']])
             rinse_direct_mode = ModeGroup([distribution_system.modes[str(2 + 2 * i)], distribution_system.modes['Rinse']])
-            ch.methods.update({'LoadLoop': LoadLoop(ch, lh_loop_mode, gsioc, waste_tracker=waste_tracker),
-                               'LoadLoopBubbleSensor': LoadLoopBubbleSensor(ch, lh_loop_mode, gsioc, waste_tracker=waste_tracker),
-                               'InjectLoop': InjectLoop(ch, waste_tracker=waste_tracker),
-                               'InjectLoopBubbleSensor': InjectLoopBubbleSensor(ch, waste_tracker=waste_tracker),
-                               'DirectInjectPrime': DirectInjectPrime(ch, lh_direct_mode, gsioc, waste_tracker=waste_tracker),
-                               'DirectInject': DirectInject(ch, lh_direct_mode, gsioc, waste_tracker=waste_tracker),
-                               'DirectInjectBubbleSensor': DirectInjectBubbleSensor(ch, lh_direct_mode, gsioc, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker),
-                               'RoadmapChannelInit': RoadmapChannelInit(ch),
-                               'RoadmapChannelSleep': RoadmapChannelSleep(ch),
-                               'PrimeLoop': PrimeLoop(ch, waste_tracker=waste_tracker),
-                               'RinseLoadLoop': RinseLoadLoop(ch, rinse_loop_mode, rinse_system, waste_tracker=waste_tracker),
-                               'RinseLoadLoopBubbleSensor': RinseLoadLoopBubbleSensor(ch, rinse_loop_mode, rinse_system, waste_tracker=waste_tracker),
-                               'RinseDirectInjectPrime': RinseDirectInjectPrime(ch, rinse_direct_mode, rinse_system, waste_tracker=waste_tracker),
-                               'RinseDirectInject': RinseDirectInject(ch, rinse_direct_mode, rinse_system, waste_tracker=waste_tracker),
-                               'RinseDirectInjectBubbleSensor': RinseDirectInjectBubbleSensor(ch, rinse_direct_mode, rinse_system, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker),
-                               })
+            ch.register('LoadLoop', LoadLoop(ch, lh_loop_mode, gsioc, waste_tracker=waste_tracker), task_type='none')
+            ch.register('LoadLoopBubbleSensor', LoadLoopBubbleSensor(ch, lh_loop_mode, gsioc, waste_tracker=waste_tracker), task_type='none')
+            ch.register('InjectLoop', InjectLoop(ch, waste_tracker=waste_tracker), task_type='inject')
+            ch.register('InjectLoopBubbleSensor', InjectLoopBubbleSensor(ch, waste_tracker=waste_tracker), task_type='none')
+            ch.register('DirectInjectPrime', DirectInjectPrime(ch, lh_direct_mode, gsioc, waste_tracker=waste_tracker), task_type='none')
+            ch.register('DirectInject', DirectInject(ch, lh_direct_mode, gsioc, waste_tracker=waste_tracker), task_type='none')
+            ch.register('DirectInjectBubbleSensor', DirectInjectBubbleSensor(ch, lh_direct_mode, gsioc, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker), task_type='none')
+            ch.register('RoadmapChannelInit', RoadmapChannelInit(ch), task_type='none')
+            ch.register('RoadmapChannelSleep', RoadmapChannelSleep(ch), task_type='none')
+            ch.register('PrimeLoop', PrimeLoop(ch, waste_tracker=waste_tracker), task_type='none')
+            ch.register('RinseLoadLoop', RinseLoadLoop(ch, rinse_loop_mode, rinse_system, waste_tracker=waste_tracker), task_type='inject')
+            ch.register('RinseLoadLoopBubbleSensor', RinseLoadLoopBubbleSensor(ch, rinse_loop_mode, rinse_system, waste_tracker=waste_tracker), task_type='inject')
+            ch.register('RinseDirectInjectPrime', RinseDirectInjectPrime(ch, rinse_direct_mode, rinse_system, waste_tracker=waste_tracker), task_type='none')
+            ch.register('RinseDirectInject', RinseDirectInject(ch, rinse_direct_mode, rinse_system, waste_tracker=waste_tracker), task_type='none')
+            ch.register('RinseDirectInjectBubbleSensor', RinseDirectInjectBubbleSensor(ch, rinse_direct_mode, rinse_system, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker), task_type='none')
             
             ch.method_callbacks.append(trigger_layout_update)
             

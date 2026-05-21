@@ -359,12 +359,12 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
         self.well: Well = Well(composition=Composition(), volume=1, rack_id=self.name, well_number=1, id=None)
 
-        self.methods.update({'QCMDRecord': self.QCMDRecord(self, qcmd),
-                'QCMDRecordTag': self.QCMDRecordTag(self, qcmd),
-                'QCMDSleep': self.QCMDSleep(self, qcmd),
-                #'QCMDAcceptTransfer': self.QCMDAcceptTransfer(qcmd, self.well),
-                'QCMDStart': self.QCMDStart(self, qcmd),
-                'QCMDStop': self.QCMDStop(self, qcmd)})
+        self.register('QCMDRecord', self.QCMDRecord(self, qcmd), task_type='measure')
+        self.register('QCMDRecordTag', self.QCMDRecordTag(self, qcmd), task_type='measure')
+        self.register('QCMDSleep', self.QCMDSleep(self, qcmd), task_type='none')
+        #self.register('QCMDAcceptTransfer', self.QCMDAcceptTransfer(qcmd, self.well), task_type='none')
+        self.register('QCMDStart', self.QCMDStart(self, qcmd), task_type='none')
+        self.register('QCMDStop', self.QCMDStop(self, qcmd), task_type='none')
         
         self.qcmd = qcmd
 
@@ -577,8 +577,8 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
         super().__init__(qcmd, name)
         self.devices += [camera]
 
-        self.methods.update({'QCMDRecordTag': self.QCMDRecordTagwithCamera(self, qcmd, camera),
-                             'QCMDCaptureImage': self.QCMDCaptureImage(self, qcmd, camera)})
+        self.register('QCMDRecordTag', self.QCMDRecordTagwithCamera(self, qcmd, camera), task_type='measure')
+        self.register('QCMDCaptureImage', self.QCMDCaptureImage(self, qcmd, camera), task_type='measure')
 
     class QCMDMethodBasewithCamera(QCMDMeasurementChannel.QCMDMethodBase):
 
@@ -719,7 +719,7 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
             await self.trigger_layout_update()
 
         for ch in self.channels:
-            ch.methods.update({'QCMDAcceptTransfer': QCMDAcceptTransfer(ch, self.layout)})
+            ch.register('QCMDAcceptTransfer', QCMDAcceptTransfer(ch, self.layout), task_type='none')
             ch.method_callbacks.append(trigger_layout_update)
 
     async def run_camera_discovery(self):

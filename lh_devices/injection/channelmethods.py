@@ -92,10 +92,10 @@ class InjectLoop(MethodBase):
 
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
-        
+
         name: str = "InjectLoop"
-        pump_volume: str | float = 0, # uL
-        pump_flow_rate: str | float = 1, # mL/min
+        pump_volume: str | float = 0 # uL
+        pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
         """InjectLoop method"""
@@ -133,10 +133,10 @@ class InjectLoopBubbleSensor(MethodBase):
 
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
-        
+
         name: str = "InjectLoopBubbleSensor"
-        pump_volume: str | float = 0, # uL
-        pump_flow_rate: str | float = 1, # mL/min
+        pump_volume: str | float = 0 # uL
+        pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
         """InjectLoop method"""

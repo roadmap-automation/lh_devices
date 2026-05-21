@@ -214,10 +214,8 @@ class QCMDDistributionAssembly(NestedAssemblyBase, AssemblyBase):
             ch.injection_node = self.injection_port.nodes[0]
 
             # add system-specific methods to the channel
-            ch.methods.update({
-                               'DirectInject': QCMDDirectInject(ch, gsioc),
-                               'DirectInjectBubbleSensor': QCMDDirectInjectBubbleSensor(ch, gsioc, inlet_bubble_sensor, outlet_bubble_sensor)
-                               })
+            ch.register('DirectInject', QCMDDirectInject(ch, gsioc), task_type='none')
+            ch.register('DirectInjectBubbleSensor', QCMDDirectInjectBubbleSensor(ch, gsioc, inlet_bubble_sensor, outlet_bubble_sensor), task_type='none')
             ch.methods['DirectInject'].devices += distribution_system.devices
             ch.methods['DirectInjectBubbleSensor'].devices += distribution_system.devices
             ch.modes['Inject'] = distribution_system.modes[str(3 + i)]

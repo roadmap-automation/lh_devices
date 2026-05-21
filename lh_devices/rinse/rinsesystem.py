@@ -312,10 +312,9 @@ class RinseSystem(AutocontrolPlugin, RinseSystemBase):
         AutocontrolPlugin.__init__(self, database_path, self.id, self.name)
         self.rinse_loop = rinse_loop
 
-        self.methods.update({'InitiateRinse': InitiateRinse(self, waste_tracker),
-                             'PrimeRinseLoop': PrimeRinseLoop(self, waste_tracker),
-                             'PrimeRinseSource': PrimeRinseSource(self, waste_tracker)
-                            })
+        self.register('InitiateRinse', InitiateRinse(self, waste_tracker), task_type='none')
+        self.register('PrimeRinseLoop', PrimeRinseLoop(self, waste_tracker), task_type='none')
+        self.register('PrimeRinseSource', PrimeRinseSource(self, waste_tracker), task_type='none')
         
         if database_path is not None:
             self.method_callbacks.append(self.async_save_to_database)

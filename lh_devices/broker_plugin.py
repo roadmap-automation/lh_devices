@@ -24,8 +24,10 @@ Claim Check:
 """
 
 import asyncio
+import dataclasses
 import logging
 import pathlib
+import types
 from typing import Optional, Protocol, runtime_checkable
 
 import aio_pika
@@ -37,6 +39,7 @@ from roadmap_broker_client.publisher import publish
 from roadmap_broker_client.topology import declare_node_queue, declare_topology
 from roadmap_broker_client.topics import (
     CHANNEL_STATUS_CHANGED,
+    DEVICE_ANNOUNCE_REQUEST,
     DEVICE_REGISTERED,
     INSTRUMENT_EXCHANGE,
     LAYOUT_UPDATED,
@@ -51,6 +54,69 @@ from .methods import MethodResult
 from .waste import WasteInterfaceBase, WasteResponse
 
 logger = logging.getLogger(__name__)
+
+
+_PY_TO_JSON = {'float': 'number', 'int': 'number', 'str': 'string', 'bool': 'boolean'}
+
+def _resolve_json_type(t) -> str:
+    """Map a Python type annotation to a JSON-compatible type string.
+
+    Handles plain types (int, float, str, bool) and union types like str|int,
+    str|float — the latter are common in MethodDefinition fields where the code
+    accepts either a string (from JSON) or the actual numeric type.
+    """
+    if isinstance(t, str):
+        return _PY_TO_JSON.get(t, t)
+    if isinstance(t, types.UnionType):
+        for arg in t.__args__:
+            if arg is not str and arg is not type(None):
+                return _resolve_json_type(arg)
+        return 'string'
+    name = getattr(t, '__name__', None)
+    if name:
+        return _PY_TO_JSON.get(name, name)
+    return repr(t)
+
+
+def _schema_from_method_class(method_class: type, method_type: str = 'none') -> dict:
+    """Serialize a MethodBase subclass's MethodDefinition to a JSON-compatible schema dict."""
+    try:
+        method_def = method_class.MethodDefinition
+        dc_fields = dataclasses.fields(method_def)
+        display_name = next(
+            (f.default for f in dc_fields if f.name == 'name' and f.default is not dataclasses.MISSING),
+            method_class.__name__,
+        )
+        field_names = [f.name for f in dc_fields if f.name != 'name']
+        properties: dict = {}
+        for f in dc_fields:
+            if f.name == 'name':
+                continue
+            type_name = _resolve_json_type(f.type)
+            prop: dict = {'type': type_name}
+            if f.default is not dataclasses.MISSING:
+                try:
+                    prop['default'] = f.default
+                except Exception:
+                    pass
+            elif f.default_factory is not dataclasses.MISSING:
+                try:
+                    val = f.default_factory()
+                    prop['default'] = val.model_dump() if hasattr(val, 'model_dump') else val
+                except Exception:
+                    pass
+            properties[f.name] = prop
+        return {
+            'fields': field_names,
+            'display': True,
+            'display_name': display_name,
+            'method_type': method_type,
+            'origin': 'device',
+            'schema': {'type': 'object', 'properties': properties},
+        }
+    except Exception:
+        logger.debug("Could not build schema for %s", method_class.__name__, exc_info=True)
+        return {'fields': [], 'display': False, 'display_name': method_class.__name__, 'method_type': method_type, 'origin': 'device', 'schema': {}}
 
 
 @runtime_checkable
@@ -97,6 +163,8 @@ class DeviceBrokerWorker:
         # Maps task_id → inbound Envelope so the completion callback can build
         # the correct outbound envelope (sample_id, assigned_channel, policy).
         self._pending: dict[str, Envelope] = {}
+        # Method schemas built in start() and included in device.registered.
+        self._methods_schema: dict[str, dict] = {}
 
         self._exchange: Optional[aio_pika.abc.AbstractExchange] = None
         # Filled in during start() so BrokerWasteInterface can publish.
@@ -121,12 +189,35 @@ class DeviceBrokerWorker:
         if self.waste_interface is not None:
             self.waste_interface._exchange = self._exchange
 
+        # Build method schema from each channel's method_runner (deduplicated by name).
+        seen: set = set()
+        for ch in self.assembly.channels:
+            mr = getattr(ch, 'method_runner', None)
+            if mr is None:
+                continue
+            for method_name, method_instance in mr.methods.items():
+                if method_name not in seen:
+                    seen.add(method_name)
+                    method_type = mr.method_types.get(method_name, 'none')
+                    self._methods_schema[method_name] = _schema_from_method_class(
+                        type(method_instance), method_type=method_type
+                    )
+
         cmd_queue = await declare_node_queue(channel, self.device_id, INSTRUMENT_EXCHANGE)
 
         for ch in self.assembly.channels:
             ch.method_callbacks.append(self._completion_callback)
 
         self.assembly.layout_callbacks.append(self._emit_layout_updated)
+
+        # Subscribe to re-announce requests so lh_manager can trigger re-registration.
+        announce_queue = await channel.declare_queue(
+            f"{self.device_id}.announce_request",
+            durable=False,
+            auto_delete=True,
+        )
+        await announce_queue.bind(self._exchange, routing_key=DEVICE_ANNOUNCE_REQUEST)
+        asyncio.create_task(consume(announce_queue, self._on_announce_request))
 
         await self._emit_device_registered()
         asyncio.create_task(consume(cmd_queue, self._on_command))
@@ -150,10 +241,19 @@ class DeviceBrokerWorker:
                 "num_channels": nc,
                 "allow_sample_mixing": self.allow_sample_mixing,
                 "address": f"http://localhost:{self.local_port}",
+                "methods": self._methods_schema,
             },
         )
         await publish(self._exchange, DEVICE_REGISTERED, msg)
-        logger.info("[%s] device.registered published (%d channels).", self.device_id, nc)
+        logger.info("[%s] device.registered published (%d channels, %d methods).",
+                    self.device_id, nc, len(self._methods_schema))
+
+    async def _on_announce_request(
+        self, envelope: Envelope, message: aio_pika.abc.AbstractIncomingMessage
+    ) -> None:
+        """Re-emit device.registered when lh_manager requests a fresh announcement."""
+        logger.debug("[%s] announce_request received — re-publishing device.registered.", self.device_id)
+        await self._emit_device_registered()
 
     # ------------------------------------------------------------------
     # Inbound: command.<device_id>.submit_task

@@ -35,6 +35,7 @@ from roadmap_broker_client.envelope import Envelope, build
 from roadmap_broker_client.publisher import publish
 from roadmap_broker_client.topology import declare_node_queue, declare_event_queue, declare_topology
 from roadmap_broker_client.topics import (
+    DEVICE_ANNOUNCE_REQUEST,
     DEVICE_REGISTERED,
     INSTRUMENT_EXCHANGE,
     LAYOUT_UPDATED,
@@ -72,6 +73,7 @@ class GilsonLHBrokerWorker:
         self.local_port = local_port
         self._exchange: Optional[aio_pika.abc.AbstractExchange] = None
         self._protocol_exchange: Optional[aio_pika.abc.AbstractExchange] = None
+        self._methods_schema: dict[str, dict] = {}  # built in start()
 
     # ------------------------------------------------------------------
     # Startup
@@ -86,6 +88,15 @@ class GilsonLHBrokerWorker:
         self._exchange = await channel.get_exchange(INSTRUMENT_EXCHANGE)
         self._protocol_exchange = await channel.get_exchange(PROTOCOL_EXCHANGE)
 
+        # Build method schemas from the LH interface's registered methods.
+        for name, method_instance in self.lh_iface.methods.items():
+            get_schema = getattr(type(method_instance), 'get_pydantic_schema', None)
+            if get_schema is not None:
+                try:
+                    self._methods_schema[name] = get_schema()
+                except Exception:
+                    logger.debug("Could not build schema for lh method '%s'", name, exc_info=True)
+
         # Subscribe to gilson_lh command queue on instrument exchange
         cmd_queue = await declare_node_queue(channel, self.device_id, INSTRUMENT_EXCHANGE)
         asyncio.create_task(consume(cmd_queue, self._on_command))
@@ -95,6 +106,19 @@ class GilsonLHBrokerWorker:
             channel, f'gilson_lh.step_events', PROTOCOL_EXCHANGE, RUN_STEP_COMPLETED,
         )
         asyncio.create_task(consume(step_queue, self._on_step_completed))
+
+        # Subscribe to re-announce requests so lh_manager can trigger re-registration.
+        announce_queue = await channel.declare_queue(
+            f"{self.device_id}.announce_request",
+            durable=False,
+            auto_delete=True,
+        )
+        await announce_queue.bind(self._exchange, routing_key=DEVICE_ANNOUNCE_REQUEST)
+        asyncio.create_task(consume(announce_queue, self._on_announce_request))
+
+        # Wire layout_callbacks so HTTP-driven updates (UpdateWell, UpdateRack, etc.)
+        # publish layout.updated to the broker, not just task-completion updates.
+        self.lh_iface.layout_callbacks.append(self._emit_layout_updated)
 
         # Announce presence
         await self._emit_device_registered()
@@ -184,10 +208,18 @@ class GilsonLHBrokerWorker:
                 "num_channels": 1,
                 "allow_sample_mixing": True,
                 "address": f"http://localhost:{self.local_port}",
+                "methods": self._methods_schema,
             },
         )
         await publish(self._exchange, DEVICE_REGISTERED, msg)
-        logger.info("[%s] device.registered published.", self.device_id)
+        logger.info("[%s] device.registered published (%d methods).", self.device_id, len(self._methods_schema))
+
+    async def _on_announce_request(
+        self, envelope: Envelope, message: aio_pika.abc.AbstractIncomingMessage
+    ) -> None:
+        """Re-emit device.registered when lh_manager requests a fresh announcement."""
+        logger.debug("[%s] announce_request received — re-publishing device.registered.", self.device_id)
+        await self._emit_device_registered()
 
     async def _emit_layout_updated(self) -> None:
         if self._exchange is None:

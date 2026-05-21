@@ -23,11 +23,11 @@ _TEMPLATE_CLASSES: dict[str, type] = {
 }
 
 
-def get_all_wells_in_zones(layout: LHBedLayout, include_zones: List[Zone]) -> List[Well]:
-    """Returns all wells in the layout belonging to the specified zones."""
+def get_all_wells_in_zones(layout: LHBedLayout, include_zones: List[str]) -> List[Well]:
+    """Returns all wells in the layout belonging to the specified zones (matched by rack_id)."""
     return [w for rack in layout.racks.values()
             for w in rack.wells
-            if LayoutWell2ZoneWell(w.rack_id, w.well_number)[0] in include_zones]
+            if w.rack_id in include_zones]
 
 
 def solve_formulation(
@@ -35,7 +35,7 @@ def solve_formulation(
     target_composition: Composition,
     target_volume: float,
     exact_match: bool = True,
-    include_zones: List[Zone] = [Zone.SOLVENT, Zone.STOCK, Zone.SAMPLE],
+    include_zones: List[str] = ['Solvent', 'Stock', 'Samples'],
 ) -> Dict[str, Any]:
     """Zone-aware wrapper around core solve_formulation."""
     wells = get_all_wells_in_zones(layout, include_zones)
@@ -49,7 +49,7 @@ class Formulation(MethodContainer):
     target_composition: Composition = Field(default_factory=Composition)
     target_volume: float = 0.0
     Target: WellLocation = Field(default_factory=WellLocation)
-    include_zones: List[Zone] = Field(default_factory=lambda: [Zone.SOLVENT, Zone.STOCK, Zone.SAMPLE])
+    include_zones: List[str] = Field(default_factory=lambda: ['Solvent', 'Stock', 'Samples'])
     exact_match: bool = True
     transfer_template: SerializeAsAny[TransferMethod] = Field(default_factory=TransferWithRinse)
     mix_template: SerializeAsAny[MixMethod] = Field(default_factory=MixWithRinse)

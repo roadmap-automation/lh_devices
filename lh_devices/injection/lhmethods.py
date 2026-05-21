@@ -1,7 +1,7 @@
 """Methods requiring coordination with a liquid handler for a ROADMAP channel"""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Coroutine
 
 from lh_devices.core.bedlayout import Composition
@@ -28,10 +28,10 @@ class LoadLoop(MethodBaseDeadVolume):
     class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
         name: str = "LoadLoop"
-        composition: dict = {},
-        pump_volume: str | float = 0, # uL
-        excess_volume: str | float = 0, #uL
-        air_gap: str | float = 0, #uL, not used
+        composition: Composition = field(default_factory=Composition)
+        pump_volume: str | float = 0 # uL
+        excess_volume: str | float = 0 #uL
+        air_gap: str | float = 0 #uL, not used
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
@@ -111,10 +111,10 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
     class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
         name: str = "LoadLoopBubbleSensor"
-        composition: dict = {},
-        pump_volume: str | float = 0, # uL
+        composition: Composition = field(default_factory=Composition)
+        pump_volume: str | float = 0 # uL
         excess_volume: str | float = 0 # uL, not used
-        air_gap: str | float = 0, #uL
+        air_gap: str | float = 0 #uL
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
@@ -242,8 +242,8 @@ class DirectInjectPrime(MethodBaseDeadVolume):
     class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
         name: str = "DirectInjectPrime"
-        pump_volume: str | float = 0, # uL
-        pump_flow_rate: str | float = 1, # mL/min        
+        pump_volume: str | float = 0 # uL
+        pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
         """Same as DirectInject but does not switch to injection mode"""
@@ -307,8 +307,8 @@ class DirectInject(MethodBaseDeadVolume):
     class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
         name: str = "DirectInject"
-        pump_volume: str | float = 0, # uL
-        pump_flow_rate: str | float = 1, # mL/min        
+        pump_volume: str | float = 0 # uL
+        pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
@@ -387,8 +387,8 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
     class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
         
         name: str = "DirectInjectBubbleSensor"
-        pump_volume: str | float = 0, # uL
-        pump_flow_rate: str | float = 1, # mL/min
+        pump_volume: str | float = 0 # uL
+        pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""

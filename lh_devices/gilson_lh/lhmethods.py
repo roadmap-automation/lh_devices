@@ -753,6 +753,7 @@ class GilsonLHMethod(MethodBase):
             'fields': [f for f in m.model_fields if f not in EXCLUDE],
             'display': display,
             'display_name': m.model_fields['display_name'].default,
+            'method_type': m.model_fields['method_type'].default,
             'origin': origin,
             'schema': m.model_json_schema(mode='serialization'),
         }
@@ -912,6 +913,7 @@ class GilsonFormulation(GilsonLHMethod):
             'fields': [f for f in m.model_fields if f not in EXCLUDE],
             'display': display,
             'display_name': m.model_fields['display_name'].default,
+            'method_type': m.model_fields['method_type'].default,
             'origin': origin,
             'schema': m.model_json_schema(mode='serialization'),
         }
@@ -949,6 +951,7 @@ class GilsonSoluteFormulation(GilsonLHMethod):
             'fields': [f for f in m.model_fields if f not in EXCLUDE],
             'display': display,
             'display_name': m.model_fields['display_name'].default,
+            'method_type': m.model_fields['method_type'].default,
             'origin': origin,
             'schema': m.model_json_schema(mode='serialization'),
         }
