@@ -39,11 +39,12 @@ from roadmap_broker_client.topics import (
     DEVICE_REGISTERED,
     INSTRUMENT_EXCHANGE,
     LAYOUT_UPDATED,
+    SUBPROTOCOL_COMPLETED,
+    SUBPROTOCOL_FAILED,
     TASK_ACCEPTED,
     TASK_COMPLETED,
     TASK_FAILED,
     WASTE_GENERATED,
-    RUN_STEP_COMPLETED,
     PROTOCOL_EXCHANGE,
 )
 
@@ -101,11 +102,17 @@ class GilsonLHBrokerWorker:
         cmd_queue = await declare_node_queue(channel, self.device_id, INSTRUMENT_EXCHANGE)
         asyncio.create_task(consume(cmd_queue, self._on_command))
 
-        # Subscribe to protocol step completions for reservation cleanup
-        step_queue = await declare_event_queue(
-            channel, f'gilson_lh.step_events', PROTOCOL_EXCHANGE, RUN_STEP_COMPLETED,
+        # Subscribe to subprotocol end events for well reservation cleanup.
+        # Both COMPLETED and FAILED trigger release so wells are never leaked.
+        subprotocol_queue = await channel.declare_queue(
+            f'{self.device_id}.subprotocol_events',
+            durable=False,
+            auto_delete=True,
+            arguments={'x-dead-letter-exchange': 'exchange.dead_letter'},
         )
-        asyncio.create_task(consume(step_queue, self._on_step_completed))
+        for rk in (SUBPROTOCOL_COMPLETED, SUBPROTOCOL_FAILED):
+            await subprotocol_queue.bind(self._protocol_exchange, routing_key=rk)
+        asyncio.create_task(consume(subprotocol_queue, self._on_subprotocol_end))
 
         # Subscribe to re-announce requests so lh_manager can trigger re-registration.
         announce_queue = await channel.declare_queue(
@@ -145,8 +152,17 @@ class GilsonLHBrokerWorker:
         task_id = str(envelope.task_id)
         payload = envelope.payload
         sample_id = str(envelope.sample_id or payload.get('sample_id', ''))
-        method_name = payload.get('method_name', '')
-        parameters = {**payload.get('parameters', {}), 'sample_id': sample_id, 'task_id': task_id}
+
+        # Autocontrol wraps the method in method_data.method_list[0].
+        method_list = payload.get('method_data', {}).get('method_list', [])
+        if method_list:
+            method_name = method_list[0].get('method_name', '')
+            raw_params = method_list[0].get('method_data', {})
+        else:
+            method_name = payload.get('method_name', '')
+            raw_params = payload.get('parameters', {})
+
+        parameters = {**raw_params, 'sample_id': sample_id, 'task_id': task_id}
 
         # Idempotency: if this task_id is already in job history, re-publish completed
         with LHJobHistory() as history:
@@ -158,6 +174,7 @@ class GilsonLHBrokerWorker:
 
         if method_name not in self.lh_iface.methods:
             logger.error("[%s] Unknown method: %s", self.device_id, method_name)
+            print(payload)
             await self._emit(TASK_FAILED, envelope, {'error': f'Unknown method: {method_name}'})
             return
 
@@ -179,17 +196,18 @@ class GilsonLHBrokerWorker:
             await self._emit(TASK_COMPLETED, envelope, payload_out)
 
     # ------------------------------------------------------------------
-    # Inbound: protocol_studio.run.step_completed (reservation cleanup)
+    # Inbound: SUBPROTOCOL_COMPLETED / SUBPROTOCOL_FAILED (reservation cleanup)
     # ------------------------------------------------------------------
 
-    async def _on_step_completed(
+    async def _on_subprotocol_end(
         self, envelope: Envelope, message: aio_pika.abc.AbstractIncomingMessage
     ) -> None:
         payload = envelope.payload or {}
-        if payload.get('step_type') == 'SUBPROTOCOL_COMPLETED':
-            sample_id = str(envelope.sample_id or payload.get('sample_id', ''))
-            if sample_id:
-                reservation_store.release_sample(sample_id)
+        sample_id = payload.get('sample_id') or str(envelope.sample_id or '')
+        if sample_id:
+            reservation_store.release_sample(sample_id)
+            logger.info("[%s] reservation cleanup for sample %s (%s).",
+                        self.device_id, sample_id, message.routing_key)
 
     # ------------------------------------------------------------------
     # Outbound helpers

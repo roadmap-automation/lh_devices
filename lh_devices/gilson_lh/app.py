@@ -21,7 +21,7 @@ from .notify import notifier
 
 LOG_PATH = config.log_path
 HOST = 'localhost'
-PORT = 5002
+PORT = 5009
 DEVICE_ID = 'lh'
 
 

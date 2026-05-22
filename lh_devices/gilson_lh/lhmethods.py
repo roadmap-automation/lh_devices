@@ -926,7 +926,7 @@ class GilsonFormulation(GilsonLHMethod):
         self.reserve_all()
         try:
             lh_method = Formulation(**kwargs)
-            flat_methods = lh_method.explode(layout)
+            flat_methods = lh_method.get_methods(layout, sample_id=sample_id or None)
             from .lhinterface import LHJob
             job = LHJob(id=task_id or str(uuid4()))
             job.setup_method_data(sample_id, '', flat_methods, layout)
@@ -964,7 +964,7 @@ class GilsonSoluteFormulation(GilsonLHMethod):
         self.reserve_all()
         try:
             lh_method = SoluteFormulation(**kwargs)
-            flat_methods = lh_method.explode(layout)
+            flat_methods = lh_method.get_methods(layout, sample_id=sample_id or None)
             from .lhinterface import LHJob
             job = LHJob(id=task_id or str(uuid4()))
             job.setup_method_data(sample_id, '', flat_methods, layout)

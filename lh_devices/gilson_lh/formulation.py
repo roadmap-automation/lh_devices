@@ -8,6 +8,7 @@ from .lhmethods import MixMethod, MixWithRinse, TransferMethod, TransferWithRins
 from .layoutmap import Zone, LayoutWell2ZoneWell
 
 from lh_devices.core.bedlayout import Composition, LHBedLayout, Well, WellLocation
+from .reservation import reservation_store
 from lh_devices.core.formulation import (
     ZERO_VOLUME_TOLERANCE,
     make_target_vector,
@@ -101,9 +102,31 @@ class Formulation(MethodContainer):
                                     well_number=wells[0].well_number,
                                     expected_composition=self.target_composition)
 
-    def get_methods(self, layout: LHBedLayout) -> List[MethodsType]:
+    def get_methods(self, layout: LHBedLayout, sample_id: str | None = None) -> List[MethodsType]:
         methods = []
         volumes, wells, success = self.get_formulation_results(layout)
+
+        if self.Target.id is not None and sample_id is not None:
+            if success and len(volumes) == 1:
+                # Composition found in a single well — register it and skip transfers.
+                existing = WellLocation(
+                    rack_id=wells[0].rack_id,
+                    well_number=wells[0].well_number,
+                    expected_composition=self.target_composition,
+                )
+                reservation_store.reserve_reference(sample_id, self.Target.id, existing)
+                return []
+            elif success:
+                # Multi-source: claim an empty Mix well for the formulation target.
+                claimed = reservation_store.reserve_claim(
+                    sample_id, self.Target.id, layout, rack_id="Mix"
+                )
+                if claimed is None:
+                    raise RuntimeError(
+                        f"No empty Mix well available for allocation {self.Target.id!r}"
+                    )
+                self.Target = claimed
+
         if success:
             sort_index = np.argsort(volumes)[::-1]
             sorted_volumes = [volumes[si] for si in sort_index]
