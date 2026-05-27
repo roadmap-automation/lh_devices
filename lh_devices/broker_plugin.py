@@ -149,7 +149,9 @@ class DeviceBrokerWorker:
 
         channel_index = envelope.assigned_channel
         if channel_index is None:
-            channel_index = payload.get("channel", 0)
+            channel_index = payload.get("channel")
+        if channel_index is None:
+            channel_index = 0
 
         try:
             method_list = payload["method_data"]["method_list"]
