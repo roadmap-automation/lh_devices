@@ -48,10 +48,12 @@ from roadmap_broker_client.topics import (
     TASK_FAILED,
     WASTE_GENERATED,
     composition_transfer_key,
+    gsioc_dead_volume_key,
+    gsioc_trigger_key,
 )
 
 from .history import HistoryDB
-from .methods import MethodResult
+from .methods import MethodBasewithBrokerTrigger, MethodResult
 from .waste import WasteInterfaceBase, WasteResponse
 
 logger = logging.getLogger(__name__)
@@ -166,6 +168,8 @@ class DeviceBrokerWorker:
         self._pending: dict[str, Envelope] = {}
         # Method schemas built in start() and included in device.registered.
         self._methods_schema: dict[str, dict] = {}
+        # Events used to signal GSIOC trigger subscription tasks when methods finish.
+        self._method_done_events: dict[str, asyncio.Event] = {}
 
         self._exchange: Optional[aio_pika.abc.AbstractExchange] = None
         # Stored in start() so _await_composition_transfer can declare temporary queues.
@@ -296,6 +300,59 @@ class DeviceBrokerWorker:
         return result
 
     # ------------------------------------------------------------------
+    # GSIOC broker synchronisation (IS side)
+    # ------------------------------------------------------------------
+
+    async def _relay_dead_volume(self, method: 'MethodBasewithBrokerTrigger', task_id: str) -> None:
+        """Await the dead volume value from the method and publish it to the broker.
+
+        gilson_lh subscribes to gsioc.dead_volume.<task_id> and returns the value
+        in response to Trilution's 'V' GSIOC query.
+        """
+        try:
+            dead_volume = await method.dead_volume.get()
+        except asyncio.CancelledError:
+            return
+        if self._exchange is None:
+            return
+        rk = gsioc_dead_volume_key(task_id)
+        msg = build(
+            device_id=self.device_id,
+            routing_key=rk,
+            payload={"dead_volume": dead_volume},
+        )
+        await publish(self._exchange, rk, msg)
+        logger.debug("[%s] dead_volume %.2f relayed for task %s.", self.device_id, dead_volume, task_id)
+
+    async def _await_gsioc_triggers(
+        self, method: 'MethodBasewithBrokerTrigger', task_id: str, done_event: asyncio.Event
+    ) -> None:
+        """Subscribe to gsioc.trigger.<task_id> and call activate_trigger() on each message.
+
+        Loops until done_event is set (method completes). A single method may need
+        multiple triggers (e.g. LoadLoopBubbleSensor calls wait_for_trigger() three times).
+        """
+        if self._amqp_channel is None:
+            return
+        rk = gsioc_trigger_key(task_id)
+        queue = await self._amqp_channel.declare_queue(exclusive=True, auto_delete=True)
+        await queue.bind(self._exchange, routing_key=rk)
+
+        async def _on_trigger(msg: aio_pika.abc.AbstractIncomingMessage) -> None:
+            async with msg.process():
+                method.activate_trigger()
+                logger.debug("[%s] gsioc trigger activated for task %s.", self.device_id, task_id)
+
+        consumer_tag = await queue.consume(_on_trigger)
+        try:
+            await done_event.wait()
+        finally:
+            try:
+                await queue.cancel(consumer_tag)
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
     # Service discovery
     # ------------------------------------------------------------------
 
@@ -390,9 +447,18 @@ class DeviceBrokerWorker:
         await self._emit(TASK_ACCEPTED, envelope, {})
         await self._emit(CHANNEL_STATUS_CHANGED, envelope, {"status": "busy", "channel": channel_index})
 
-        if await_composition_transfer:
-            ch = self.assembly.channels[channel_index]
+        ch = self.assembly.channels[channel_index]
+        method_instance = ch.method_runner.methods.get(method_name)
 
+        # Start GSIOC broker synchronisation background tasks if needed.
+        # dead_volume relay fires once; trigger subscription loops until method completes.
+        if isinstance(method_instance, MethodBasewithBrokerTrigger):
+            done_event = asyncio.Event()
+            self._method_done_events[task_id] = done_event
+            asyncio.create_task(self._relay_dead_volume(method_instance, task_id))
+            asyncio.create_task(self._await_gsioc_triggers(method_instance, task_id, done_event))
+
+        if await_composition_transfer:
             async def _delayed_run(_task_id=task_id, _method_name=method_name,
                                     _method_data=dict(method_data), _ch=ch,
                                     _ch_idx=channel_index, _env=envelope) -> None:
@@ -408,7 +474,7 @@ class DeviceBrokerWorker:
 
             asyncio.create_task(_delayed_run())
         else:
-            self.assembly.channels[channel_index].run_method(method_name, method_data, id=task_id)
+            ch.run_method(method_name, method_data, id=task_id)
 
     # ------------------------------------------------------------------
     # Outbound: completion callback (registered on each channel)
@@ -417,6 +483,11 @@ class DeviceBrokerWorker:
     async def _completion_callback(self, result: MethodResult) -> None:
         if result.id is None:
             return
+
+        # Signal any active GSIOC trigger subscription to stop.
+        done_event = self._method_done_events.pop(result.id, None)
+        if done_event is not None:
+            done_event.set()
 
         envelope = self._pending.pop(result.id, None)
         if envelope is None:

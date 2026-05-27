@@ -10,7 +10,6 @@ from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePu
 from ..hamilton.HamiltonComm import HamiltonSerial
 from ..valve import LoopFlowValve, DistributionValve, SyringeLValve, SyringeYValve, YValve
 from ..webview import run_socket_app
-from ..gilson.gsioc import GSIOC
 from ..components import InjectionPort, FlowCell
 from ..connections import connect_nodes
 from ..broker_plugin import BrokerWasteInterface, DeviceBrokerWorker
@@ -109,13 +108,6 @@ async def run_injection_system():
     distribution_runner = await run_socket_app(distribution_app, 'localhost', 5002)
 
     # ============== Injection System setup =====================
-    # serial communications setup
-    gsioc = GSIOC(62, 'COM13', 19200)
-    gsioc_handler = logging.FileHandler(LOG_PATH / (datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_gsioc_log.txt'))
-    gsioc_handler.setFormatter(logging.Formatter('%(asctime)s.%(msecs)03d %(levelname)s %(message)s', '%Y-%m-%d %H:%M:%S', '%'))
-    gsioc_handler.setLevel(logging.DEBUG)
-    gsioc.logger.addHandler(gsioc_handler)
-    gsioc.logger.setLevel(logging.DEBUG)
 
     mvp0 = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve0'), name='Loop Valve 0')
     outlet_bubble_sensor0 = SMDSensoronHamiltonDevice(mvp0, 2, 1)
@@ -189,7 +181,6 @@ async def run_injection_system():
     qcmd_system = RoadmapChannelAssemblyRinse([channel_0, channel_1, channel_2],
                                             distribution_system=distribution_system,
                                             rinse_system=rinse_system,
-                                            gsioc=gsioc,
                                             layout_path=LOG_PATH / 'injection_layout.json',
                                             database_path=HISTORY_PATH / 'injection_system.db',
                                             waste_tracker=waste_tracker,
@@ -230,12 +221,10 @@ async def run_injection_system():
             rinse_worker.start(),
             distribution_worker.start(),
         )
-        gsioc_task = asyncio.create_task(gsioc.listen())
         await asyncio.Event().wait()
 
     finally:
         logging.info('Closing Multichannel Injection System...')
-        gsioc_task.cancel()
         asyncio.gather(
                     runner.cleanup(),
                     rinse_runner.cleanup(),

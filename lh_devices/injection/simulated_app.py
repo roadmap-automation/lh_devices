@@ -10,7 +10,6 @@ from ..hamilton.HamiltonDevice import SimulatedHamiltonValvePositioner, Simulate
 from ..hamilton.HamiltonComm import HamiltonSerial
 from ..valve import LoopFlowValve, DistributionValve, SyringeLValve
 from ..webview import run_socket_app
-from ..gilson.gsioc import GSIOC
 from ..components import InjectionPort, FlowCell
 from ..connections import connect_nodes
 from ..broker_plugin import BrokerWasteInterface, DeviceBrokerWorker
@@ -76,7 +75,6 @@ async def run_injection_system():
 
     qcmd_system = RoadmapChannelAssembly([channel_0, channel_1],
                                             distribution_system=distribution_system,
-                                            gsioc=None,
                                             database_path=HISTORY_PATH / 'injection_system.db',
                                             waste_tracker=waste_interface,
                                             name='MultiChannel Injection System')

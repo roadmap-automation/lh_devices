@@ -14,6 +14,7 @@ import logging
 from lh_devices.core.bedlayout import LHBedLayout
 from lh_devices.webview import run_socket_app
 
+from ..gilson.gsioc import GSIOC
 from .app_config import config
 from .broker_plugin import GilsonLHBrokerWorker
 from .lhinterface import lh_interface
@@ -37,11 +38,15 @@ async def run():
         logging.warning("No layout file at %s — starting with empty layout.", config.layout_path)
         lh_interface.layout = LHBedLayout()
 
+    # GSIOC serial connection (Trilution ↔ gilson_lh ↔ broker)
+    gsioc = GSIOC(62, 'COM13', 19200)
+
     # Broker worker: lh_interface serves as both layout_plugin and lh_iface
     broker_worker = GilsonLHBrokerWorker(
         lh_iface=lh_interface,
         local_port=PORT,
         device_id=DEVICE_ID,
+        gsioc=gsioc,
     )
 
     # Web app: create_web_app() combines AutocontrolPlugin + LayoutPlugin + Trilution routes

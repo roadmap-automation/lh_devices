@@ -145,7 +145,7 @@ class InjectLoopBubbleSensor(MethodBase):
 
         method = self.MethodDefinition(**kwargs)
 
-        pump_volume = float(method.pump_volume)
+        pump_volume = float(method.pump_volume) * 1000  # mL → uL
 
         # set minimum pump volume before checking for bubbles
         min_pump_volume = 0.7 * pump_volume if pump_volume > 200 else 0

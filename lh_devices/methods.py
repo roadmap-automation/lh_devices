@@ -11,7 +11,6 @@ from typing import List, Dict, Any, Callable, TypedDict, Coroutine
 from uuid import uuid4
 
 from .device import DeviceBase, DeviceError
-from .gilson.gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from .logutils import Loggable, MethodLogHandler, MethodLogFormatter
 from .notify import notifier
 from .webview import WebNodeBase
@@ -247,106 +246,38 @@ class MethodBasewithTrigger(MethodBase):
         self.waiting.clear()
         self.trigger.set()
 
-class MethodBasewithGSIOC(MethodBasewithTrigger):
+class MethodBasewithBrokerTrigger(MethodBasewithTrigger):
+    """Base class for IS methods that synchronise with gilson_lh via broker messages.
 
-    def __init__(self, gsioc: GSIOC, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+    Replaces MethodBasewithGSIOC + MethodBaseDeadVolume. The dead_volume queue
+    and wait_for_trigger() semantics are preserved; the GSIOC serial layer is
+    gone. The DeviceBrokerWorker monitors dead_volume and activates triggers
+    when gsioc.trigger.<task_id> arrives on the broker.
+    """
+
+    def __init__(self, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
         super().__init__(devices, waste_tracker=waste_tracker)
-
-        self.gsioc = gsioc
-
-        # container for gsioc tasks 
-        self._gsioc_tasks: List[asyncio.Task] = []
-
-    def connect_gsioc(self) -> None:
-        """Start GSIOC listener and connect."""
-
-        # TODO: This opens and closes the serial port a lot. Might be better to just start the GSIOC listener and then connect to it through monitor_gsioc
-        self._gsioc_tasks = [asyncio.create_task(self.monitor_gsioc())]
-
-    async def monitor_gsioc(self) -> None:
-        """Monitor GSIOC communications. Note that only one device should be
-            listening to a GSIOC device at a time.
-        """
-
-        self.logger.debug('Starting GSIOC monitor')
-        async with self.gsioc.client_lock:
-            self.logger.debug('Got GSIOC client lock...')
-            try:
-                while True:
-                    data: GSIOCMessage = await self.gsioc.message_queue.get()
-                    self.logger.debug(f'GSIOC got data {data}')
-                    response = await self.handle_gsioc(data)
-                    if data.messagetype == GSIOCCommandType.IMMEDIATE:
-                        await self.gsioc.response_queue.put(response)
-            except asyncio.CancelledError:
-                self.logger.debug("Stopping GSIOC monitor...")
-            except Exception:
-                raise
-
-    def disconnect_gsioc(self) -> None:
-        """Stop listening to GSIOC
-        """
-
-        for task in self._gsioc_tasks:
-            task.cancel()
-
-    async def on_cancel(self):
-        self.disconnect_gsioc()
-        return await super().on_cancel()
-    
-    async def start(self, **kwargs):
-        self.disconnect_gsioc()
-        return await super().start(**kwargs)
-
-    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
-        """Handles GSIOC messages. Put actions into gsioc_command_queue for async processing.
-
-        Args:
-            data (GSIOCMessage): GSIOC Message to be parsed / handled
-
-        Returns:
-            str: response (only for GSIOC immediate commands, else None)
-        """
-        
-        response = None
-
-        if data.data == 'Q':
-            # busy query
-            if self.waiting.is_set():
-                response = 'waiting'
-            elif all(dev.idle for dev in self.devices):
-                response = 'idle'
-            else:
-                response = 'busy'
-
-        # set trigger
-        elif data.data == 'T':
-            self.activate_trigger()
-            response = 'ok'
-
-        else:
-            response = 'error: unknown command'
-
-        return response
-    
-class MethodBaseDeadVolume(MethodBasewithGSIOC):
-
-    def __init__(self, gsioc: GSIOC, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
-        super().__init__(gsioc, devices, waste_tracker=waste_tracker)
 
         self.dead_volume: asyncio.Queue = asyncio.Queue(1)
 
-    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
 
-        # overwrites base class handling of dead volume
-        if data.data == 'V':
-            dead_volume = await self.dead_volume.get()
-            #self.logger.info(f'Sending dead volume {dead_volume}')
-            response = f'{dead_volume:0.0f}'
-        else:
-            response = await super().handle_gsioc(data)
-        
-        return response
+class MethodBaseDeadVolume(MethodBasewithBrokerTrigger):
+    """Compatibility shim for code that still uses the old GSIOC-coupled base class.
+
+    The gsioc argument is accepted but ignored — GSIOC coordination is now
+    handled by the broker plugin, not the method.  qcmd/distribution.py is the
+    only known caller; it should receive the same refactor as lhmethods.py.
+    """
+
+    def __init__(self, gsioc=None, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__(devices=devices, waste_tracker=waste_tracker)
+
+    def connect_gsioc(self) -> None:
+        pass
+
+    def disconnect_gsioc(self) -> None:
+        pass
+
 
 class ActiveMethod(TypedDict):
     method: MethodBase
@@ -504,7 +435,7 @@ class MethodPlugin(WebNodeBase):
         d = await super().get_info()
         d.update({'active_methods': {method_name: dict(method_data=active_method['method_data'],
                                                        has_error=(active_method['method'].error.error is not None),
-                                                       has_gsioc=isinstance(active_method['method'], MethodBasewithGSIOC))
+                                                       has_broker_trigger=isinstance(active_method['method'], MethodBasewithBrokerTrigger))
                                       for method_name, active_method in self.active_methods.items()}
                  }
                 )

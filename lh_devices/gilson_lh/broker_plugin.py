@@ -47,8 +47,11 @@ from roadmap_broker_client.topics import (
     TASK_FAILED,
     WASTE_GENERATED,
     composition_transfer_key,
+    gsioc_dead_volume_key,
+    gsioc_trigger_key,
 )
 
+from ..gilson.gsioc import GSIOC, GSIOCCommandType, GSIOCMessage
 from .lhinterface import LHInterface, LHJobHistory
 from .job import ResultStatus
 from .reservation import reservation_store
@@ -69,13 +72,21 @@ class GilsonLHBrokerWorker:
         lh_iface: LHInterface,
         local_port: int = 5001,
         device_id: str = DEVICE_ID,
+        gsioc: Optional[GSIOC] = None,
     ) -> None:
         self.device_id = device_id
         self.lh_iface = lh_iface
         self.local_port = local_port
         self._exchange: Optional[aio_pika.abc.AbstractExchange] = None
         self._protocol_exchange: Optional[aio_pika.abc.AbstractExchange] = None
+        self._amqp_channel: Optional[aio_pika.abc.AbstractChannel] = None
         self._methods_schema: dict[str, dict] = {}  # built in start()
+
+        # GSIOC serial ↔ broker translation
+        self._gsioc: Optional[GSIOC] = gsioc
+        self._current_gsioc_task_id: Optional[str] = None
+        self._dead_volume_event: asyncio.Event = asyncio.Event()
+        self._dead_volume_value: str = ''
 
     # ------------------------------------------------------------------
     # Startup
@@ -84,6 +95,7 @@ class GilsonLHBrokerWorker:
     async def start(self) -> None:
         connection = await get_connection()
         channel = await connection.channel()
+        self._amqp_channel = channel
         await channel.set_qos(prefetch_count=1)
         await declare_topology(channel)
 
@@ -127,6 +139,11 @@ class GilsonLHBrokerWorker:
         # Wire layout_callbacks so HTTP-driven updates (UpdateWell, UpdateRack, etc.)
         # publish layout.updated to the broker, not just task-completion updates.
         self.lh_iface.layout_callbacks.append(self._emit_layout_updated)
+
+        # Start GSIOC serial listener and client loop if a GSIOC port is configured.
+        if self._gsioc is not None:
+            asyncio.create_task(self._gsioc.listen())
+            asyncio.create_task(self._gsioc_client_loop())
 
         # Announce presence
         await self._emit_device_registered()
@@ -181,8 +198,19 @@ class GilsonLHBrokerWorker:
 
         await self._emit(TASK_ACCEPTED, envelope, {})
 
+        # Set up GSIOC broker correlation for this task window.
+        dead_volume_task = None
+        if self._gsioc is not None:
+            self._current_gsioc_task_id = task_id
+            self._dead_volume_event.clear()
+            dead_volume_task = asyncio.create_task(self._subscribe_dead_volume(task_id))
+
         method = self.lh_iface.methods[method_name]
         result = await method.start(**parameters)  # blocks; message un-acked until complete
+
+        if dead_volume_task is not None:
+            dead_volume_task.cancel()
+            self._current_gsioc_task_id = None
 
         if result.result.get('error'):
             await self._emit(TASK_FAILED, envelope, {'error': result.result['error']})
@@ -213,6 +241,90 @@ class GilsonLHBrokerWorker:
             reservation_store.release_sample(sample_id)
             logger.info("[%s] reservation cleanup for sample %s (%s).",
                         self.device_id, sample_id, message.routing_key)
+
+    # ------------------------------------------------------------------
+    # GSIOC serial ↔ broker translation (gilson_lh side)
+    # ------------------------------------------------------------------
+
+    async def _gsioc_client_loop(self) -> None:
+        """Translate GSIOC serial commands to/from broker messages.
+
+        Holds gsioc.client_lock so the listener delivers commands via message_queue.
+        Commands handled:
+          'Q' — IS busy query: responds BUSY if a task is active, ok otherwise.
+          'T' — trigger: publishes gsioc.trigger.<task_id>, responds ok.
+          'V' — dead volume: waits for gsioc.dead_volume.<task_id> from IS via broker,
+                then responds with the value. Safely blocks here — the serial listener
+                awaits response_queue.get() with no timeout, so this does not violate
+                GSIOC timing constraints (the 20ms limit applies to serial byte reads).
+        """
+        if self._gsioc is None:
+            return
+        async with self._gsioc.client_lock:
+            try:
+                while True:
+                    data: GSIOCMessage = await self._gsioc.message_queue.get()
+
+                    if data.data == 'Q':
+                        response = 'BUSY' if self._current_gsioc_task_id else 'ok'
+                        await self._gsioc.response_queue.put(response)
+
+                    elif data.data == 'T':
+                        if self._current_gsioc_task_id and self._exchange:
+                            rk = gsioc_trigger_key(self._current_gsioc_task_id)
+                            msg = build(
+                                device_id=self.device_id,
+                                routing_key=rk,
+                                payload={"task_id": self._current_gsioc_task_id},
+                            )
+                            await publish(self._exchange, rk, msg)
+                            logger.debug("[%s] GSIOC trigger published for task %s.", self.device_id, self._current_gsioc_task_id)
+                        await self._gsioc.response_queue.put('ok')
+
+                    elif data.data == 'V':
+                        await self._dead_volume_event.wait()
+                        await self._gsioc.response_queue.put(self._dead_volume_value)
+                        self._dead_volume_event.clear()
+                        self._dead_volume_value = ''
+
+                    else:
+                        logger.warning("[%s] Unknown GSIOC command: %r", self.device_id, data.data)
+                        if data.messagetype == GSIOCCommandType.IMMEDIATE:
+                            await self._gsioc.response_queue.put('error')
+
+            except asyncio.CancelledError:
+                pass
+
+    async def _subscribe_dead_volume(self, task_id: str) -> None:
+        """Subscribe to gsioc.dead_volume.<task_id> and store the value when it arrives.
+
+        The IS broker plugin publishes this after the method calls dead_volume.put().
+        The stored value is read by _gsioc_client_loop when Trilution sends 'V'.
+        """
+        if self._amqp_channel is None:
+            return
+        rk = gsioc_dead_volume_key(task_id)
+        queue = await self._amqp_channel.declare_queue(exclusive=True, auto_delete=True)
+        await queue.bind(self._exchange, routing_key=rk)
+
+        async def _on_dead_volume(msg: aio_pika.abc.AbstractIncomingMessage) -> None:
+            async with msg.process():
+                ev = Envelope.model_validate_json(msg.body)
+                dv = (ev.payload or {}).get("dead_volume", 0.0)
+                self._dead_volume_value = str(dv)
+                self._dead_volume_event.set()
+                logger.debug("[%s] dead_volume %.2f received for task %s.", self.device_id, dv, task_id)
+
+        consumer_tag = await queue.consume(_on_dead_volume)
+        try:
+            await asyncio.Event().wait()  # hold open until cancelled from _on_submit_task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            try:
+                await queue.cancel(consumer_tag)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Outbound helpers

@@ -7,7 +7,6 @@ from ..distribution import DistributionSingleValveTwoSource
 from ..hamilton.HamiltonDevice import SimulatedHamiltonValvePositioner, SimulatedHamiltonSyringePump, SimulatedSensoronHamiltonDevice
 from ..valve import LoopFlowValve, DistributionValve, SyringeLValve, SyringeYValve, YValve
 from ..webview import run_socket_app
-from ..gilson.gsioc import SimulatedGSIOC
 from ..components import InjectionPort, FlowCell
 from ..connections import connect_nodes
 from ..broker_plugin import BrokerWasteInterface, DeviceBrokerWorker
@@ -76,8 +75,6 @@ async def run_injection_system():
     distribution_runner = await run_socket_app(distribution_app, 'localhost', 5002)
 
     # ============== Injection System setup =====================
-
-    gsioc = SimulatedGSIOC()
 
     mvp0 = SimulatedHamiltonValvePositioner(LoopFlowValve(6, name='loop_valve0'), name='Loop Valve 0')
     outlet_bubble_sensor0 = SimulatedSensoronHamiltonDevice(mvp0, 2, 1)
@@ -150,7 +147,6 @@ async def run_injection_system():
     qcmd_system = RoadmapChannelAssemblyRinse([channel_0, channel_1, channel_2],
                                             distribution_system=distribution_system,
                                             rinse_system=rinse_system,
-                                            gsioc=gsioc,
                                             layout_path=LOG_PATH / 'injection_layout.json',
                                             database_path=HISTORY_PATH / 'injection_system.db',
                                             waste_tracker=waste_tracker,
@@ -173,12 +169,10 @@ async def run_injection_system():
             rinse_worker.start(),
             distribution_worker.start(),
         )
-        gsioc_task = asyncio.create_task(gsioc.listen())
         await asyncio.Event().wait()
 
     finally:
         logging.info('Closing Multichannel Injection System...')
-        gsioc_task.cancel()
         asyncio.gather(
                     runner.cleanup(),
                     rinse_runner.cleanup(),
