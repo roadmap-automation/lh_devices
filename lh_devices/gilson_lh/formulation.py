@@ -44,23 +44,55 @@ class Formulation(MethodContainer):
     Target: WellLocation = Field(default_factory=WellLocation)
     include_zones: List[str] = Field(default=['Solvent', 'Stock', 'Samples'])
     exact_match: bool = True
+    Extra_Volume: float = 0.1
     Aspirate_Flow_Rate: float = 2.0
     Flow_Rate: float = 2.5
     Use_Liquid_Level_Detection: bool = True
 
     _formulation_results: Tuple[List[float], List[Well], bool] | None = None
 
+    def _inflated_target(self, layout: LHBedLayout) -> float:
+        """Volume to prepare when mixing is needed: accounts for mix overhead, inject overhead,
+        and the target well's rack minimum volume."""
+        rack_id = self.Target.rack_id or "Mix"
+        rack = layout.racks.get(rack_id)
+        rack_min = rack.min_volume if rack else 0.0
+        return self.target_volume + rack_min + 2 * self.Extra_Volume
+
     def formulate(self, layout: LHBedLayout) -> Tuple[List[float], List[Well], bool]:
+        # Pass 1: check if the composition already exists at injection-overhead-adjusted volume.
+        # The core solver adds rack_min_source internally when verifying each source well.
         result = solve_formulation(
             layout=layout,
             target_composition=self.target_composition,
-            target_volume=self.target_volume,
+            target_volume=self.target_volume + self.Extra_Volume,
             exact_match=self.exact_match,
             include_zones=self.include_zones,
         )
+
+        if result['success'] and len(result['wells']) == 1:
+            # Case (a): composition exists in one well; inject overhead already accounted for.
+            self._formulation_results = result['volumes'], result['wells'], True
+            logging.info(self._formulation_results)
+            return self._formulation_results
+
         if not result['success']:
             logging.error(result['error'])
-        self._formulation_results = result['volumes'], result['wells'], result['success']
+            self._formulation_results = [], [], False
+            return self._formulation_results
+
+        # Case (b): mixing needed — re-solve with fully inflated target volume.
+        # Inflated = target_volume + rack_min_mix + Extra_Volume_mix + Extra_Volume_inject
+        result2 = solve_formulation(
+            layout=layout,
+            target_composition=self.target_composition,
+            target_volume=self._inflated_target(layout),
+            exact_match=self.exact_match,
+            include_zones=self.include_zones,
+        )
+        if not result2['success']:
+            logging.error(result2['error'])
+        self._formulation_results = result2['volumes'], result2['wells'], result2['success']
         logging.info(self._formulation_results)
         return self._formulation_results
 
@@ -163,25 +195,43 @@ class SoluteFormulation(Formulation):
     diluent: Composition = Field(default_factory=Composition)
 
     def formulate(self, layout: LHBedLayout) -> Tuple[List[float], List[Well], bool]:
-        volumes, wells, success = super().formulate(layout)
+        # SoluteFormulation always involves ≥2 transfers (solutes + diluent), so always case (b).
+        # Solve directly at the inflated volume to keep the diluent top-up consistent.
+        inflated = self._inflated_target(layout)
 
-        if not success:
-            return [], [], False
+        result = _solve_formulation_core(
+            wells=get_all_wells_in_zones(layout, self.include_zones),
+            layout=layout,
+            target_composition=self.target_composition,
+            target_volume=inflated,
+            exact_match=False,
+        )
 
-        diluent_well = next((well for well in self.get_all_wells(layout) if well.composition == self.diluent), None)
+        if not result['success']:
+            logging.error(result['error'])
+            self._formulation_results = [], [], False
+            return self._formulation_results
 
+        volumes, wells = result['volumes'], result['wells']
+
+        diluent_well = next(
+            (w for w in self.get_all_wells(layout) if w.composition == self.diluent),
+            None,
+        )
         if diluent_well is None:
             logging.error('Diluent (%s) not available on bed', self.diluent)
-            return [], [], False
+            self._formulation_results = [], [], False
+            return self._formulation_results
 
-        diluent_volume = self.target_volume - sum(volumes)
-
+        diluent_volume = inflated - sum(volumes)
         if not np.isclose(diluent_volume, 0.0, atol=ZERO_VOLUME_TOLERANCE):
+            if diluent_volume < 0:
+                logging.error('Diluent volume less than zero; should never happen')
+                self._formulation_results = [], [], False
+                return self._formulation_results
             volumes += [diluent_volume]
             wells += [diluent_well]
 
-            if diluent_volume < 0:
-                logging.error('Diluent volume less than zero; should never happen')
-                return [], [], False
-
-        return volumes, wells, True
+        self._formulation_results = volumes, wells, True
+        logging.info(self._formulation_results)
+        return self._formulation_results
