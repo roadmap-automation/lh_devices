@@ -1,11 +1,9 @@
 from typing import List, Tuple, Literal, Dict, Any, Optional
-from copy import copy
 import logging
 import numpy as np
-from pydantic import Field, validator, SerializeAsAny
+from pydantic import Field
 
-from .lhmethods import MixMethod, MixWithRinse, TransferMethod, TransferWithRinse, LHMethodCluster, MethodContainer, MethodsType
-from .layoutmap import Zone, LayoutWell2ZoneWell
+from .lhmethods import MixWithRinse, TransferWithRinse, LHMethodCluster, MethodContainer, MethodsType
 
 from lh_devices.core.bedlayout import Composition, LHBedLayout, Well, WellLocation
 from .reservation import reservation_store
@@ -16,12 +14,6 @@ from lh_devices.core.formulation import (
     make_source_matrix,
     solve_formulation as _solve_formulation_core,
 )
-
-# Local template class registry for deserialization in validate_templates
-_TEMPLATE_CLASSES: dict[str, type] = {
-    TransferWithRinse.model_fields['method_name'].default: TransferWithRinse,
-    MixWithRinse.model_fields['method_name'].default: MixWithRinse,
-}
 
 
 def get_all_wells_in_zones(layout: LHBedLayout, include_zones: List[str]) -> List[Well]:
@@ -50,19 +42,13 @@ class Formulation(MethodContainer):
     target_composition: Composition = Field(default_factory=Composition)
     target_volume: float = 0.0
     Target: WellLocation = Field(default_factory=WellLocation)
-    include_zones: List[str] = Field(default_factory=lambda: ['Solvent', 'Stock', 'Samples'])
+    include_zones: List[str] = Field(default=['Solvent', 'Stock', 'Samples'])
     exact_match: bool = True
-    transfer_template: SerializeAsAny[TransferMethod] = Field(default_factory=TransferWithRinse)
-    mix_template: SerializeAsAny[MixMethod] = Field(default_factory=MixWithRinse)
+    Aspirate_Flow_Rate: float = 2.0
+    Flow_Rate: float = 2.5
+    Use_Liquid_Level_Detection: bool = True
 
     _formulation_results: Tuple[List[float], List[Well], bool] | None = None
-
-    @validator('mix_template', 'transfer_template', pre=True)
-    def validate_templates(cls, v):
-        if isinstance(v, dict):
-            method_cls = _TEMPLATE_CLASSES.get(v.get('method_name', ''), TransferWithRinse)
-            return method_cls(**v)
-        return v
 
     def formulate(self, layout: LHBedLayout) -> Tuple[List[float], List[Well], bool]:
         result = solve_formulation(
@@ -133,20 +119,25 @@ class Formulation(MethodContainer):
             sorted_wells: list[Well] = [wells[si] for si in sort_index]
 
             for volume, well in zip(sorted_volumes, sorted_wells):
-                new_transfer = copy(self.transfer_template)
-                new_transfer.Source = WellLocation(rack_id=well.rack_id, well_number=well.well_number)
-                new_transfer.Target = self.Target
-                new_transfer.Volume = volume
-                methods.append(new_transfer)
+                methods.append(TransferWithRinse(
+                    Source=WellLocation(rack_id=well.rack_id, well_number=well.well_number),
+                    Target=self.Target,
+                    Volume=volume,
+                    Aspirate_Flow_Rate=self.Aspirate_Flow_Rate,
+                    Flow_Rate=self.Flow_Rate,
+                    Use_Liquid_Level_Detection=self.Use_Liquid_Level_Detection,
+                ))
 
             if len(volumes) > 1:
                 total_volume = sum(volumes)
-                min_mix_volume = 0.1
-                mix_volume = max(0.9 * total_volume, min_mix_volume)
-                new_mix = copy(self.mix_template)
-                new_mix.Target = self.Target
-                new_mix.Volume = mix_volume
-                methods.append(new_mix)
+                mix_volume = max(0.9 * total_volume, 0.1)
+                methods.append(MixWithRinse(
+                    Target=self.Target,
+                    Volume=mix_volume,
+                    Aspirate_Flow_Rate=self.Aspirate_Flow_Rate,
+                    Flow_Rate=self.Flow_Rate,
+                    Use_Liquid_Level_Detection=self.Use_Liquid_Level_Detection,
+                ))
 
         return [] if not methods else [LHMethodCluster(methods=methods)]
 
