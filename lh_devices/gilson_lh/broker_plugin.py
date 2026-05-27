@@ -39,13 +39,14 @@ from roadmap_broker_client.topics import (
     DEVICE_REGISTERED,
     INSTRUMENT_EXCHANGE,
     LAYOUT_UPDATED,
+    PROTOCOL_EXCHANGE,
     SUBPROTOCOL_COMPLETED,
     SUBPROTOCOL_FAILED,
     TASK_ACCEPTED,
     TASK_COMPLETED,
     TASK_FAILED,
     WASTE_GENERATED,
-    PROTOCOL_EXCHANGE,
+    composition_transfer_key,
 )
 
 from .lhinterface import LHInterface, LHJobHistory
@@ -190,6 +191,10 @@ class GilsonLHBrokerWorker:
             rc = result.result.get('resolved_composition')
             if rc:
                 payload_out['resolved_composition'] = rc
+                # Publish composition.transfer so any peer device in the same
+                # MethodGroup (e.g. injection system) can receive the resolved
+                # composition before running its own method.
+                await self._publish_composition_transfer(task_id, envelope, rc)
             for waste_data in result.result.get('waste', []):
                 await self._emit_waste_raw(waste_data)
             await self._emit_layout_updated()
@@ -212,6 +217,23 @@ class GilsonLHBrokerWorker:
     # ------------------------------------------------------------------
     # Outbound helpers
     # ------------------------------------------------------------------
+
+    async def _publish_composition_transfer(
+        self, task_id: str, envelope: Envelope, resolved_composition: dict
+    ) -> None:
+        """Publish composition.transfer.<task_id> so MethodGroup peers receive the composition."""
+        if self._exchange is None:
+            return
+        rk = composition_transfer_key(task_id)
+        msg = build(
+            device_id=self.device_id,
+            routing_key=rk,
+            task_id=envelope.task_id,
+            sample_id=envelope.sample_id,
+            payload={"resolved_composition": resolved_composition},
+        )
+        await publish(self._exchange, rk, msg)
+        logger.debug("[%s] composition.transfer published for task %s.", self.device_id, task_id)
 
     async def _emit_device_registered(self) -> None:
         if self._exchange is None:

@@ -156,11 +156,11 @@ async def run_injection_system():
                                             waste_tracker=waste_tracker,
                                             name='MultiChannel Injection System')
 
-    injection_worker = DeviceBrokerWorker(DEVICE_ID_INJECTION, qcmd_system, local_port=5003)
+    injection_worker = DeviceBrokerWorker(DEVICE_ID_INJECTION, qcmd_system, local_port=5003, device_type=DEVICE_ID_INJECTION, allow_sample_mixing=True)
     injection_worker.waste_interface = waste_tracker
-    rinse_worker = DeviceBrokerWorker(DEVICE_ID_RINSE, rinse_system, local_port=5014)
+    rinse_worker = DeviceBrokerWorker(DEVICE_ID_RINSE, rinse_system, local_port=5014, device_type=DEVICE_ID_RINSE, allow_sample_mixing=False)
     rinse_worker.waste_interface = waste_tracker
-    distribution_worker = DeviceBrokerWorker(DEVICE_ID_DISTRIBUTION, distribution_system, local_port=5002)
+    distribution_worker = DeviceBrokerWorker(DEVICE_ID_DISTRIBUTION, distribution_system, local_port=5002, device_type=DEVICE_ID_DISTRIBUTION, allow_sample_mixing=False)
 
     app = qcmd_system.create_web_app(template='roadmap.html')
     runner = await run_socket_app(app, 'localhost', 5003)

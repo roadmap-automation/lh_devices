@@ -47,6 +47,7 @@ from roadmap_broker_client.topics import (
     TASK_COMPLETED,
     TASK_FAILED,
     WASTE_GENERATED,
+    composition_transfer_key,
 )
 
 from .history import HistoryDB
@@ -167,6 +168,8 @@ class DeviceBrokerWorker:
         self._methods_schema: dict[str, dict] = {}
 
         self._exchange: Optional[aio_pika.abc.AbstractExchange] = None
+        # Stored in start() so _await_composition_transfer can declare temporary queues.
+        self._amqp_channel: Optional[aio_pika.abc.AbstractChannel] = None
         # Filled in during start() so BrokerWasteInterface can publish.
         self.waste_interface: Optional['BrokerWasteInterface'] = None
 
@@ -178,6 +181,7 @@ class DeviceBrokerWorker:
         """Connect to RabbitMQ, subscribe to command queue, register callbacks."""
         connection = await get_connection()
         channel = await connection.channel()
+        self._amqp_channel = channel
         await channel.set_qos(prefetch_count=1)
         await declare_topology(channel)
 
@@ -222,6 +226,74 @@ class DeviceBrokerWorker:
         await self._emit_device_registered()
         asyncio.create_task(consume(cmd_queue, self._on_command))
         logger.info("DeviceBrokerWorker [%s] running on port %d.", self.device_id, self.local_port)
+
+    # ------------------------------------------------------------------
+    # Inter-device composition transfer (MethodGroup coordination)
+    # ------------------------------------------------------------------
+
+    async def _publish_composition_transfer(
+        self, task_id: str, envelope: Envelope, resolved_composition: dict
+    ) -> None:
+        """Publish composition.transfer.<task_id> after a task that produces a composition.
+
+        Peer devices in the same MethodGroup subscribe to this key before running
+        their own method (via await_composition_transfer flag in the task payload).
+        """
+        if self._exchange is None:
+            return
+        rk = composition_transfer_key(task_id)
+        msg = build(
+            device_id=self.device_id,
+            routing_key=rk,
+            task_id=envelope.task_id,
+            sample_id=envelope.sample_id,
+            payload={"resolved_composition": resolved_composition},
+        )
+        await publish(self._exchange, rk, msg)
+        logger.debug("[%s] composition.transfer published for task %s.", self.device_id, task_id)
+
+    async def _await_composition_transfer(
+        self, task_id: str, timeout: float = 60.0
+    ) -> Optional[dict]:
+        """Wait for composition.transfer.<task_id> published by the source device.
+
+        Declares an exclusive auto-delete queue bound to the routing key before
+        returning — callers must set this up before emitting TASK_ACCEPTED so that
+        messages published by the source device are never dropped.
+        Returns the resolved_composition dict, or None on timeout.
+        """
+        if self._amqp_channel is None:
+            logger.error("[%s] AMQP channel not available for composition transfer wait.", self.device_id)
+            return None
+
+        rk = composition_transfer_key(task_id)
+        queue = await self._amqp_channel.declare_queue(exclusive=True, auto_delete=True)
+        await queue.bind(self._exchange, routing_key=rk)
+
+        result: Optional[dict] = None
+        received = asyncio.Event()
+
+        async def _handler(msg: aio_pika.abc.AbstractIncomingMessage) -> None:
+            nonlocal result
+            async with msg.process():
+                ev = Envelope.model_validate_json(msg.body)
+                result = (ev.payload or {}).get("resolved_composition")
+            received.set()
+
+        consumer_tag = await queue.consume(_handler)
+        try:
+            await asyncio.wait_for(received.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[%s] composition.transfer for task %s timed out after %.0fs.",
+                self.device_id, task_id, timeout,
+            )
+        finally:
+            try:
+                await queue.cancel(consumer_tag)
+            except Exception:
+                pass
+        return result
 
     # ------------------------------------------------------------------
     # Service discovery
@@ -306,12 +378,37 @@ class DeviceBrokerWorker:
             logger.error("[%s] channel %d does not exist", self.device_id, channel_index)
             raise ValueError(f"channel {channel_index} does not exist")
 
+        # Composition transfer: if this task is part of a MethodGroup that follows
+        # a source device (e.g. gilson_lh → injection, injection → QCMD), wait for
+        # the source to publish its resolved composition before running the method.
+        # In practice the source always takes several seconds; the subscription is
+        # set up inside _delayed_run which starts immediately after TASK_ACCEPTED.
+        await_composition_transfer: bool = bool(method_data.pop("await_composition_transfer", False))
+
         self._pending[task_id] = envelope
 
         await self._emit(TASK_ACCEPTED, envelope, {})
         await self._emit(CHANNEL_STATUS_CHANGED, envelope, {"status": "busy", "channel": channel_index})
 
-        self.assembly.channels[channel_index].run_method(method_name, method_data, id=task_id)
+        if await_composition_transfer:
+            ch = self.assembly.channels[channel_index]
+
+            async def _delayed_run(_task_id=task_id, _method_name=method_name,
+                                    _method_data=dict(method_data), _ch=ch,
+                                    _ch_idx=channel_index, _env=envelope) -> None:
+                composition = await self._await_composition_transfer(_task_id)
+                if composition is not None:
+                    _method_data["composition"] = composition
+                else:
+                    logger.warning(
+                        "[%s] No composition received for task %s — proceeding without it.",
+                        self.device_id, _task_id,
+                    )
+                _ch.run_method(_method_name, _method_data, id=_task_id)
+
+            asyncio.create_task(_delayed_run())
+        else:
+            self.assembly.channels[channel_index].run_method(method_name, method_data, id=task_id)
 
     # ------------------------------------------------------------------
     # Outbound: completion callback (registered on each channel)
@@ -334,6 +431,13 @@ class DeviceBrokerWorker:
                 "method_name": result.method_name,
             })
         else:
+            # Publish composition.transfer before task.completed so MethodGroup peers
+            # can receive the composition while still waiting on their own tasks.
+            resolved_composition = (result.result or {}).get("resolved_composition")
+            if resolved_composition:
+                await self._publish_composition_transfer(
+                    str(result.id), envelope, resolved_composition
+                )
             await self._publish_completed_from_result(result, envelope)
 
         await self._emit_layout_updated()
