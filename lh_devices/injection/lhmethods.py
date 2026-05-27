@@ -1,19 +1,19 @@
 """Methods requiring coordination with a liquid handler for a ROADMAP channel"""
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Coroutine
 
 from lh_devices.core.bedlayout import Composition
 
 from ..assemblies import Mode
 from ..bubblesensor import BubbleSensorBase
-from ..methods import MethodBase, MethodBasewithBrokerTrigger
+from ..methods import MethodBase, MethodBasewithBrokerTrigger, MethodBasewithCompositionReceive
 from ..waste import WasteInterfaceBase
 
 from .channel import RoadmapChannelBase
 
-class LoadLoop(MethodBasewithBrokerTrigger):
+class LoadLoop(MethodBasewithBrokerTrigger, MethodBasewithCompositionReceive):
     """Loads the loop of one ROADMAP channel
     """
 
@@ -25,9 +25,8 @@ class LoadLoop(MethodBasewithBrokerTrigger):
 
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
-        
+
         name: str = "LoadLoop"
-        composition: Composition = field(default_factory=Composition)
         pump_volume: str | float = 0 # uL
         excess_volume: str | float = 0 #uL
         air_gap: str | float = 0 #uL, not used
@@ -41,7 +40,6 @@ class LoadLoop(MethodBasewithBrokerTrigger):
 
         pump_volume = float(method.pump_volume)
         excess_volume = float(method.excess_volume)
-        composition = Composition.model_validate(method.composition)
 
         # Set dead volume for gilson_lh to relay to Trilution via broker
         await self.distribution_mode.activate()
@@ -69,11 +67,12 @@ class LoadLoop(MethodBasewithBrokerTrigger):
         for valve in self.distribution_mode.valves.keys():
             self.release(valve)
             await valve.trigger_update()
-        #self.release_liquid_handler.set()
 
-        # Register material in loop
-        self.channel.well.composition = composition
+        # Register material in loop; wait for composition published by gilson_lh on method completion.
         self.channel.well.volume = (pump_volume + excess_volume) / 1000
+        composition_dict = await self.receive_composition()
+        if composition_dict is not None:
+            self.channel.well.composition = Composition.model_validate(composition_dict)
 
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
         await self.channel.change_mode('PumpPrimeLoop')
@@ -89,7 +88,7 @@ class LoadLoop(MethodBasewithBrokerTrigger):
 
         self.release_all()
 
-class LoadLoopBubbleSensor(MethodBasewithBrokerTrigger):
+class LoadLoopBubbleSensor(MethodBasewithBrokerTrigger, MethodBasewithCompositionReceive):
     """Loads the loop of one ROADMAP channel using a bubble sensor at the waste to detect the air gap.
         Bubble sensor must be powered by digital output 2 (index 1) and read from digital input 2
     """
@@ -102,9 +101,8 @@ class LoadLoopBubbleSensor(MethodBasewithBrokerTrigger):
 
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
-        
+
         name: str = "LoadLoopBubbleSensor"
-        composition: Composition = field(default_factory=Composition)
         pump_volume: str | float = 0 # uL
         excess_volume: str | float = 0 # uL, not used
         air_gap: str | float = 0 #uL
@@ -120,7 +118,6 @@ class LoadLoopBubbleSensor(MethodBasewithBrokerTrigger):
         pump_volume = float(method.pump_volume)
         excess_volume = float(method.excess_volume)
         air_gap = float(method.air_gap)
-        composition = Composition.model_validate(method.composition)
 
         # Power the bubble sensor
         await self.channel.syringe_pump.set_digital_output(1, True)
@@ -156,9 +153,11 @@ class LoadLoopBubbleSensor(MethodBasewithBrokerTrigger):
             self.release(valve)
             await valve.trigger_update()
 
-        # Register material in loop
-        self.channel.well.composition = composition
+        # Register material in loop; wait for composition published by gilson_lh on method completion.
         self.channel.well.volume = (pump_volume + excess_volume) / 1000
+        composition_dict = await self.receive_composition()
+        if composition_dict is not None:
+            self.channel.well.composition = Composition.model_validate(composition_dict)
 
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
         await self.channel.change_mode('PumpPrimeLoop')

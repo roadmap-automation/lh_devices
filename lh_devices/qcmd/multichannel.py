@@ -2,7 +2,7 @@ import time
 import uuid
 import asyncio
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from typing import Dict
 from aiohttp import ClientSession, ClientConnectionError, web
 from enum import Enum
@@ -17,7 +17,7 @@ from ..camera.acroname_hub import USBHubManager
 from ..device import DeviceBase, PollTimer
 from ..assemblies import InjectionChannelBase
 from ..layout import LayoutPlugin
-from ..methods import MethodBase
+from ..methods import MethodBase, MethodBasewithCompositionReceive
 from ..multichannel import MultiChannelAssembly
 
 class QCMDState(str, Enum):
@@ -361,6 +361,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
         self.register('QCMDRecord', self.QCMDRecord(self, qcmd), task_type='measure')
         self.register('QCMDRecordTag', self.QCMDRecordTag(self, qcmd), task_type='measure')
+        self.register('QCMDRecordCurrent', self.QCMDRecordCurrent(self, qcmd), task_type='measure')
         self.register('QCMDSleep', self.QCMDSleep(self, qcmd), task_type='none')
         #self.register('QCMDAcceptTransfer', self.QCMDAcceptTransfer(qcmd, self.well), task_type='none')
         self.register('QCMDStart', self.QCMDStart(self, qcmd), task_type='none')
@@ -485,6 +486,25 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             return result
 
+    class QCMDRecordCurrent(QCMDMethodBase):
+
+        @dataclass
+        class MethodDefinition(MethodBase.MethodDefinition):
+
+            name: str = 'QCMDRecordCurrent'
+            record_time: float = 0.0
+            sleep_time: float = 0.0
+
+        async def run(self, **kwargs):
+
+            method = self.MethodDefinition(**kwargs)
+            self.reserve_all()
+            tag_name = repr(self.ch.well.composition)
+            result = await self.qcmd.record_tag(tag_name, method.record_time, method.sleep_time)
+            self.release_all()
+
+            return result
+
     class QCMDStop(QCMDMethodBase):
 
         @dataclass
@@ -544,7 +564,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             return {'start': start_result, 'temp': temp_result}
 
-class QCMDAcceptTransfer(MethodBase):
+class QCMDAcceptTransfer(MethodBasewithCompositionReceive):
 
     def __init__(self, channel: QCMDMeasurementChannel, layout: LHBedLayout):
         super().__init__([channel.qcmd])
@@ -555,20 +575,20 @@ class QCMDAcceptTransfer(MethodBase):
     class MethodDefinition(MethodBase.MethodDefinition):
 
         name: str = 'QCMDAcceptTransfer'
-        contents: dict = field(default_factory=dict)
 
     async def run(self, **kwargs):
 
         method = self.MethodDefinition(**kwargs)
-        contents = Composition.model_validate(method.contents)
         self.reserve_all()
-        self.logger.info(f'{self.name}: Received transfer of material {repr(contents)}')
         well, _ = self.layout.get_well_and_rack(self.channel.name, 1)
-        well.composition = contents
-        result = {'contents': contents.model_dump()}
+        composition_dict = await self.receive_composition()
+        if composition_dict is not None:
+            composition = Composition.model_validate(composition_dict)
+            self.logger.info(f'{self.name}: Received transfer of material {repr(composition)}')
+            well.composition = composition
         self.release_all()
 
-        return result
+        return {'composition': well.composition.model_dump()}
 
 class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
 

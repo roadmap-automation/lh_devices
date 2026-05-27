@@ -7,7 +7,7 @@ import traceback
 from aiohttp import web
 from aiohttp.web_app import Application as Application
 from dataclasses import dataclass, field, fields, Field
-from typing import List, Dict, Any, Callable, TypedDict, Coroutine
+from typing import List, Dict, Any, Callable, TypedDict, Coroutine, Optional
 from uuid import uuid4
 
 from .device import DeviceBase, DeviceError
@@ -259,6 +259,57 @@ class MethodBasewithBrokerTrigger(MethodBasewithTrigger):
         super().__init__(devices, waste_tracker=waste_tracker)
 
         self.dead_volume: asyncio.Queue = asyncio.Queue(1)
+
+
+class MethodBasewithCompositionRelay(MethodBase):
+    """Base class for methods that relay a composition to peer devices in the same MethodGroup.
+
+    Call ``self.emit_composition(composition)`` from within ``run()`` to schedule
+    a ``composition.transfer.<task_id>`` broker event.  Peer devices that include
+    ``await_composition_transfer: true`` in their task parameters will receive the
+    composition before their own method starts.
+
+    The broker plugin publishes the event after ``run()`` returns but before
+    ``task.completed``, so peers are guaranteed to receive it while they are still
+    waiting on their own hardware tasks.
+    """
+
+    def __init__(self, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__(devices, waste_tracker)
+        self._pending_composition_transfer: Optional[dict] = None
+
+    def emit_composition(self, composition) -> None:
+        """Signal the broker to emit composition.transfer to MethodGroup peers on completion.
+
+        ``composition`` must have a ``model_dump()`` method (any Pydantic model).
+        """
+        self._pending_composition_transfer = composition.model_dump()
+
+
+class MethodBasewithCompositionReceive(MethodBase):
+    """Base class for methods that receive a composition from a MethodGroup peer.
+
+    Call ``await self.receive_composition()`` from within ``run()`` at the
+    point where the composition is needed.  The call blocks until the broker
+    delivers a ``composition.transfer`` event for this task's MethodGroup, then
+    returns the resolved composition dict (or None on timeout).
+
+    The broker plugin detects this base class automatically via ``isinstance``
+    and wires up the RabbitMQ subscription before the method starts — no flag
+    is needed in the task parameters.
+    """
+
+    def __init__(self, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__(devices, waste_tracker)
+        self._incoming_composition: asyncio.Queue = asyncio.Queue(maxsize=1)
+
+    async def receive_composition(self) -> Optional[dict]:
+        """Block until a composition arrives from a MethodGroup peer.
+
+        Returns the composition dict, or None if the broker transfer timed out.
+        Must be called exactly once per method run.
+        """
+        return await self._incoming_composition.get()
 
 
 class MethodBaseDeadVolume(MethodBasewithBrokerTrigger):

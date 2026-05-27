@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 
-from ..methods import MethodBase
+from ..methods import MethodBase, MethodBasewithCompositionRelay
 from ..waste import WasteInterfaceBase
 
 from .channel import RoadmapChannelBase
@@ -82,7 +82,7 @@ class PrimeLoop(MethodBase):
 
         self.release_all()
 
-class InjectLoop(MethodBase):
+class InjectLoop(MethodBasewithCompositionRelay):
     """Injects the contents of the loop of one ROADMAP channel
     """
 
@@ -120,9 +120,10 @@ class InjectLoop(MethodBase):
 
         await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
+        self.emit_composition(self.channel.well.composition)
         self.release_all()
 
-class InjectLoopBubbleSensor(MethodBase):
+class InjectLoopBubbleSensor(MethodBasewithCompositionRelay):
     """Injects the contents of the loop of one ROADMAP channel, using a bubble sensor at the end of the loop to detect
         the air gap. Bubble sensor must be powered from digital output 1 (index 0) and read from digital input 1.
     """
@@ -174,4 +175,5 @@ class InjectLoopBubbleSensor(MethodBase):
         await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, self.channel.syringe_pump.syringe_volume / 1000)
         await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
+        self.emit_composition(self.channel.well.composition)
         self.release_all()
