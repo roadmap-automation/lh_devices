@@ -52,8 +52,7 @@ class AutocontrolPlugin(MethodPlugin, DatabasePlugin):
 
     async def _get_task(self, request: web.Request) -> web.Response:
         """Handles requests for information about a task. Dummy method round-trips the response through a TaskData serialization process."""
-        data: dict = await request.json()
-        task_id = data.get('task_id', '')
+        task_id = request.rel_url.query.get('task_id', '')
         
         record = self.read_from_database(task_id)
         if record is None:
