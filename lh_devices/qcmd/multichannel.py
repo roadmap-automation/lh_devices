@@ -515,6 +515,8 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             self.reserve_all()
             if not (self.qcmd.qcmd_status == QCMDState.MEASURING):
                 start_result = await self.qcmd.start_collection(method.description)
+            else:
+                start_result = {'result': 'already measuring'}
             await asyncio.sleep(2)
             await self.trigger_update()
             temp_result = await self.qcmd.set_temperature(float(method.temperature))
