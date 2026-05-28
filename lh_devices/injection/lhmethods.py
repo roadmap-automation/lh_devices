@@ -27,9 +27,9 @@ class LoadLoop(MethodBasewithBrokerTrigger, MethodBasewithCompositionReceive):
     class MethodDefinition(MethodBase.MethodDefinition):
 
         name: str = "LoadLoop"
-        pump_volume: str | float = 0 # uL
-        excess_volume: str | float = 0 #uL
-        air_gap: str | float = 0 #uL, not used
+        pump_volume: str | float = 0 # mL
+        excess_volume: str | float = 0 # mL
+        air_gap: str | float = 0 # mL, not used
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
@@ -38,8 +38,8 @@ class LoadLoop(MethodBasewithBrokerTrigger, MethodBasewithCompositionReceive):
 
         method = self.MethodDefinition(**kwargs)
 
-        pump_volume = float(method.pump_volume)
-        excess_volume = float(method.excess_volume)
+        pump_volume = float(method.pump_volume) * 1000 # mL → uL
+        excess_volume = float(method.excess_volume) * 1000 # mL → uL
 
         # Set dead volume for gilson_lh to relay to Trilution via broker
         await self.distribution_mode.activate()
@@ -103,9 +103,9 @@ class LoadLoopBubbleSensor(MethodBasewithBrokerTrigger, MethodBasewithCompositio
     class MethodDefinition(MethodBase.MethodDefinition):
 
         name: str = "LoadLoopBubbleSensor"
-        pump_volume: str | float = 0 # uL
-        excess_volume: str | float = 0 # uL, not used
-        air_gap: str | float = 0 #uL
+        pump_volume: str | float = 0 # mL
+        excess_volume: str | float = 0 # mL, not used
+        air_gap: str | float = 0 # mL
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
@@ -115,9 +115,9 @@ class LoadLoopBubbleSensor(MethodBasewithBrokerTrigger, MethodBasewithCompositio
 
         method = self.MethodDefinition(**kwargs)
 
-        pump_volume = float(method.pump_volume)
-        excess_volume = float(method.excess_volume)
-        air_gap = float(method.air_gap)
+        pump_volume = float(method.pump_volume) * 1000 # mL → uL
+        excess_volume = float(method.excess_volume) * 1000 # mL → uL
+        air_gap = float(method.air_gap) * 1000 # mL → uL
 
         # Power the bubble sensor
         await self.channel.syringe_pump.set_digital_output(1, True)
@@ -228,7 +228,7 @@ class DirectInjectPrime(MethodBasewithBrokerTrigger):
     class MethodDefinition(MethodBase.MethodDefinition):
         
         name: str = "DirectInjectPrime"
-        pump_volume: str | float = 0 # uL
+        pump_volume: str | float = 0 # mL
         pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
@@ -286,7 +286,7 @@ class DirectInject(MethodBasewithBrokerTrigger):
     class MethodDefinition(MethodBase.MethodDefinition):
         
         name: str = "DirectInject"
-        pump_volume: str | float = 0 # uL
+        pump_volume: str | float = 0 # mL
         pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
@@ -359,7 +359,7 @@ class DirectInjectBubbleSensor(MethodBasewithBrokerTrigger):
     class MethodDefinition(MethodBase.MethodDefinition):
         
         name: str = "DirectInjectBubbleSensor"
-        pump_volume: str | float = 0 # uL
+        pump_volume: str | float = 0 # mL
         pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
@@ -368,7 +368,7 @@ class DirectInjectBubbleSensor(MethodBasewithBrokerTrigger):
         self.reserve_all()
 
         method = self.MethodDefinition(**kwargs)
-        pump_volume = float(method.pump_volume)
+        pump_volume = float(method.pump_volume) * 1000 # mL → uL
         pump_flow_rate = float(method.pump_flow_rate) * 1000 / 60 # convert to uL / s
 
         # set minimum pump volume before checking for bubbles

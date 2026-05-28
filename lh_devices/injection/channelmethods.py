@@ -94,7 +94,7 @@ class InjectLoop(MethodBasewithCompositionRelay):
     class MethodDefinition(MethodBase.MethodDefinition):
 
         name: str = "InjectLoop"
-        pump_volume: str | float = 0 # uL
+        pump_volume: str | float = 0 # mL
         pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
@@ -104,7 +104,7 @@ class InjectLoop(MethodBasewithCompositionRelay):
 
         method = self.MethodDefinition(**kwargs)
 
-        pump_volume = float(method.pump_volume)
+        pump_volume = float(method.pump_volume) * 1000 # mL → uL
         pump_flow_rate = float(method.pump_flow_rate) * 1000 / 60 # convert to uL / s
 
         # change to inject mode
@@ -136,7 +136,7 @@ class InjectLoopBubbleSensor(MethodBasewithCompositionRelay):
     class MethodDefinition(MethodBase.MethodDefinition):
 
         name: str = "InjectLoopBubbleSensor"
-        pump_volume: str | float = 0 # uL
+        pump_volume: str | float = 0 # mL
         pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):

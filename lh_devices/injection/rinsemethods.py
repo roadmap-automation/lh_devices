@@ -206,8 +206,8 @@ class RinseDirectInjectPrime(MethodBase):
     class MethodDefinition(MethodBase.MethodDefinition):
         
         name: str = "DirectInjectPrime"
-        pump_volume: str | float = 1, # mL
-        pump_flow_rate: str | float = 1, # mL/min        
+        pump_volume: str | float = 1 # mL
+        pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
         """Same as DirectInject but does not switch to injection mode"""

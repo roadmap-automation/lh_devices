@@ -241,7 +241,7 @@ class PrimeRinseSource(MethodBase):
 
         name: str = "PrimeRinseSource"
         index: str | int = 1
-        volume: str | float = 1 # mL/min
+        volume: str | float = 1 # mL
         number_of_primes: str | int = 1
 
     async def run(self, **kwargs):
