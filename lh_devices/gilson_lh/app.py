@@ -14,6 +14,8 @@ import logging
 from lh_devices.core.bedlayout import LHBedLayout
 from lh_devices.webview import run_socket_app
 
+import serial
+
 from ..gilson.gsioc import GSIOC
 from .app_config import config
 from .broker_plugin import GilsonLHBrokerWorker
@@ -39,7 +41,11 @@ async def run():
         lh_interface.layout = LHBedLayout()
 
     # GSIOC serial connection (Trilution ↔ gilson_lh ↔ broker)
-    gsioc = GSIOC(62, 'COM13', 19200)
+    try:
+        gsioc = GSIOC(62, 'COM13', 19200)
+    except serial.SerialException as e:
+        logging.warning("GSIOC unavailable (%s) — starting without serial handshake.", e)
+        gsioc = None
 
     # Broker worker: lh_interface serves as both layout_plugin and lh_iface
     broker_worker = GilsonLHBrokerWorker(
