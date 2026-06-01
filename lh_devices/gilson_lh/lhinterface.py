@@ -220,7 +220,7 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
         # Register all Gilson LH methods in the lh_devices MethodRunner
         from .lhmethods import (GilsonTransferWithRinse, GilsonMixWithRinse, GilsonInjectWithRinse,
                                  GilsonSleep, GilsonPrime, GilsonQCMDLoadLoop, GilsonQCMDDirectInject,
-                                 GilsonFormulation, GilsonSoluteFormulation)
+                                 GilsonDirectInjectPrime, GilsonFormulation, GilsonSoluteFormulation)
         self.methods.update({
             'NCNR_TransferWithRinse': GilsonTransferWithRinse(self),
             'NCNR_MixWithRinse': GilsonMixWithRinse(self),
@@ -229,6 +229,7 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
             'NCNR_Prime': GilsonPrime(self),
             'ROADMAP_QCMD_LoadLoop': GilsonQCMDLoadLoop(self),
             'ROADMAP_QCMD_DirectInject': GilsonQCMDDirectInject(self),
+            'ROADMAP_DirectInjectPrime': GilsonDirectInjectPrime(self),
             'Formulation': GilsonFormulation(self),
             'SoluteFormulation': GilsonSoluteFormulation(self),
         })

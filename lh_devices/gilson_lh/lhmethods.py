@@ -671,11 +671,44 @@ class ROADMAP_QCMD_DirectInject(InjectMethod):
         return self.Volume + self.Extra_Volume
 
 
+class ROADMAP_DirectInjectPrime(BaseLHMethod):
+    """Flush direct injection line with carrier liquid"""
+    Volume: float = 3.0
+    Flow_Rate: float = 3.0
+    display_name: Literal['ROADMAP Direct Inject Prime'] = 'ROADMAP Direct Inject Prime'
+    method_name: Literal['ROADMAP_DirectInjectPrime'] = 'ROADMAP_DirectInjectPrime'
+    method_type: Literal[MethodType.NONE] = MethodType.NONE
+
+    class lh_method(BaseLHMethod.lh_method):
+        Volume: str
+        Flow_Rate: str
+
+    def render_lh_method(self, sample_name: str, sample_description: str,
+                         layout: LHBedLayout) -> List[BaseLHMethod.lh_method]:
+        return [self.lh_method(
+            SAMPLENAME=sample_name,
+            SAMPLEDESCRIPTION=sample_description,
+            METHODNAME=self.method_name,
+            Volume=f'{self.Volume}',
+            Flow_Rate=f'{self.Flow_Rate}',
+        ).to_dict()]
+
+    def estimated_time(self, layout: LHBedLayout) -> float:
+        return self.Volume / self.Flow_Rate
+
+    def execute(self, layout: LHBedLayout) -> MethodError | None:
+        layout.carrier_well.volume -= self.Volume
+        return None
+
+    def waste(self, layout: LHBedLayout) -> WasteItem:
+        return WasteItem(volume=self.Volume, composition=layout.carrier_well.composition)
+
+
 # Local class registry — used by LHMethodCluster for deserialization
 _LH_METHOD_CLASSES: dict[str, type] = {
     cls.model_fields['method_name'].default: cls
     for cls in [TransferWithRinse, MixWithRinse, InjectWithRinse, Sleep, Prime,
-                ROADMAP_QCMD_LoadLoop, ROADMAP_QCMD_DirectInject]
+                ROADMAP_QCMD_LoadLoop, ROADMAP_QCMD_DirectInject, ROADMAP_DirectInjectPrime]
 }
 
 
@@ -895,6 +928,14 @@ class GilsonQCMDDirectInject(GilsonLHMethod):
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
         name: str = 'ROADMAP_QCMD_DirectInject'
+
+
+class GilsonDirectInjectPrime(GilsonLHMethod):
+    _lh_method_class = ROADMAP_DirectInjectPrime
+
+    @dataclass
+    class MethodDefinition(MethodBase.MethodDefinition):
+        name: str = 'ROADMAP_DirectInjectPrime'
 
 
 class GilsonFormulation(GilsonLHMethod):
