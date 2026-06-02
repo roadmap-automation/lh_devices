@@ -85,12 +85,21 @@ class LHJob(JobBase):
             return len(self.LH_method_data['columns'])
 
     def get_results(self) -> List[ResultStatus]:
-        results = [ResultStatus.SUCCESS if ('completed successfully' in notification) else ResultStatus.FAIL
-                for result in self.results
-                for notification in result['sampleData']['resultNotifications']['notifications'].values()]
+        # Build a slot→latest-result map so retries override earlier failures.
+        # self.results is append-only (history preserved); last entry per slot wins.
+        by_slot: dict[int, dict] = {}
+        for result in self.results:
+            slot = int(result['sampleData']['runData'][0]['iteration']) - 1
+            by_slot[slot] = result
 
-        results += [ResultStatus.INCOMPLETE for _ in range(self.get_number_of_methods() - len(self.results))]
-
+        results = []
+        for slot in range(self.get_number_of_methods()):
+            if slot not in by_slot:
+                results.append(ResultStatus.INCOMPLETE)
+            else:
+                notifs = by_slot[slot]['sampleData']['resultNotifications']['notifications'].values()
+                all_ok = all('completed successfully' in n for n in notifs)
+                results.append(ResultStatus.SUCCESS if all_ok else ResultStatus.FAIL)
         return results
 
     def setup_method_data(self, sample_name: str, sample_description: str,
@@ -278,6 +287,7 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
         self._sync_update_job(job)
         await self._async_update_history()
         if job.get_result_status() == ResultStatus.SUCCESS:
+            self.has_error = False
             await self.deactivate()
         await asyncio.gather(*[cb(job, *args, **kwargs) for cb in self.results_callbacks])
         await self.trigger_update()
