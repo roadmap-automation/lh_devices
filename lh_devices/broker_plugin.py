@@ -404,6 +404,22 @@ class DeviceBrokerWorker:
         rk = message.routing_key or ""
         verb = rk.split(".")[-1]
 
+        if verb == "cancel_task":
+            task_id = str(envelope.task_id)
+            if task_id in self._pending:
+                pending_env = self._pending.pop(task_id)
+                logger.info("[%s] cancel_task for in-flight task %s — publishing task.failed.", self.device_id, task_id)
+                await self._emit(TASK_FAILED, pending_env, {"error": "Task cancelled by operator"})
+                # Stop the GSIOC trigger subscription loop if running.
+                done_event = self._method_done_events.pop(task_id, None)
+                if done_event is not None:
+                    done_event.set()
+                # Cancel the physical method asyncio task so on_cancel() releases devices.
+                channel_index = pending_env.assigned_channel if pending_env.assigned_channel is not None else 0
+                if channel_index < len(self.assembly.channels):
+                    self.assembly.channels[channel_index].method_runner.cancel_methods_by_id(task_id)
+            return
+
         if verb != "submit_task":
             logger.warning("[%s] Unknown command verb '%s'", self.device_id, verb)
             return
