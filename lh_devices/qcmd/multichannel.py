@@ -455,6 +455,8 @@ class QCMDMeasurementChannel(InjectionChannelBase):
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
+            if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
+                await self.throw_error('QCMD instrument is disconnected', critical=True)
             self.reserve_all()
             result = await self.qcmd.record(method.record_time * 60, method.sleep_time * 60)
             self.release_all()
@@ -480,6 +482,8 @@ class QCMDMeasurementChannel(InjectionChannelBase):
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
+            if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
+                await self.throw_error('QCMD instrument is disconnected', critical=True)
             self.reserve_all()
             result = await self.qcmd.record_tag(method.tag_name, method.record_time * 60, method.sleep_time * 60)
             self.release_all()
@@ -498,6 +502,8 @@ class QCMDMeasurementChannel(InjectionChannelBase):
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
+            if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
+                await self.throw_error('QCMD instrument is disconnected', critical=True)
             self.reserve_all()
             tag_name = repr(self.ch.well.composition)
             result = await self.qcmd.record_tag(tag_name, method.record_time * 60, method.sleep_time * 60)
@@ -644,6 +650,8 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
+            if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
+                await self.throw_error('QCMD instrument is disconnected', critical=True)
             self.reserve_all()
             await self.camera.capture()
             result = {'images': {'before': self.camera.image}}
