@@ -316,10 +316,10 @@ class QCMDMeasurementDevice(DeviceBase):
                                              'text': 'Interrupt',
                                              'visible': not self.idle},
                                 'set_sleep_time': {'type': 'textbox',
-                                                  'text': 'Set sleep time (s): ',
+                                                  'text': 'Set sleep time (min): ',
                                                   'visible': self.idle},
                                 'set_record_time': {'type': 'textbox',
-                                                  'text': 'Set record time (s): ',
+                                                  'text': 'Set record time (min): ',
                                                   'visible': self.idle},
                                                   }})
         
@@ -338,10 +338,10 @@ class QCMDMeasurementDevice(DeviceBase):
         if command == 'interrupt':
             self.interrupt()
         elif command == 'set_sleep_time':
-            self._sleep_time = float(data['value'])
+            self._sleep_time = float(data['value']) * 60
             await self.trigger_update()
         elif command == 'set_record_time':
-            self._record_time = float(data['value'])
+            self._record_time = float(data['value']) * 60
             await self.trigger_update()
         elif command == 'set_temperature':
             async def set_temp_and_update():
@@ -393,8 +393,8 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
         if command == 'add_tag':
             self.run_method('QCMDRecordTag', dict(tag_name=data['value'],
-                                                  record_time=self.qcmd._record_time,
-                                                  sleep_time=self.qcmd._sleep_time))
+                                                  record_time=self.qcmd._record_time / 60,
+                                                  sleep_time=self.qcmd._sleep_time / 60))
         elif command == 'start':
             self.run_method('QCMDStart', dict(description=data['value']))
 
@@ -425,14 +425,14 @@ class QCMDMeasurementChannel(InjectionChannelBase):
         class MethodDefinition(MethodBase.MethodDefinition):
 
             name: str = 'QCMDSleep'
-            sleep_time: float = 0.0
+            sleep_time: float = 0.0  # minutes
 
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
             self.reserve_all()
-            self.logger.info(f'{self.name}: Starting sleep for {method.sleep_time} s')
-            result = await self.qcmd.sleep(method.sleep_time)
+            self.logger.info(f'{self.name}: Starting sleep for {method.sleep_time} min')
+            result = await self.qcmd.sleep(method.sleep_time * 60)
             self.logger.info(f'{self.name}: Actual time slept {self.qcmd.result["total time"]} s')
             self.release_all()
 
@@ -442,21 +442,21 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
         @dataclass
         class MethodDefinition(MethodBase.MethodDefinition):
-            """Recording 
+            """Recording
 
             Args:
-                record_time (float, optional): Time to record in seconds. Defaults to 0.0.
-                sleep_time (float, optional): Time to sleep before recording in seconds. Defaults to 0.0.
+                record_time (float, optional): Time to record in minutes. Defaults to 0.0.
+                sleep_time (float, optional): Time to sleep before recording in minutes. Defaults to 0.0.
             """
             name: str = 'QCMDRecord'
-            record_time: float = 0.0
-            sleep_time: float = 0.0
+            record_time: float = 0.0  # minutes
+            sleep_time: float = 0.0   # minutes
 
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
             self.reserve_all()
-            result = await self.qcmd.record(method.record_time, method.sleep_time)
+            result = await self.qcmd.record(method.record_time * 60, method.sleep_time * 60)
             self.release_all()
 
             return result
@@ -469,19 +469,19 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             Args:
                 tag_name (str, optional): Tag name
-                record_time (float, optional): Time to record in seconds. Defaults to 0.0.
-                sleep_time (float, optional): Time to sleep before recording in seconds. Defaults to 0.0.
+                record_time (float, optional): Time to record in minutes. Defaults to 0.0.
+                sleep_time (float, optional): Time to sleep before recording in minutes. Defaults to 0.0.
             """
             name: str = 'QCMDRecordTag'
             tag_name: str = ''
-            record_time: float = 0.0
-            sleep_time: float = 0.0
+            record_time: float = 0.0  # minutes
+            sleep_time: float = 0.0   # minutes
 
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
             self.reserve_all()
-            result = await self.qcmd.record_tag(method.tag_name, method.record_time, method.sleep_time)
+            result = await self.qcmd.record_tag(method.tag_name, method.record_time * 60, method.sleep_time * 60)
             self.release_all()
 
             return result
@@ -492,15 +492,15 @@ class QCMDMeasurementChannel(InjectionChannelBase):
         class MethodDefinition(MethodBase.MethodDefinition):
 
             name: str = 'QCMDRecordCurrent'
-            record_time: float = 0.0
-            sleep_time: float = 0.0
+            record_time: float = 0.0  # minutes
+            sleep_time: float = 0.0   # minutes
 
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
             self.reserve_all()
             tag_name = repr(self.ch.well.composition)
-            result = await self.qcmd.record_tag(tag_name, method.record_time, method.sleep_time)
+            result = await self.qcmd.record_tag(tag_name, method.record_time * 60, method.sleep_time * 60)
             self.release_all()
 
             return result
@@ -633,13 +633,13 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
 
             Args:
                 tag_name (str, optional): Tag name
-                record_time (float, optional): Time to record in seconds. Defaults to 0.0.
-                sleep_time (float, optional): Time to sleep before recording in seconds. Defaults to 0.0.
+                record_time (float, optional): Time to record in minutes. Defaults to 0.0.
+                sleep_time (float, optional): Time to sleep before recording in minutes. Defaults to 0.0.
             """
             name: str = 'QCMDRecordTag'
             tag_name: str = ''
-            record_time: float = 0.0
-            sleep_time: float = 0.0
+            record_time: float = 0.0  # minutes
+            sleep_time: float = 0.0   # minutes
 
         async def run(self, **kwargs):
 
@@ -647,7 +647,7 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
             self.reserve_all()
             await self.camera.capture()
             result = {'images': {'before': self.camera.image}}
-            method_result = await self.qcmd.record_tag(method.tag_name, method.record_time, method.sleep_time)
+            method_result = await self.qcmd.record_tag(method.tag_name, method.record_time * 60, method.sleep_time * 60)
             print(method_result)
             result = result | method_result
             print(result)
