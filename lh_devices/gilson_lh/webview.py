@@ -32,6 +32,7 @@ def get_routes(lh_iface: LHInterface) -> web.RouteTableDef:
     # ------------------------------------------------------------------
 
     @routes.get('/LH/GetJob/{job_id}')
+    @routes.get('/LH/GetJob/{job_id}/')
     async def GetJob(request: web.Request) -> web.Response:
         job_id = request.match_info['job_id']
         with LHJobHistory() as history:
@@ -41,11 +42,13 @@ def get_routes(lh_iface: LHInterface) -> web.RouteTableDef:
         return _json({'error': f'job {job_id} does not exist'}, 400)
 
     @routes.get('/LH/GetActiveJob')
+    @routes.get('/LH/GetActiveJob/')
     async def GetActiveJob(request: web.Request) -> web.Response:
         job = lh_iface.get_active_job()
         return _json({'active_job': job.model_dump() if job is not None else None})
 
     @routes.get('/LH/GetState')
+    @routes.get('/LH/GetState/')
     async def GetState(request: web.Request) -> web.Response:
         return _json({
             'active_job': lh_iface._active_job.model_dump() if lh_iface._active_job is not None else None,
@@ -53,12 +56,14 @@ def get_routes(lh_iface: LHInterface) -> web.RouteTableDef:
         })
 
     @routes.get('/LH/GetListofSampleLists')
+    @routes.get('/LH/GetListofSampleLists/')
     async def GetListofSampleLists(request: web.Request) -> web.Response:
         job: LHJob | None = lh_iface.get_active_job()
         sample_list = [] if job is None else [job.get_method_data(listonly=True)]
         return _json({'sampleLists': sample_list})
 
     @routes.get('/LH/GetSampleList/{sample_list_id}')
+    @routes.get('/LH/GetSampleList/{sample_list_id}/')
     async def GetSampleList(request: web.Request) -> web.Response:
         sample_list_id = request.match_info['sample_list_id']
         job = lh_iface.get_active_job()
@@ -73,6 +78,7 @@ def get_routes(lh_iface: LHInterface) -> web.RouteTableDef:
     # ------------------------------------------------------------------
 
     @routes.post('/LH/CheckFormulation')
+    @routes.post('/LH/CheckFormulation/')
     async def CheckFormulation(request: web.Request) -> web.Response:
         data = await request.json()
         try:
@@ -96,6 +102,7 @@ def get_routes(lh_iface: LHInterface) -> web.RouteTableDef:
     # ------------------------------------------------------------------
 
     @routes.post('/LH/PutSampleListValidation/{sample_list_id}')
+    @routes.post('/LH/PutSampleListValidation/{sample_list_id}/')
     async def PutSampleListValidation(request: web.Request) -> web.Response:
         sample_list_id = request.match_info['sample_list_id']
         data = await request.json()
@@ -125,6 +132,7 @@ def get_routes(lh_iface: LHInterface) -> web.RouteTableDef:
     # ------------------------------------------------------------------
 
     @routes.post('/LH/PutSampleData')
+    @routes.post('/LH/PutSampleData/')
     async def PutSampleData(request: web.Request) -> web.Response:
         data = await request.json()
         assert isinstance(data, dict)
@@ -156,18 +164,21 @@ def get_routes(lh_iface: LHInterface) -> web.RouteTableDef:
     # ------------------------------------------------------------------
 
     @routes.post('/LH/ReportError')
+    @routes.post('/LH/ReportError/')
     async def ReportError(request: web.Request) -> web.Response:
         data = await request.json()
         await lh_iface.throw_error('Error in results. Full message: ' + repr(data))
         return _json({'data': data})
 
     @routes.post('/LH/ResetErrorState')
+    @routes.post('/LH/ResetErrorState/')
     async def ResetErrorState(request: web.Request) -> web.Response:
         lh_iface.has_error = False
         await lh_iface.trigger_update()
         return _json({'success': 'error state reset'})
 
     @routes.post('/LH/ResubmitActiveJob')
+    @routes.post('/LH/ResubmitActiveJob/')
     async def ResubmitActiveJob(request: web.Request) -> web.Response:
         if lh_iface._active_job is None:
             return _json({'error': 'no active job'}, 400)
@@ -176,12 +187,14 @@ def get_routes(lh_iface: LHInterface) -> web.RouteTableDef:
         return _json({'success': f'LH_id incremented to {lh_iface._active_job.LH_id}'})
 
     @routes.post('/LH/Deactivate')
+    @routes.post('/LH/Deactivate/')
     async def Deactivate(request: web.Request) -> web.Response:
         await lh_iface.deactivate()
         await lh_iface.trigger_update()
         return _json({'success': 'deactivated'})
 
     @routes.post('/LH/PauseResume')
+    @routes.post('/LH/PauseResume/')
     async def PauseResume(request: web.Request) -> web.Response:
         lh_iface.running = not lh_iface.running
         await lh_iface.trigger_update()
