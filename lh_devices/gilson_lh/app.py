@@ -53,6 +53,7 @@ async def run():
         ))
         gsioc.logger.setLevel(logging.DEBUG)
         gsioc.logger.addHandler(_gsioc_handler)
+        gsioc.logger.propagate = False
     except serial.SerialException as e:
         logging.warning("GSIOC unavailable (%s) — starting without serial handshake.", e)
         gsioc = None
