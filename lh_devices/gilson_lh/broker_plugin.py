@@ -251,7 +251,7 @@ class GilsonLHBrokerWorker:
 
         Holds gsioc.client_lock so the listener delivers commands via message_queue.
         Commands handled:
-          'Q' — IS busy query: responds BUSY if a task is active, ok otherwise.
+          'Q' — IS busy query: responds 'waiting' if a task is active (IS is at hold point), 'idle' otherwise.
           'T' — trigger: publishes gsioc.trigger.<task_id>, responds ok.
           'V' — dead volume: waits for gsioc.dead_volume.<task_id> from IS via broker,
                 then responds with the value. Safely blocks here — the serial listener
@@ -266,7 +266,7 @@ class GilsonLHBrokerWorker:
                     data: GSIOCMessage = await self._gsioc.message_queue.get()
 
                     if data.data == 'Q':
-                        response = 'BUSY' if self._current_gsioc_task_id else 'ok'
+                        response = 'waiting' if self._current_gsioc_task_id else 'idle'
                         await self._gsioc.response_queue.put(response)
 
                     elif data.data == 'T':
