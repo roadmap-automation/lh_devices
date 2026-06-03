@@ -180,6 +180,10 @@ async def run_injection_system():
 
 if __name__ == '__main__':
 
+    import sys
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     logging.basicConfig(handlers=[
                         logging.FileHandler(LOG_PATH / (datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_injection_log.txt')),
                         logging.StreamHandler()
