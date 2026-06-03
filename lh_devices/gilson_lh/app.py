@@ -43,6 +43,16 @@ async def run():
     # GSIOC serial connection (Trilution ↔ gilson_lh ↔ broker)
     try:
         gsioc = GSIOC(62, 'COM13', 19200)
+        _gsioc_handler = logging.FileHandler(
+            LOG_PATH / (datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_gsioc_log.txt')
+        )
+        _gsioc_handler.setLevel(logging.DEBUG)
+        _gsioc_handler.setFormatter(logging.Formatter(
+            '%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+        ))
+        gsioc.logger.setLevel(logging.DEBUG)
+        gsioc.logger.addHandler(_gsioc_handler)
     except serial.SerialException as e:
         logging.warning("GSIOC unavailable (%s) — starting without serial handshake.", e)
         gsioc = None
