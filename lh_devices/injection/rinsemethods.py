@@ -9,7 +9,7 @@ from typing import Coroutine
 
 from ..assemblies import Mode
 from ..bubblesensor import BubbleSensorBase
-from ..methods import MethodBase
+from ..methods import MethodBase, MethodBasewithCompositionRelay
 from ..rinse.rinsesystem import RinseSystem
 from ..waste import WasteInterfaceBase, WasteItem, Composition, WATER
 
@@ -17,7 +17,7 @@ from .channel import RoadmapChannelBase
 
 # TODO: check for mL/uL conflicts, waste accounting, check stopping of methods, etc.
 
-class RinseLoadLoop(MethodBase):
+class RinseLoadLoop(MethodBasewithCompositionRelay):
     """Loads the loop of one ROADMAP channel
     """
 
@@ -57,7 +57,14 @@ class RinseLoadLoop(MethodBase):
         method = self.MethodDefinition(**kwargs)
 
         composition = Composition.model_validate(method.composition)
-        target_well = self.rinse_system.get_well(composition)
+        try:
+            target_well = self.rinse_system.get_well(composition)
+        except IndexError:
+            self.release_all()
+            await self.throw_error(
+                f'{method.name}: composition not found in rinse system layout: {composition.model_dump()}',
+                critical=True,
+            )
 
         air_gap = float(method.air_gap) * 1000
         pump_volume = float(method.pump_volume) * 1000
@@ -120,9 +127,10 @@ class RinseLoadLoop(MethodBase):
         await self.traverse_loop(method)
 
         # switch to standby mode
-        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')
         await self.channel.change_mode('Standby')
 
+        self.emit_composition(composition)
         self.release_all()
 
 class RinseLoadLoopBubbleSensor(RinseLoadLoop):
@@ -243,7 +251,7 @@ class RinseDirectInjectPrime(MethodBase):
 
         self.release_all()
 
-class RinseDirectInject(MethodBase):
+class RinseDirectInject(MethodBasewithCompositionRelay):
     """Directly inject from LH to a ROADMAP channel flow cell
     """
 
@@ -274,7 +282,14 @@ class RinseDirectInject(MethodBase):
         method = self.MethodDefinition(**kwargs)
 
         composition = Composition.model_validate(method.composition)
-        target_well = self.rinse_system.get_well(composition)
+        try:
+            target_well = self.rinse_system.get_well(composition)
+        except IndexError:
+            self.release_all()
+            await self.throw_error(
+                f'{method.name}: composition not found in rinse system layout: {composition.model_dump()}',
+                critical=True,
+            )
 
         air_gap = float(method.air_gap) * 1000
         pump_volume = float(method.pump_volume) * 1000
@@ -334,12 +349,13 @@ class RinseDirectInject(MethodBase):
 
 
         # switch to standby mode
-        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')
         await self.channel.change_mode('Standby')
 
+        self.emit_composition(composition)
         self.release_all()
 
-class RinseDirectInjectBubbleSensor(MethodBase):
+class RinseDirectInjectBubbleSensor(MethodBasewithCompositionRelay):
     """Directly inject from LH to measurement system through distribution valve and injection system, using bubble sensors to direct flow.
     """
 
@@ -378,7 +394,14 @@ class RinseDirectInjectBubbleSensor(MethodBase):
         method = self.MethodDefinition(**kwargs)
 
         composition = Composition.model_validate(method.composition)
-        target_well = self.rinse_system.get_well(composition)
+        try:
+            target_well = self.rinse_system.get_well(composition)
+        except IndexError:
+            self.release_all()
+            await self.throw_error(
+                f'{method.name}: composition not found in rinse system layout: {composition.model_dump()}',
+                critical=True,
+            )
 
         air_gap = float(method.air_gap) * 1000
         pump_volume = float(method.pump_volume) * 1000
@@ -450,9 +473,10 @@ class RinseDirectInjectBubbleSensor(MethodBase):
             await self.waste_tracker.submit_carrier(self.rinse_system.layout.carrier_well, (dead_volume + rinse_volume + rinse_aspirate_dead_volume) / 1000)
         
         # switch to standby mode
-        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')
         await self.channel.change_mode('Standby')
 
+        self.emit_composition(composition)
         self.release_all()
 
     async def dispense_with_monitor(self, bubble_sensor: BubbleSensorBase, volume: float, flow_rate: float, min_pump_volume: float = 0) -> float:
