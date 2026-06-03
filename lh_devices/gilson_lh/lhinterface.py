@@ -286,10 +286,9 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
     async def update_job_result(self, job: LHJob, *args, **kwargs) -> None:
         self._sync_update_job(job)
         await self._async_update_history()
-        await asyncio.gather(*[cb(job, *args, **kwargs) for cb in self.results_callbacks])
         if job.get_result_status() == ResultStatus.SUCCESS:
             self.has_error = False
-            await self.deactivate()
+        await asyncio.gather(*[cb(job, *args, **kwargs) for cb in self.results_callbacks])
         await self.trigger_update()
 
     async def update_job_validation(self, job: LHJob, *args, **kwargs) -> None:

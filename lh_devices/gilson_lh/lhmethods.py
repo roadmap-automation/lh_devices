@@ -857,6 +857,7 @@ class GilsonLHMethod(MethodBase):
                 self.lh_iface.validation_callbacks.remove(_on_validation)
             if _on_result in self.lh_iface.results_callbacks:
                 self.lh_iface.results_callbacks.remove(_on_result)
+            await self.lh_iface.deactivate()
 
     async def run(self, sample_id: str = '', task_id: str | None = None, **kwargs) -> dict:
         layout = self.lh_iface.layout
