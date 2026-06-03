@@ -115,14 +115,21 @@ class QCMDMeasurementDevice(DeviceBase):
 
     def _remaining_time_formatted(self) -> tuple[str | None, str | None]:
         time_elapsed = time.time() - self._start if self._start is not None else 0.0
+        sleep_time = self._sleep_time or 0.0
+        record_time = self._record_time or 0.0
 
-        sleep_time_remaining = max(0.0, self._sleep_time - time_elapsed)
-        fmt_sleep = time.strftime('%H:%M:%S' if sleep_time_remaining // 3600 else '%M:%S', time.gmtime(sleep_time_remaining)) if sleep_time_remaining > 0 else None
+        sleep_time_remaining = max(0.0, sleep_time - time_elapsed)
+        record_time_remaining = max(0.0, min(record_time + sleep_time - time_elapsed, record_time))
 
-        record_time_remaining = max(0.0, min(self._record_time + self._sleep_time - time_elapsed, self._record_time))
-        fmt_record = time.strftime('%H:%M:%S' if record_time_remaining // 3600 else '%M:%S', time.gmtime(record_time_remaining)) if record_time_remaining > 0 else None
+        def _fmt(seconds: float) -> str | None:
+            if seconds <= 0:
+                return None
+            try:
+                return time.strftime('%H:%M:%S' if seconds // 3600 else '%M:%S', time.gmtime(seconds))
+            except (OverflowError, OSError):
+                return None
 
-        return fmt_sleep, fmt_record
+        return _fmt(sleep_time_remaining), _fmt(record_time_remaining)
 
     async def _post(self, post_data: dict, wait: bool = True) -> dict | None:
         """Posts data to self.url
@@ -278,7 +285,7 @@ class QCMDMeasurementDevice(DeviceBase):
         self._sleep_time = float(sleep_time)
 
         result = await self._record_with_monitor()
-        self._sleep_time = None
+        self._sleep_time = 0.0
 
         return result
 
@@ -458,7 +465,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
                 await self.throw_error('QCMD instrument is disconnected', critical=True)
             self.reserve_all()
-            result = await self.qcmd.record(method.record_time * 60, method.sleep_time * 60)
+            result = await self.qcmd.record(float(method.record_time or 0) * 60, float(method.sleep_time or 0) * 60)
             self.release_all()
 
             return result
@@ -485,7 +492,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
                 await self.throw_error('QCMD instrument is disconnected', critical=True)
             self.reserve_all()
-            result = await self.qcmd.record_tag(method.tag_name, method.record_time * 60, method.sleep_time * 60)
+            result = await self.qcmd.record_tag(method.tag_name, float(method.record_time or 0) * 60, float(method.sleep_time or 0) * 60)
             self.release_all()
 
             return result
@@ -506,7 +513,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
                 await self.throw_error('QCMD instrument is disconnected', critical=True)
             self.reserve_all()
             tag_name = repr(self.ch.well.composition)
-            result = await self.qcmd.record_tag(tag_name, method.record_time * 60, method.sleep_time * 60)
+            result = await self.qcmd.record_tag(tag_name, float(method.record_time or 0) * 60, float(method.sleep_time or 0) * 60)
             self.release_all()
 
             return result
@@ -655,7 +662,7 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
             self.reserve_all()
             await self.camera.capture()
             result = {'images': {'before': self.camera.image}}
-            method_result = await self.qcmd.record_tag(method.tag_name, method.record_time * 60, method.sleep_time * 60)
+            method_result = await self.qcmd.record_tag(method.tag_name, float(method.record_time or 0) * 60, float(method.sleep_time or 0) * 60)
             print(method_result)
             result = result | method_result
             print(result)
