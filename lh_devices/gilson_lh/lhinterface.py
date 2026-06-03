@@ -347,6 +347,9 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
         d = await AutocontrolPlugin.get_info(self)
         d.update(await DeviceBase.get_info(self))
 
+        # Mirror has_error into DeviceBase.error so roadmap.html shows the red border.
+        d['state']['error']['error'] = 'LH error' if self.has_error else None
+
         status = self.get_status()
         d['lh_status'] = status
         d['active_job'] = self._active_job.model_dump() if self._active_job is not None else None
