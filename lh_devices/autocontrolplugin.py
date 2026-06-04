@@ -3,7 +3,6 @@ import json
 from aiohttp.web_app import Application as Application
 from aiohttp import web
 
-from dataclasses import asdict
 from pathlib import Path
 
 from autocontrol.status import Status
@@ -58,4 +57,4 @@ class AutocontrolPlugin(MethodPlugin, DatabasePlugin):
         if record is None:
             return web.Response(text=f'error: id {task_id} does not exist', status=400)
 
-        return web.json_response(asdict(record))
+        return web.json_response({"data": record.result})
