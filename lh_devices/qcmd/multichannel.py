@@ -440,7 +440,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
             self.reserve_all()
             self.logger.info(f'{self.name}: Starting sleep for {method.sleep_time} min')
             result = await self.qcmd.sleep(method.sleep_time * 60)
-            self.logger.info(f'{self.name}: Actual time slept {self.qcmd.result["total time"]} s')
+            self.logger.info(f'{self.name}: Actual time slept {result["total time"]} s')
             self.release_all()
 
             return result
