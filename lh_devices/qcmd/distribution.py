@@ -254,8 +254,7 @@ class QCMDDistributionAssembly(NestedAssemblyBase, AssemblyBase):
         @routes.get('/GetTaskData')
         async def get_task(request: web.Request) -> web.Response:
             # TODO: turn task into a dataclass; parsing will change
-            task = await request.json()
-            task_id = task['id']
+            task_id = request.rel_url.query.get('task_id', '')
 
             # TODO: actually return task data
             # TODO: Determine what task data we want to save. Logging? success? Any returned errors?
