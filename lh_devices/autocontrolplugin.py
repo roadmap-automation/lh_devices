@@ -58,4 +58,4 @@ class AutocontrolPlugin(MethodPlugin, DatabasePlugin):
         if record is None:
             return web.Response(text=f'error: id {task_id} does not exist', status=400)
 
-        return web.Response(text=json.dumps(asdict(record)), status=200)
+        return web.json_response(asdict(record))
