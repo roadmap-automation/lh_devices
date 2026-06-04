@@ -611,6 +611,7 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
         self.devices += [camera]
 
         self.register('QCMDRecordTag', self.QCMDRecordTagwithCamera(self, qcmd, camera), task_type='measure')
+        self.register('QCMDRecordCurrent', self.QCMDRecordCurrentwithCamera(self, qcmd, camera), task_type='measure')
         self.register('QCMDCaptureImage', self.QCMDCaptureImage(self, qcmd, camera), task_type='measure')
 
     class QCMDMethodBasewithCamera(QCMDMeasurementChannel.QCMDMethodBase):
@@ -666,6 +667,32 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
             print(method_result)
             result = result | method_result
             print(result)
+            await self.camera.capture()
+            result['images'].update({'after': self.camera.image})
+            self.release_all()
+
+            return result
+
+    class QCMDRecordCurrentwithCamera(QCMDMethodBasewithCamera):
+
+        @dataclass
+        class MethodDefinition(MethodBase.MethodDefinition):
+
+            name: str = 'QCMDRecordCurrent'
+            record_time: float = 0.0  # minutes
+            sleep_time: float = 0.0   # minutes
+
+        async def run(self, **kwargs):
+
+            method = self.MethodDefinition(**kwargs)
+            if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
+                await self.throw_error('QCMD instrument is disconnected', critical=True)
+            self.reserve_all()
+            tag_name = repr(self.ch.well.composition)
+            await self.camera.capture()
+            result = {'images': {'before': self.camera.image}}
+            method_result = await self.qcmd.record_tag(tag_name, float(method.record_time or 0) * 60, float(method.sleep_time or 0) * 60)
+            result = result | method_result
             await self.camera.capture()
             result['images'].update({'after': self.camera.image})
             self.release_all()
