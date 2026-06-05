@@ -222,13 +222,6 @@ class GilsonLHBrokerWorker:
         if dead_volume_task is not None:
             dead_volume_task.cancel()
             self._current_gsioc_task_id = None
-            # Unblock _gsioc_client_loop if it's frozen at _dead_volume_event.wait()
-            # waiting for a value that will never arrive (task failed mid-V).
-            # Without this the serial listener hangs at response_queue.get() until
-            # the process is restarted.
-            if not self._dead_volume_event.is_set():
-                self._dead_volume_value = 'error'
-                self._dead_volume_event.set()
 
         if result.result.get('error'):
             await self._emit(TASK_FAILED, envelope, {'error': result.result['error']})
@@ -300,8 +293,13 @@ class GilsonLHBrokerWorker:
                         await self._gsioc.response_queue.put('ok')
 
                     elif data.data == 'V':
-                        await self._dead_volume_event.wait()
-                        await self._gsioc.response_queue.put(self._dead_volume_value)
+                        try:
+                            await asyncio.wait_for(self._dead_volume_event.wait(), timeout=300.0)
+                            response = self._dead_volume_value
+                        except asyncio.TimeoutError:
+                            logger.warning("[%s] Timed out waiting for dead volume — responding with error.", self.device_id)
+                            response = 'error'
+                        await self._gsioc.response_queue.put(response)
                         self._dead_volume_event.clear()
                         self._dead_volume_value = ''
 
