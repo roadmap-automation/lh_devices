@@ -833,6 +833,7 @@ class GilsonLHMethod(MethodBase):
             if self.lh_iface._job_cancelled.is_set():
                 raise Exception('Job cancelled by operator')
             if 'error' in error_holder:
+                await self.lh_iface.throw_error(error_holder['error'])
                 raise Exception(error_holder['error'])
             # Collect waste BEFORE execute (pre-mutation layout state)
             waste_items = []
