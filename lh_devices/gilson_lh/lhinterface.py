@@ -335,9 +335,9 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
     async def deactivate(self) -> None:
         if self._active_job is not None:
             self._job_cancelled.set()
-        await self._async_update_history()
         self._active_job = None
         self.idle = True
+        await self._async_update_history()
 
     # ------------------------------------------------------------------
     # get_info — merge AutocontrolPlugin (active_methods) + DeviceBase (state/controls)

@@ -805,7 +805,8 @@ class GilsonLHMethod(MethodBase):
 
         async def _on_validation(val_job, validation_status, *args, **kwargs) -> None:
             if val_job.id == job.id and validation_status != ValidationStatus.SUCCESS:
-                error_holder['error'] = 'Validation failed'
+                detail = val_job.validation
+                error_holder['error'] = f'Validation failed: {detail}'
                 done.set()
 
         async def _on_result(result_job, *args, **kwargs) -> None:
