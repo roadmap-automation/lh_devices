@@ -845,6 +845,7 @@ class GilsonLHMethod(MethodBase):
             # Mutate layout
             completed_job = captured_job[0] if captured_job else job
             completed_job.execute_methods(self.lh_iface.layout)
+            await self.lh_iface.trigger_layout_update()
             # Resolved composition post-mutation
             result: dict = {'waste': waste_items}
             try:
