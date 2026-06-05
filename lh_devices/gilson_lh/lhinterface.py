@@ -107,11 +107,12 @@ class LHJob(JobBase):
         createdDate = datetime.now().strftime(DATE_FORMAT)
         method_list = [m2 for m in lh_methods
                        for m2 in m.render_lh_method(sample_name, sample_description, layout)]
-        all_columns = set.union(*(set(m.keys()) for m in method_list)) if method_list else set()
+        # Build canonical field order from first-appearance across all rows (dict preserves insertion order).
+        canonical: dict = {}
         for m in method_list:
-            for column in all_columns:
-                if column not in m:
-                    m[column] = None
+            canonical.update(dict.fromkeys(m))
+        # Rebuild every row with identical key order, filling gaps with None.
+        method_list = [{k: m.get(k) for k in canonical} for m in method_list]
         self.LH_method_data = SampleList(
             name=sample_name,
             id='0',  # placeholder; updated to real LH_id in _sync_activate_job
