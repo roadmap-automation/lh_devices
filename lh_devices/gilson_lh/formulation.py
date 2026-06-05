@@ -3,7 +3,7 @@ import logging
 import numpy as np
 from pydantic import Field
 
-from .lhmethods import MixWithRinse, TransferWithRinse, LHMethodCluster, MethodContainer, MethodsType
+from .lhmethods import MixWithRinse, TransferWithRinse, LHMethodCluster, MethodContainer, MethodType, MethodsType
 
 from lh_devices.core.bedlayout import Composition, LHBedLayout, Well, WellLocation
 from .reservation import reservation_store
@@ -39,6 +39,7 @@ class Formulation(MethodContainer):
 
     method_name: Literal['Formulation'] = 'Formulation'
     display_name: Literal['Formulation'] = 'Formulation'
+    method_type: Literal[MethodType.PREPARE] = MethodType.PREPARE
     target_composition: Composition = Field(default_factory=Composition)
     target_volume: float = 0.0
     Target: WellLocation = Field(default_factory=WellLocation)
