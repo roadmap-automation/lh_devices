@@ -92,6 +92,20 @@ class WellReservationStore:
         """Look up a reservation by (sample_id, uuid)."""
         return self._lookup(sample_id, uuid)
 
+    def is_claimed(self, rack_id: str, well_number: int) -> bool:
+        """Return True if this well is actively claimed by any sample.
+
+        Used to guard against reusing a Mix well that belongs to an in-flight
+        subprotocol. An orphaned well (released from DB but well.id still set
+        in the layout) returns False and is safe to reuse.
+        """
+        with sqlite3.connect(self.db_path) as db:
+            row = db.execute(
+                "SELECT 1 FROM reservations WHERE kind='claim' AND rack_id=? AND well_number=?",
+                (rack_id, well_number),
+            ).fetchone()
+        return row is not None
+
     def release_sample(self, sample_id: str) -> None:
         """Remove all reservations for sample_id. Called on SUBPROTOCOL_COMPLETED."""
         with sqlite3.connect(self.db_path) as db:

@@ -16,6 +16,15 @@ from lh_devices.core.formulation import (
 )
 
 
+def _solutes_match(target: Composition, candidate: Composition) -> bool:
+    """Return True if candidate has exactly the same solutes as target (solvents ignored)."""
+    target_solutes = {s.name: s for s in target.solutes if s.concentration > 0}
+    candidate_solutes = {s.name: s for s in candidate.solutes if s.concentration > 0}
+    if set(target_solutes) != set(candidate_solutes):
+        return False
+    return all(target_solutes[name] == candidate_solutes[name] for name in target_solutes)
+
+
 def get_all_wells_in_zones(layout: LHBedLayout, include_zones: List[str]) -> List[Well]:
     """Returns all wells in the layout belonging to the specified zones (matched by rack_id)."""
     return [w for rack in layout.racks.values()
@@ -52,6 +61,20 @@ class Formulation(MethodContainer):
 
     _formulation_results: Tuple[List[float], List[Well], bool] | None = None
 
+    def _available_wells(self, layout: LHBedLayout) -> List[Well]:
+        """Wells in include_zones, excluding any actively claimed by another sample."""
+        return [
+            w for w in get_all_wells_in_zones(layout, self.include_zones)
+            if not reservation_store.is_claimed(w.rack_id, w.well_number)
+        ]
+
+    def _solve(self, layout: LHBedLayout, target_volume: float) -> Dict[str, Any]:
+        """Run the core solver against available (non-claimed) wells."""
+        return _solve_formulation_core(
+            self._available_wells(layout), layout,
+            self.target_composition, target_volume, self.exact_match,
+        )
+
     def _inflated_target(self, layout: LHBedLayout) -> float:
         """Volume to prepare when mixing is needed: accounts for mix overhead, inject overhead,
         and the target well's rack minimum volume."""
@@ -62,14 +85,7 @@ class Formulation(MethodContainer):
 
     def formulate(self, layout: LHBedLayout) -> Tuple[List[float], List[Well], bool]:
         # Pass 1: check if the composition already exists at injection-overhead-adjusted volume.
-        # The core solver adds rack_min_source internally when verifying each source well.
-        result = solve_formulation(
-            layout=layout,
-            target_composition=self.target_composition,
-            target_volume=self.target_volume + self.Extra_Volume,
-            exact_match=self.exact_match,
-            include_zones=self.include_zones,
-        )
+        result = self._solve(layout, self.target_volume + self.Extra_Volume)
 
         if result['success'] and len(result['wells']) == 1:
             # Case (a): composition exists in one well; inject overhead already accounted for.
@@ -83,14 +99,7 @@ class Formulation(MethodContainer):
             return self._formulation_results
 
         # Case (b): mixing needed — re-solve with fully inflated target volume.
-        # Inflated = target_volume + rack_min_mix + Extra_Volume_mix + Extra_Volume_inject
-        result2 = solve_formulation(
-            layout=layout,
-            target_composition=self.target_composition,
-            target_volume=self._inflated_target(layout),
-            exact_match=self.exact_match,
-            include_zones=self.include_zones,
-        )
+        result2 = self._solve(layout, self._inflated_target(layout))
         if not result2['success']:
             logging.error(result2['error'])
         self._formulation_results = result2['volumes'], result2['wells'], result2['success']
@@ -196,12 +205,24 @@ class SoluteFormulation(Formulation):
     diluent: Composition = Field(default_factory=Composition)
 
     def formulate(self, layout: LHBedLayout) -> Tuple[List[float], List[Well], bool]:
-        # SoluteFormulation always involves ≥2 transfers (solutes + diluent), so always case (b).
-        # Solve directly at the inflated volume to keep the diluent top-up consistent.
+        # Pass 0: check if the required solute composition already exists in a single well.
+        # Solvent/diluent content is irrelevant — only solute concentrations must match.
+        # Skips any well that is actively claimed by an in-flight subprotocol.
+        if self.target_composition.solutes:
+            needed = self.target_volume + self.Extra_Volume
+            for well in self._available_wells(layout):
+                rack_min = layout.racks[well.rack_id].min_volume
+                if well.volume >= needed + rack_min and _solutes_match(self.target_composition, well.composition):
+                    self._formulation_results = [needed], [well], True
+                    logging.info('SoluteFormulation: existing well satisfies solute requirements: %s', well)
+                    return self._formulation_results
+
+        # Mixing path: solutes + diluent top-up, always ≥2 transfers.
+        # Solve at inflated volume to keep the diluent top-up consistent.
         inflated = self._inflated_target(layout)
 
         result = _solve_formulation_core(
-            wells=get_all_wells_in_zones(layout, self.include_zones),
+            wells=self._available_wells(layout),
             layout=layout,
             target_composition=self.target_composition,
             target_volume=inflated,
@@ -216,7 +237,7 @@ class SoluteFormulation(Formulation):
         volumes, wells = result['volumes'], result['wells']
 
         diluent_well = next(
-            (w for w in self.get_all_wells(layout) if w.composition == self.diluent),
+            (w for w in self._available_wells(layout) if w.composition == self.diluent),
             None,
         )
         if diluent_well is None:
