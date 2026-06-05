@@ -181,6 +181,8 @@ class DeviceBrokerWorker:
         self._amqp_channel: Optional[aio_pika.abc.AbstractChannel] = None
         # Filled in during start() so BrokerWasteInterface can publish.
         self.waste_interface: Optional['BrokerWasteInterface'] = None
+        # Active dead-volume relay tasks keyed by task_id; cancelled on method completion.
+        self._relay_tasks: dict[str, asyncio.Task] = {}
 
     # ------------------------------------------------------------------
     # Startup
@@ -314,25 +316,31 @@ class DeviceBrokerWorker:
     # ------------------------------------------------------------------
 
     async def _relay_dead_volume(self, method: 'MethodBasewithBrokerTrigger', task_id: str) -> None:
-        """Await the dead volume value from the method and publish it to the broker.
+        """Relay every dead volume value the method puts in its queue to the broker.
 
-        gilson_lh subscribes to gsioc.dead_volume.<task_id> and returns the value
-        in response to Trilution's 'V' GSIOC query.
+        Loops until cancelled (by _completion_callback when the method finishes).
+        Most methods put exactly one value (the physical dead volume in µL).
+        DirectInjectBubbleSensor puts repeated 0/1 sensor readings during
+        air-gap traversal, so all values must be forwarded — not just the first.
+
+        gilson_lh subscribes to gsioc.dead_volume.<task_id> and returns each
+        value in response to Trilution's 'V' GSIOC query.
         """
+        rk = gsioc_dead_volume_key(task_id)
         try:
-            dead_volume = await method.dead_volume.get()
+            while True:
+                dead_volume = await method.dead_volume.get()
+                if self._exchange is None:
+                    continue
+                msg = build(
+                    device_id=self.device_id,
+                    routing_key=rk,
+                    payload={"dead_volume": dead_volume},
+                )
+                await publish(self._exchange, rk, msg)
+                logger.debug("[%s] dead_volume relayed for task %s: %s", self.device_id, task_id, dead_volume)
         except asyncio.CancelledError:
             return
-        if self._exchange is None:
-            return
-        rk = gsioc_dead_volume_key(task_id)
-        msg = build(
-            device_id=self.device_id,
-            routing_key=rk,
-            payload={"dead_volume": dead_volume},
-        )
-        await publish(self._exchange, rk, msg)
-        logger.debug("[%s] dead_volume %.2f relayed for task %s.", self.device_id, dead_volume, task_id)
 
     async def _await_gsioc_triggers(
         self, method: 'MethodBasewithBrokerTrigger', task_id: str, done_event: asyncio.Event
@@ -474,7 +482,9 @@ class DeviceBrokerWorker:
         if isinstance(method_instance, MethodBasewithBrokerTrigger):
             done_event = asyncio.Event()
             self._method_done_events[task_id] = done_event
-            asyncio.create_task(self._relay_dead_volume(method_instance, task_id))
+            self._relay_tasks[task_id] = asyncio.create_task(
+                self._relay_dead_volume(method_instance, task_id)
+            )
             asyncio.create_task(self._await_gsioc_triggers(method_instance, task_id, done_event))
 
         # If the method calls receive_composition(), subscribe to composition.transfer
@@ -498,6 +508,11 @@ class DeviceBrokerWorker:
         done_event = self._method_done_events.pop(result.id, None)
         if done_event is not None:
             done_event.set()
+
+        # Cancel the dead-volume relay loop now that the method is finished.
+        relay_task = self._relay_tasks.pop(result.id, None)
+        if relay_task is not None:
+            relay_task.cancel()
 
         envelope = self._pending.pop(result.id, None)
         if envelope is None:
