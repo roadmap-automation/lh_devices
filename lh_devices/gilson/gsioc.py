@@ -160,9 +160,18 @@ class GSIOC(aioserial.AioSerial, Loggable):
 
         finally:
 
-            # close serial port before exiting when interrupt is received
-            self.message_queue.empty()
-            self.response_queue.empty()
+            # Drain stale messages so a restarted listener starts clean.
+            # empty() is a predicate — must get_nowait() to actually remove items.
+            while not self.message_queue.empty():
+                try:
+                    self.message_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            while not self.response_queue.empty():
+                try:
+                    self.response_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
             self.close()
 
     def reset(self):

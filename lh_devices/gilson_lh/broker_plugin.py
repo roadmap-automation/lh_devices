@@ -222,6 +222,13 @@ class GilsonLHBrokerWorker:
         if dead_volume_task is not None:
             dead_volume_task.cancel()
             self._current_gsioc_task_id = None
+            # Unblock _gsioc_client_loop if it's frozen at _dead_volume_event.wait()
+            # waiting for a value that will never arrive (task failed mid-V).
+            # Without this the serial listener hangs at response_queue.get() until
+            # the process is restarted.
+            if not self._dead_volume_event.is_set():
+                self._dead_volume_value = 'error'
+                self._dead_volume_event.set()
 
         if result.result.get('error'):
             await self._emit(TASK_FAILED, envelope, {'error': result.result['error']})
