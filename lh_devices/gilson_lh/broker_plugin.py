@@ -87,6 +87,12 @@ class GilsonLHBrokerWorker:
         self._current_gsioc_task_id: Optional[str] = None
         self._dead_volume_event: asyncio.Event = asyncio.Event()
         self._dead_volume_value: str = ''
+        # Separate channel for GSIOC dead-volume subscriptions.
+        # Must not share self._amqp_channel: that channel has prefetch_count=1
+        # and holds the submit_task message unacked for the entire Trilution job,
+        # which would block delivery of the dead-volume message to any consumer
+        # on the same channel.
+        self._gsioc_amqp_channel: Optional[aio_pika.abc.AbstractChannel] = None
 
     # ------------------------------------------------------------------
     # Startup
@@ -101,6 +107,11 @@ class GilsonLHBrokerWorker:
 
         self._exchange = await channel.get_exchange(INSTRUMENT_EXCHANGE)
         self._protocol_exchange = await channel.get_exchange(PROTOCOL_EXCHANGE)
+
+        # Dedicated channel for GSIOC dead-volume subscriptions — no QoS limit
+        # so delivery is never blocked by the unacked submit_task message above.
+        gsioc_channel = await connection.channel()
+        self._gsioc_amqp_channel = gsioc_channel
 
         # Build method schemas from the LH interface's registered methods.
         for name, method_instance in self.lh_iface.methods.items():
@@ -300,11 +311,15 @@ class GilsonLHBrokerWorker:
 
         The IS broker plugin publishes this after the method calls dead_volume.put().
         The stored value is read by _gsioc_client_loop when Trilution sends 'V'.
+
+        Uses _gsioc_amqp_channel (no prefetch limit) rather than _amqp_channel.
+        _amqp_channel has prefetch_count=1 and holds the submit_task message unacked
+        for the entire Trilution job; sharing it would permanently block delivery here.
         """
-        if self._amqp_channel is None:
+        if self._gsioc_amqp_channel is None:
             return
         rk = gsioc_dead_volume_key(task_id)
-        queue = await self._amqp_channel.declare_queue(exclusive=True, auto_delete=True)
+        queue = await self._gsioc_amqp_channel.declare_queue(exclusive=True, auto_delete=True)
         await queue.bind(self._exchange, routing_key=rk)
 
         async def _on_dead_volume(msg: aio_pika.abc.AbstractIncomingMessage) -> None:
