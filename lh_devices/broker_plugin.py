@@ -489,7 +489,9 @@ class DeviceBrokerWorker:
 
         # If the method calls receive_composition(), subscribe to composition.transfer
         # before starting the method so no message from the source device is missed.
+        # Reset the queue so a leftover from a previous failed run is not returned.
         if isinstance(method_instance, MethodBasewithCompositionReceive):
+            method_instance._incoming_composition = asyncio.Queue(maxsize=1)
             subscription_ready = asyncio.Event()
             asyncio.create_task(self._feed_incoming_composition(method_instance, task_id, subscription_ready))
             await subscription_ready.wait()
