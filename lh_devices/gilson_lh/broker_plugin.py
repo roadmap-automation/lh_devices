@@ -294,7 +294,7 @@ class GilsonLHBrokerWorker:
 
                     elif data.data == 'V':
                         try:
-                            await asyncio.wait_for(self._dead_volume_event.wait(), timeout=300.0)
+                            await asyncio.wait_for(self._dead_volume_event.wait(), timeout=30.0)
                             response = self._dead_volume_value
                         except asyncio.TimeoutError:
                             logger.warning("[%s] Timed out waiting for dead volume — responding with error.", self.device_id)
