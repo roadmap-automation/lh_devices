@@ -403,7 +403,7 @@ class MethodRunner:
 
         for task, iinfo in self._running_tasks.items():
             if id == iinfo['id']:
-                logging.debug(f'Cancelling task {iinfo["name"]}')
+                logging.debug(f'Cancelling task {iinfo["method_name"]}')
                 task.cancel()
 
     def cancel_methods_by_name(self, method_name: str):
