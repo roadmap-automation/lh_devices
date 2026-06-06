@@ -521,6 +521,9 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
 
         response, error = await self.query('?21000')
         if error.error is None:
+            if not response:
+                self.logger.error(f'{self}: Empty response to valve code query (stale serial response?)')
+                return
             code = int(response)
             if code != self.valve.hamilton_valve_code:
                 self.logger.error(f'{self}: Valve code {code} from instrument does not match expected {self.valve.hamilton_valve_code}')
@@ -533,6 +536,9 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
 
         response, error = await self.query('?25000')
         if error.error is None:
+            if not response:
+                self.logger.error(f'{self}: Empty response to valve position query (stale serial response?)')
+                return
             angle = int(response)
 
             # convert to position
