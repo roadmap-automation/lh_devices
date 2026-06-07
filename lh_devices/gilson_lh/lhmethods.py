@@ -985,6 +985,11 @@ class GilsonFormulation(GilsonLHMethod):
             lh_method = Formulation(**kwargs)
             clusters = lh_method.get_methods(layout, sample_id=sample_id or None)
             flat_methods = [m2 for cluster in clusters for m2 in cluster.explode(layout)]
+            if not flat_methods:
+                _, _, success = lh_method.get_formulation_results(layout)
+                if not success:
+                    raise RuntimeError('Formulation failed: no valid source wells found')
+                return {}
             from .lhinterface import LHJob
             job = LHJob(id=task_id or str(uuid4()))
             job.setup_method_data(sample_id, '', flat_methods, layout)
@@ -1024,6 +1029,11 @@ class GilsonSoluteFormulation(GilsonLHMethod):
             lh_method = SoluteFormulation(**kwargs)
             clusters = lh_method.get_methods(layout, sample_id=sample_id or None)
             flat_methods = [m2 for cluster in clusters for m2 in cluster.explode(layout)]
+            if not flat_methods:
+                _, _, success = lh_method.get_formulation_results(layout)
+                if not success:
+                    raise RuntimeError('SoluteFormulation failed: no valid source wells found')
+                return {}
             from .lhinterface import LHJob
             job = LHJob(id=task_id or str(uuid4()))
             job.setup_method_data(sample_id, '', flat_methods, layout)
