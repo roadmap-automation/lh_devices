@@ -236,19 +236,24 @@ class SoluteFormulation(Formulation):
 
         volumes, wells = result['volumes'], result['wells']
 
-        diluent_well = next(
-            (w for w in self._available_wells(layout) if w.composition == self.diluent),
-            None,
-        )
-        if diluent_well is None:
-            logging.error('Diluent (%s) not available on bed', self.diluent)
-            self._formulation_results = [], [], False
-            return self._formulation_results
-
         diluent_volume = inflated - sum(volumes)
         if not np.isclose(diluent_volume, 0.0, atol=ZERO_VOLUME_TOLERANCE):
             if diluent_volume < 0:
                 logging.error('Diluent volume less than zero; should never happen')
+                self._formulation_results = [], [], False
+                return self._formulation_results
+
+            diluent_well = next(
+                (w for w in self._available_wells(layout)
+                 if w.composition == self.diluent
+                 and w.volume >= diluent_volume + layout.racks[w.rack_id].min_volume),
+                None,
+            )
+            if diluent_well is None:
+                logging.error(
+                    'No diluent well (%s) with sufficient volume (%.3f mL) available on bed',
+                    self.diluent, diluent_volume,
+                )
                 self._formulation_results = [], [], False
                 return self._formulation_results
             volumes += [diluent_volume]
