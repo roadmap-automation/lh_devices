@@ -151,6 +151,9 @@ class BaseLHMethod(BaseMethod):
     def new_sample_composition(self, layout: LHBedLayout) -> str:
         return ''
 
+    def resolved_composition(self, layout: LHBedLayout) -> dict | None:
+        return None
+
     def estimated_time(self, layout: LHBedLayout) -> float:
         return 7.0 / 60.0
 
@@ -188,6 +191,13 @@ class InjectMethod(BaseLHMethod):
     def new_sample_composition(self, layout: LHBedLayout) -> str:
         source_well, _ = layout.get_well_and_rack(self.Source.rack_id, self.Source.well_number)
         return repr(source_well.composition)
+
+    def resolved_composition(self, layout: LHBedLayout) -> dict | None:
+        try:
+            source_well, _ = layout.get_well_and_rack(self.Source.rack_id, self.Source.well_number)
+            return source_well.composition.model_dump()
+        except Exception:
+            return None
 
     @property
     def sample_volume(self):
