@@ -965,11 +965,14 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         """
 
         response, error = await self.query('?')
-        
-        self.syringe_position = int(response)
 
         if error.error is not None:
             self.logger.error(f'{self}: Error in update_syringe_status: {error}')
+        elif not response:
+            self.logger.error(f'{self}: Empty response to syringe position query (stale serial response?)')
+        else:
+            self.syringe_position = int(response)
+
         await self.update_status()
 
         return error
@@ -983,10 +986,12 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
 
         response, error = await self.query('?2')
 
-        self._speed = int(response)
-        
         if error.error is not None:
             self.logger.error(f'{self}: Error in get_speed: {error}')
+        elif not response:
+            self.logger.error(f'{self}: Empty response to speed query (stale serial response?)')
+        else:
+            self._speed = int(response)
 
         return error
 

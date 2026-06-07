@@ -92,10 +92,12 @@ class HamiltonSerial(aioserial.AioSerial):
             except asyncio.TimeoutError:
                 logging.warning(f'{self.port} => {repr(data)}: serial connection timed out!')
                 get_value_task.cancel()
-                # Flush any bytes that arrived late so they don't contaminate
-                # the next command's read (the repeat='1' causes the device to
-                # replay its last response; without a flush that replay plus a
-                # delayed original can leave a stale frame in the OS buffer).
+                # aioserial dispatches cancel_read() (CancelIoEx) via asyncio.shield,
+                # which runs asynchronously.  Without a brief yield here the
+                # _read_executor thread may still be alive when we flush and
+                # resend, causing it to consume the retry response before the
+                # new get_value_task can read it.
+                await asyncio.sleep(0.05)
                 self.reset_input_buffer()
 
             # if not successful try again up to max_retries, changing repeat bit
