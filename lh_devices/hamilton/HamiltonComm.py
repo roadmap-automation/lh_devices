@@ -153,7 +153,7 @@ class HamiltonSerial(aioserial.AioSerial):
             #printcodes(data.decode('latin-1'))
 
             # throw away first byte (always ASCII 255)
-            data = data[1:].decode()
+            data = data[1:].decode('latin-1')
             logging.debug(f'{self.port} <= {data}')
 
             # calculate checksum
@@ -161,7 +161,7 @@ class HamiltonSerial(aioserial.AioSerial):
 
             # read checksum byte
             chksum: bytes = await self.read_async(1)
-            recv_chksum = ord(chksum.decode())
+            recv_chksum = ord(chksum.decode('latin-1'))
 
             # compare checksums; if they match, put in response queue
             if recv_chksum == data_chksum:

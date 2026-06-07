@@ -141,6 +141,10 @@ class HamiltonBase(DeviceBase):
 
         response, error = await self.query(f"?{query_code}")
 
+        if error.error is not None or not response:
+            self.logger.error(f'{self}: Failed to read digital input {digital_input}: error={error}, response={response!r}')
+            return False
+
         return bool(int(response))
 
     async def set_digital_output(self, digital_output: int, value: bool) -> None:
@@ -176,11 +180,14 @@ class HamiltonBase(DeviceBase):
         """
 
         response, error = await self.query(f'?37000')
-        binary_string = format(int(response), '03b')
 
+        if error.error is not None or not response:
+            self.logger.error(f'{self}: Failed to read digital outputs: error={error}, response={response!r}')
+            return self.digital_outputs
+
+        binary_string = format(int(response), '03b')
         digital_outputs = tuple([bool(digit) for digit in binary_string[::-1]])
         self.digital_outputs = digital_outputs
-
         return digital_outputs
 
     def create_web_app(self, template='roadmap.html') -> web.Application:
@@ -481,7 +488,7 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
 
         status = await self.get_valve_status()
 
-        return True if status[-1]=='0' else False
+        return True if (status is not None and status[-1]=='0') else False
 
     async def get_valve_status(self) -> str:
         """Gets full status string of device
@@ -491,6 +498,10 @@ class HamiltonValvePositioner(HamiltonBase, ValvePositionerBase):
         """
         
         response, error = await self.query('?20000')
+
+        if error.error is not None or not response:
+            self.logger.error(f'{self}: Failed to read valve status: error={error}, response={response!r}')
+            return None
 
         return format(int(response), '06b')
 
@@ -764,7 +775,7 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         """
 
         status = await self.get_syringe_status()
-        syringe_initialized = True if status[-1]=='0' else False
+        syringe_initialized = True if (status is not None and status[-1]=='0') else False
         valve_initialized = await super().is_initialized()
 
         return (valve_initialized & syringe_initialized)
@@ -849,6 +860,10 @@ class HamiltonSyringePump(HamiltonValvePositioner, SyringePumpValvePositioner):
         """
         
         response, error = await self.query('?10000')
+
+        if error.error is not None or not response:
+            self.logger.error(f'{self}: Failed to read syringe status: error={error}, response={response!r}')
+            return None
 
         return format(int(response), '06b')
 
