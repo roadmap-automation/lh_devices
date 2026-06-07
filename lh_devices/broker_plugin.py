@@ -429,16 +429,20 @@ class DeviceBrokerWorker:
         task_id = str(envelope.task_id)
         payload = envelope.payload
 
-        # Idempotency: skip hardware if we already ran this task.
+        # Idempotency: skip hardware if we already ran this task successfully.
+        # A previously-failed result falls through so an operator resubmit retries.
         if self.assembly.database_path is not None:
             db_path = self.assembly.database_path
             existing = await asyncio.to_thread(
                 lambda: HistoryDB(db_path).search_id(task_id)
             )
             if existing is not None:
-                logger.info("[%s] task %s already complete — re-publishing.", self.device_id, task_id)
-                await self._publish_completed_from_result(existing, envelope)
-                return
+                if existing.result and existing.result.get("error"):
+                    logger.info("[%s] task %s previously failed — allowing retry.", self.device_id, task_id)
+                else:
+                    logger.info("[%s] task %s already complete — re-publishing.", self.device_id, task_id)
+                    await self._publish_completed_from_result(existing, envelope)
+                    return
 
         # INIT tasks: hardware is already initialized at startup; just ack.
         if payload.get("task_type") == "init":
