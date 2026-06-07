@@ -79,6 +79,8 @@ class WellReservationStore:
         """Record an existing well as a reference for (sample_id, uuid).
 
         If already recorded, return the existing location.
+        Does not stamp the layout well — multiple samples may reference the same
+        stock well with different uuids, so resolution is always done via SQLite.
         """
         existing = self._lookup(sample_id, uuid)
         if existing is not None:

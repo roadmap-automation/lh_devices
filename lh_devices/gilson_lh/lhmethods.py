@@ -14,6 +14,7 @@ from lh_devices.waste import WasteItem
 
 from .status import MethodError, SampleStatus
 from .layoutmap import LayoutWell2ZoneWell, Zone
+from .reservation import reservation_store
 
 if TYPE_CHECKING:
     from .lhinterface import LHInterface
@@ -294,9 +295,10 @@ class TransferWithRinse(TransferMethod):
 
     def render_lh_method(self, sample_name: str, sample_description: str,
                          layout: LHBedLayout) -> List[BaseLHMethod.lh_method]:
-        self.Source = layout.infer_location(self.Source)
+        lookup = lambda uid: reservation_store.lookup(sample_name, uid) if sample_name else None
+        self.Source = layout.infer_location(self.Source, id_lookup=lookup)
         source_zone, source_well = LayoutWell2ZoneWell(self.Source.rack_id, self.Source.well_number)
-        self.Target = layout.infer_location(self.Target)
+        self.Target = layout.infer_location(self.Target, id_lookup=lookup)
         target_zone, target_well = LayoutWell2ZoneWell(self.Target.rack_id, self.Target.well_number)
         return [self.lh_method(
             SAMPLENAME=sample_name,
@@ -370,7 +372,8 @@ class MixWithRinse(MixMethod):
 
     def render_lh_method(self, sample_name: str, sample_description: str,
                          layout: LHBedLayout) -> List[BaseLHMethod.lh_method]:
-        self.Target = layout.infer_location(self.Target)
+        lookup = lambda uid: reservation_store.lookup(sample_name, uid) if sample_name else None
+        self.Target = layout.infer_location(self.Target, id_lookup=lookup)
         target_zone, target_well = LayoutWell2ZoneWell(self.Target.rack_id, self.Target.well_number)
         return [self.lh_method(
             SAMPLENAME=sample_name,
@@ -443,7 +446,8 @@ class InjectWithRinse(InjectMethod):
 
     def render_lh_method(self, sample_name: str, sample_description: str,
                          layout: LHBedLayout) -> List[BaseLHMethod.lh_method]:
-        self.Source = layout.infer_location(self.Source)
+        lookup = lambda uid: reservation_store.lookup(sample_name, uid) if sample_name else None
+        self.Source = layout.infer_location(self.Source, id_lookup=lookup)
         source_zone, source_well = LayoutWell2ZoneWell(self.Source.rack_id, self.Source.well_number)
         return [self.lh_method(
             SAMPLENAME=sample_name,
@@ -567,7 +571,8 @@ class ROADMAP_QCMD_LoadLoop(InjectMethod):
 
     def render_lh_method(self, sample_name: str, sample_description: str,
                          layout: LHBedLayout) -> List[BaseLHMethod.lh_method]:
-        self.Source = layout.infer_location(self.Source)
+        lookup = lambda uid: reservation_store.lookup(sample_name, uid) if sample_name else None
+        self.Source = layout.infer_location(self.Source, id_lookup=lookup)
         source_zone, source_well = LayoutWell2ZoneWell(self.Source.rack_id, self.Source.well_number)
         return [self.lh_method(
             SAMPLENAME=sample_name,
@@ -637,7 +642,8 @@ class ROADMAP_QCMD_DirectInject(InjectMethod):
 
     def render_lh_method(self, sample_name: str, sample_description: str,
                          layout: LHBedLayout) -> List[dict]:
-        self.Source = layout.infer_location(self.Source)
+        lookup = lambda uid: reservation_store.lookup(sample_name, uid) if sample_name else None
+        self.Source = layout.infer_location(self.Source, id_lookup=lookup)
         source_zone, source_well_number = LayoutWell2ZoneWell(self.Source.rack_id, self.Source.well_number)
         return [self.lh_method(
             SAMPLENAME=sample_name,
