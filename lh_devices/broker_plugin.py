@@ -268,7 +268,6 @@ class DeviceBrokerWorker:
         method_instance: 'MethodBasewithCompositionReceive',
         task_id: str,
         subscription_ready: asyncio.Event,
-        timeout: float = 300.0,
     ) -> None:
         """Subscribe to composition.transfer.<task_id> and feed into the method's queue.
 
@@ -298,12 +297,7 @@ class DeviceBrokerWorker:
 
         consumer_tag = await queue.consume(_handler)
         try:
-            await asyncio.wait_for(received.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "[%s] composition.transfer for task %s timed out after %.0fs.",
-                self.device_id, task_id, timeout,
-            )
+            await received.wait()
         finally:
             try:
                 await queue.cancel(consumer_tag)
