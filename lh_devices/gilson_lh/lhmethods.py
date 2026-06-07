@@ -848,12 +848,14 @@ class GilsonLHMethod(MethodBase):
             await self.lh_iface.trigger_layout_update()
             # Resolved composition post-mutation
             result: dict = {'waste': waste_items}
-            try:
-                carrier = self.lh_iface.layout.carrier_well
-                if carrier is not None:
-                    result['resolved_composition'] = carrier.composition.model_dump()
-            except Exception:
-                pass
+            for m in lh_methods:
+                try:
+                    rc = m.resolved_composition(self.lh_iface.layout)
+                    if rc is not None:
+                        result['resolved_composition'] = rc
+                        break
+                except Exception:
+                    pass
             return result
         finally:
             if _on_validation in self.lh_iface.validation_callbacks:

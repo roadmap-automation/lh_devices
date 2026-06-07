@@ -114,13 +114,16 @@ class InjectLoop(MethodBasewithCompositionRelay):
         await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, pump_volume / 1000)
         self.channel.layout.carrier_well.volume -= pump_volume / 1000        
 
+        # Capture composition before primeloop() clears it
+        composition_to_relay = self.channel.well.composition
+
         # Prime loop
         await self.channel.primeloop()
         await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, self.channel.syringe_pump.syringe_volume / 1000)
 
         await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
-        self.emit_composition(self.channel.well.composition)
+        self.emit_composition(composition_to_relay)
         self.release_all()
 
 class InjectLoopBubbleSensor(MethodBasewithCompositionRelay):
@@ -170,10 +173,13 @@ class InjectLoopBubbleSensor(MethodBasewithCompositionRelay):
         await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, actual_volume / 1000)
         self.logger.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume + actual_volume0} uL')
 
+        # Capture composition before primeloop() clears it
+        composition_to_relay = self.channel.well.composition
+
         # Switch to prime loop mode and flush
         await self.channel.primeloop()
         await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, self.channel.syringe_pump.syringe_volume / 1000)
         await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
-        self.emit_composition(self.channel.well.composition)
+        self.emit_composition(composition_to_relay)
         self.release_all()
