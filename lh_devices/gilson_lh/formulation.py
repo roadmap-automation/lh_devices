@@ -72,7 +72,7 @@ class Formulation(MethodContainer):
         """Run the core solver against available (non-claimed) wells."""
         return _solve_formulation_core(
             self._available_wells(layout), layout,
-            self.target_composition, target_volume, self.exact_match,
+            self.target_composition.stripped(), target_volume, self.exact_match,
         )
 
     def _inflated_target(self, layout: LHBedLayout) -> float:
@@ -205,26 +205,45 @@ class SoluteFormulation(Formulation):
     diluent: Composition = Field(default_factory=Composition)
 
     def formulate(self, layout: LHBedLayout) -> Tuple[List[float], List[Well], bool]:
+        stripped = self.target_composition.stripped()
+        needed = self.target_volume + self.Extra_Volume
+
+        # Null composition: entire volume is diluent — skip the solver entirely.
+        if not stripped.solutes and not stripped.solvents:
+            diluent_well = next(
+                (w for w in self._available_wells(layout)
+                 if w.composition == self.diluent
+                 and w.volume >= needed + layout.racks[w.rack_id].min_volume),
+                None,
+            )
+            if diluent_well is None:
+                logging.error(
+                    'Null composition: diluent (%s) not available with sufficient volume (%.3f mL)',
+                    self.diluent, needed,
+                )
+                self._formulation_results = [], [], False
+                return self._formulation_results
+            self._formulation_results = [needed], [diluent_well], True
+            logging.info('SoluteFormulation: null composition, using diluent well: %s', diluent_well)
+            return self._formulation_results
+
         # Pass 0: check if the required solute composition already exists in a single well.
-        # Solvent/diluent content is irrelevant — only solute concentrations must match.
-        # Skips any well that is actively claimed by an in-flight subprotocol.
-        if self.target_composition.solutes:
-            needed = self.target_volume + self.Extra_Volume
+        # Uses stripped to avoid zero-concentration solutes falsely matching pure-solvent wells.
+        if stripped.solutes:
             for well in self._available_wells(layout):
                 rack_min = layout.racks[well.rack_id].min_volume
-                if well.volume >= needed + rack_min and _solutes_match(self.target_composition, well.composition):
+                if well.volume >= needed + rack_min and _solutes_match(stripped, well.composition):
                     self._formulation_results = [needed], [well], True
                     logging.info('SoluteFormulation: existing well satisfies solute requirements: %s', well)
                     return self._formulation_results
 
         # Mixing path: solutes + diluent top-up, always ≥2 transfers.
-        # Solve at inflated volume to keep the diluent top-up consistent.
         inflated = self._inflated_target(layout)
 
         result = _solve_formulation_core(
             wells=self._available_wells(layout),
             layout=layout,
-            target_composition=self.target_composition,
+            target_composition=stripped,
             target_volume=inflated,
             exact_match=False,
         )

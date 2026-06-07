@@ -113,6 +113,13 @@ class Composition(BaseModel):
 
         return self.solvents
 
+    def stripped(self) -> 'Composition':
+        """Return a copy with zero/negative solute concentrations and zero/negative solvent fractions removed."""
+        return self.model_copy(update={
+            'solvents': [s for s in self.solvents if s.fraction > 0],
+            'solutes': [s for s in self.solutes if s.concentration > 0],
+        })
+
 
     def __eq__(self, value) -> bool:
         if not isinstance(value, Composition):
