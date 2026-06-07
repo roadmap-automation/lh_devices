@@ -102,11 +102,13 @@ class LHJob(JobBase):
                 results.append(ResultStatus.SUCCESS if all_ok else ResultStatus.FAIL)
         return results
 
-    def setup_method_data(self, sample_name: str, sample_description: str,
+    def setup_method_data(self, sample_id: str, sample_description: str,
                           lh_methods: List[BaseLHMethod], layout: LHBedLayout) -> None:
+        from .resolver import WellResolver
+        resolver = WellResolver(layout, sample_id)
         createdDate = datetime.now().strftime(DATE_FORMAT)
         method_list = [m2 for m in lh_methods
-                       for m2 in m.render_lh_method(sample_name, sample_description, layout)]
+                       for m2 in m.render_lh_method(sample_id, sample_description, resolver)]
         # Build canonical field order from first-appearance across all rows (dict preserves insertion order).
         canonical: dict = {}
         for m in method_list:

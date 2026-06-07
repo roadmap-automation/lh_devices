@@ -14,10 +14,10 @@ from lh_devices.waste import WasteItem
 
 from .status import MethodError, SampleStatus
 from .layoutmap import LayoutWell2ZoneWell, Zone
-from .reservation import reservation_store
 
 if TYPE_CHECKING:
     from .lhinterface import LHInterface
+    from .resolver import WellResolver
 
 # ======== Gilson-LH-specific Pydantic base classes (from core/methods.py) ========
 
@@ -166,7 +166,7 @@ class BaseLHMethod(BaseMethod):
                                method_data=self.model_dump(exclude=EXCLUDE_LH_FIELDS))]}]
 
     def render_lh_method(self, sample_name: str, sample_description: str,
-                         layout: LHBedLayout) -> List[dict]:
+                         resolver: 'WellResolver') -> List[dict]:
         return [{}]
 
 
@@ -294,11 +294,10 @@ class TransferWithRinse(TransferMethod):
         Target_Well: str
 
     def render_lh_method(self, sample_name: str, sample_description: str,
-                         layout: LHBedLayout) -> List[BaseLHMethod.lh_method]:
-        lookup = lambda uid: reservation_store.lookup(sample_name, uid) if sample_name else None
-        self.Source = layout.infer_location(self.Source, id_lookup=lookup)
+                         resolver: 'WellResolver') -> List[BaseLHMethod.lh_method]:
+        self.Source = resolver.resolve(self.Source)
         source_zone, source_well = LayoutWell2ZoneWell(self.Source.rack_id, self.Source.well_number)
-        self.Target = layout.infer_location(self.Target, id_lookup=lookup)
+        self.Target = resolver.resolve(self.Target)
         target_zone, target_well = LayoutWell2ZoneWell(self.Target.rack_id, self.Target.well_number)
         return [self.lh_method(
             SAMPLENAME=sample_name,
@@ -371,9 +370,8 @@ class MixWithRinse(MixMethod):
         Target_Well: str
 
     def render_lh_method(self, sample_name: str, sample_description: str,
-                         layout: LHBedLayout) -> List[BaseLHMethod.lh_method]:
-        lookup = lambda uid: reservation_store.lookup(sample_name, uid) if sample_name else None
-        self.Target = layout.infer_location(self.Target, id_lookup=lookup)
+                         resolver: 'WellResolver') -> List[BaseLHMethod.lh_method]:
+        self.Target = resolver.resolve(self.Target)
         target_zone, target_well = LayoutWell2ZoneWell(self.Target.rack_id, self.Target.well_number)
         return [self.lh_method(
             SAMPLENAME=sample_name,
@@ -445,9 +443,8 @@ class InjectWithRinse(InjectMethod):
         Use_Liquid_Level_Detection: str
 
     def render_lh_method(self, sample_name: str, sample_description: str,
-                         layout: LHBedLayout) -> List[BaseLHMethod.lh_method]:
-        lookup = lambda uid: reservation_store.lookup(sample_name, uid) if sample_name else None
-        self.Source = layout.infer_location(self.Source, id_lookup=lookup)
+                         resolver: 'WellResolver') -> List[BaseLHMethod.lh_method]:
+        self.Source = resolver.resolve(self.Source)
         source_zone, source_well = LayoutWell2ZoneWell(self.Source.rack_id, self.Source.well_number)
         return [self.lh_method(
             SAMPLENAME=sample_name,
@@ -500,7 +497,7 @@ class Sleep(BaseLHMethod):
         Time: str
 
     def render_lh_method(self, sample_name: str, sample_description: str,
-                         layout: LHBedLayout) -> List[BaseLHMethod.lh_method]:
+                         resolver: 'WellResolver') -> List[BaseLHMethod.lh_method]:
         return [self.lh_method(
             SAMPLENAME=sample_name,
             SAMPLEDESCRIPTION=sample_description,
@@ -525,7 +522,7 @@ class Prime(BaseLHMethod):
         Repeats: str
 
     def render_lh_method(self, sample_name: str, sample_description: str,
-                         layout: LHBedLayout) -> List[BaseLHMethod.lh_method]:
+                         resolver: 'WellResolver') -> List[BaseLHMethod.lh_method]:
         return [self.lh_method(
             SAMPLENAME=sample_name,
             SAMPLEDESCRIPTION=sample_description,
@@ -570,9 +567,8 @@ class ROADMAP_QCMD_LoadLoop(InjectMethod):
         Use_Liquid_Level_Detection: str
 
     def render_lh_method(self, sample_name: str, sample_description: str,
-                         layout: LHBedLayout) -> List[BaseLHMethod.lh_method]:
-        lookup = lambda uid: reservation_store.lookup(sample_name, uid) if sample_name else None
-        self.Source = layout.infer_location(self.Source, id_lookup=lookup)
+                         resolver: 'WellResolver') -> List[BaseLHMethod.lh_method]:
+        self.Source = resolver.resolve(self.Source)
         source_zone, source_well = LayoutWell2ZoneWell(self.Source.rack_id, self.Source.well_number)
         return [self.lh_method(
             SAMPLENAME=sample_name,
@@ -641,9 +637,8 @@ class ROADMAP_QCMD_DirectInject(InjectMethod):
         Use_Liquid_Level_Detection: str
 
     def render_lh_method(self, sample_name: str, sample_description: str,
-                         layout: LHBedLayout) -> List[dict]:
-        lookup = lambda uid: reservation_store.lookup(sample_name, uid) if sample_name else None
-        self.Source = layout.infer_location(self.Source, id_lookup=lookup)
+                         resolver: 'WellResolver') -> List[dict]:
+        self.Source = resolver.resolve(self.Source)
         source_zone, source_well_number = LayoutWell2ZoneWell(self.Source.rack_id, self.Source.well_number)
         return [self.lh_method(
             SAMPLENAME=sample_name,
@@ -700,7 +695,7 @@ class ROADMAP_DirectInjectPrime(BaseLHMethod):
         Flow_Rate: str
 
     def render_lh_method(self, sample_name: str, sample_description: str,
-                         layout: LHBedLayout) -> List[BaseLHMethod.lh_method]:
+                         resolver: 'WellResolver') -> List[BaseLHMethod.lh_method]:
         return [self.lh_method(
             SAMPLENAME=sample_name,
             SAMPLEDESCRIPTION=sample_description,

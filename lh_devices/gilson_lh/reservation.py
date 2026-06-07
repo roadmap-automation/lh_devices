@@ -33,9 +33,9 @@ class WellReservationStore:
 
     Two kinds:
       claim     — blocking. Assigns the next empty well in a rack to (sample_id, uuid).
-                  layout.infer_location uses the uuid to re-identify the well across calls.
+                  The well is stamped (well.id = uuid) so WellResolver can find it via layout scan.
       reference — non-blocking. Records an existing well as associated with (sample_id, uuid)
-                  so it can be looked up later.
+                  so WellResolver can look it up via SQLite without touching the layout.
     """
 
     def __init__(self, db_path: Path = config.reservation_path) -> None:

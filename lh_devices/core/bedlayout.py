@@ -359,13 +359,14 @@ class LHBedLayout(BaseModel):
         if next_empty is not None:
             return WellLocation(rack_id=rack_id, well_number=next_empty.well_number)
 
-    def infer_location(self, well: WellLocation, id_lookup=None) -> WellLocation | None:
-        """Finds the next empty and fills in the inferred well location by ID or by next empty.
-            If well.id is None, returns the original well
+    def infer_location(self, well: WellLocation) -> WellLocation | None:
+        """Resolves a WellLocation by id against the layout's stamped wells.
+
+        Used by waste() methods after render_lh_method has already resolved Source/Target.
+        For full resolution including the reservation store, use WellResolver.resolve().
 
         Args:
             well (WellLocation): well location to use for inference
-            id_lookup: optional callable(uuid) -> WellLocation | None for reservation-store fallback
 
         Returns:
             WellLocation: updated inferred well location
@@ -374,21 +375,13 @@ class LHBedLayout(BaseModel):
         if well.id is None:
             return well
 
-        # check for well ID match in layout (used by claim reservations stamped by reserve_claim)
+        # Layout scan — claim wells stamped by reserve_claim
         next_match = next((w for w in self.get_all_wells() if w.id == well.id), None)
         if next_match is not None:
             well.rack_id, well.well_number = next_match.rack_id, next_match.well_number
             return well
 
-        # fallback to reservation store (used by reference reservations — stock/solvent wells
-        # that are shared across samples and cannot be stamped with a single uuid)
-        if id_lookup is not None:
-            reservation = id_lookup(well.id)
-            if reservation is not None:
-                well.rack_id, well.well_number = reservation.rack_id, reservation.well_number
-                return well
-
-        # last resort: claim the next empty well in the rack
+        # Claim next empty as a fallback
         next_empty = self.find_next_empty(well.rack_id)
         if next_empty is not None:
             target_well, _ = self.get_well_and_rack(next_empty.rack_id, next_empty.well_number)
