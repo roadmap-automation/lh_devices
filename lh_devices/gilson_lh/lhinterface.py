@@ -116,7 +116,7 @@ class LHJob(JobBase):
         # Rebuild every row with identical key order, filling gaps with None.
         method_list = [{k: m.get(k) for k in canonical} for m in method_list]
         self.LH_method_data = SampleList(
-            name=sample_name,
+            name=sample_id,
             id='0',  # placeholder; updated to real LH_id in _sync_activate_job
             createdBy='System',
             description=sample_description,
