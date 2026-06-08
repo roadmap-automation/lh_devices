@@ -6,7 +6,7 @@ import traceback
 
 from aiohttp import web
 from aiohttp.web_app import Application as Application
-from dataclasses import dataclass, field, fields, Field
+from dataclasses import dataclass, field, fields, Field, MISSING
 from typing import List, Dict, Any, Callable, TypedDict, Coroutine, Optional
 from uuid import uuid4
 
@@ -477,17 +477,35 @@ class MethodPlugin(WebNodeBase):
         #else:
         self.method_runner.run_method(self.process_method(method_name, method_data, id), id, method_name)
 
-    async def get_info(self) -> Dict:
-        """Updates base class information with 
+    def _method_schemas_for_display(self) -> Dict:
+        """Return {method_name: [{name, type, default}, ...]} for all registered methods,
+        excluding the 'name' field and any field with a complex type (Composition, WellLocation)."""
+        result = {}
+        for method_name, method in self.methods.items():
+            field_list = []
+            for f in fields(method.MethodDefinition):
+                if f.name == 'name':
+                    continue
+                type_str = f.type if isinstance(f.type, str) else str(f.type)
+                if any(t in type_str for t in ('Composition', 'WellLocation')):
+                    continue
+                if f.default is not MISSING:
+                    default = f.default
+                elif f.default_factory is not MISSING:
+                    continue
+                else:
+                    default = None
+                field_list.append({'name': f.name, 'type': type_str, 'default': default})
+            result[method_name] = field_list
+        return result
 
-        Returns:
-            Dict: _description_
-        """
+    async def get_info(self) -> Dict:
         d = await super().get_info()
         d.update({'active_methods': {method_name: dict(method_data=active_method['method_data'],
                                                        has_error=(active_method['method'].error.error is not None),
                                                        has_broker_trigger=isinstance(active_method['method'], MethodBasewithBrokerTrigger))
-                                      for method_name, active_method in self.active_methods.items()}
+                                      for method_name, active_method in self.active_methods.items()},
+                  'method_schemas': self._method_schemas_for_display()
                  }
                 )
         return d
@@ -514,6 +532,12 @@ class MethodPlugin(WebNodeBase):
             target_method = self.active_methods.get(data['method'], None)['method']
             if target_method is not None:
                 self.method_runner.cancel_methods_by_name(data['method'])
+        elif command == 'run_method':
+            method_name = data.get('method_name')
+            method_data = data.get('method_data', {})
+            if method_name in self.methods:
+                method_data['name'] = method_name
+                self.run_method(method_name, method_data)
 
     async def _handle_task(self, request: web.Request) -> web.Response:
         """Handles a submitted task"""
