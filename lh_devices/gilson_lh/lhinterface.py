@@ -368,11 +368,8 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
             {'label': f'Active job (LH_id={self._active_job.LH_id})', 'data': self._active_job.model_dump()}
             if self._active_job is not None else None
         )
-        d['method_schemas'] = {
-            name: m.get_pydantic_schema()
-            for name, m in self.methods.items()
-            if hasattr(m, 'get_pydantic_schema')
-        }
+        from lh_devices.methods import method_schemas_for_display
+        d['method_schemas'] = method_schemas_for_display(self.methods)
         d['controls'] = d['controls'] | {
             'pause_resume': {
                 'type': 'button',
@@ -420,6 +417,12 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
             if self._active_job is not None:
                 await self.deactivate()
                 await self.trigger_update()
+        elif command == 'run_method':
+            method_name = data.get('method_name')
+            method_data = data.get('method_data', {})
+            if method_name in self.methods:
+                method_data['name'] = method_name
+                asyncio.create_task(self.methods[method_name].start(**method_data))
         else:
             await AutocontrolPlugin.event_handler(self, command, data)
 

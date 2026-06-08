@@ -334,6 +334,30 @@ class ActiveMethod(TypedDict):
     method: MethodBase
     method_data: dict
 
+def method_schemas_for_display(methods: dict) -> Dict:
+    """Return {method_name: [{name, type, default}, ...]} for methods with at least one
+    scalar field, excluding 'name' and complex types (Composition, WellLocation)."""
+    result = {}
+    for method_name, method in methods.items():
+        field_list = []
+        for f in fields(method.MethodDefinition):
+            if f.name == 'name':
+                continue
+            type_str = f.type if isinstance(f.type, str) else str(f.type)
+            if any(t in type_str for t in ('Composition', 'WellLocation')):
+                continue
+            if f.default is not MISSING:
+                default = f.default
+            elif f.default_factory is not MISSING:
+                continue
+            else:
+                default = None
+            field_list.append({'name': f.name, 'type': type_str, 'default': default})
+        if field_list:
+            result[method_name] = field_list
+    return result
+
+
 class MethodRunner:
 
     def __init__(self):
@@ -478,26 +502,7 @@ class MethodPlugin(WebNodeBase):
         self.method_runner.run_method(self.process_method(method_name, method_data, id), id, method_name)
 
     def _method_schemas_for_display(self) -> Dict:
-        """Return {method_name: [{name, type, default}, ...]} for all registered methods,
-        excluding the 'name' field and any field with a complex type (Composition, WellLocation)."""
-        result = {}
-        for method_name, method in self.methods.items():
-            field_list = []
-            for f in fields(method.MethodDefinition):
-                if f.name == 'name':
-                    continue
-                type_str = f.type if isinstance(f.type, str) else str(f.type)
-                if any(t in type_str for t in ('Composition', 'WellLocation')):
-                    continue
-                if f.default is not MISSING:
-                    default = f.default
-                elif f.default_factory is not MISSING:
-                    continue
-                else:
-                    default = None
-                field_list.append({'name': f.name, 'type': type_str, 'default': default})
-            result[method_name] = field_list
-        return result
+        return method_schemas_for_display(self.methods)
 
     async def get_info(self) -> Dict:
         d = await super().get_info()

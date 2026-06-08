@@ -103,6 +103,7 @@
             newdiv.append(new $('<div>').addClass("device_config"))
             newdiv.append(new $('<div>').addClass("device_state"))
             newdiv.append(new $('<div>').addClass("device_controls"))
+            newdiv.append(new $('<div>').addClass("device_method_runner"))
 
             return newdiv
         }
@@ -225,6 +226,7 @@
                                     }
                                 }
                             update_controls($(this).children(".device_controls"), id, data['controls'])
+                            update_method_runner($(this).children(".device_method_runner"), id, data['method_schemas'])
                         }
                         else if (data['type'] == 'assembly') {
                             $(this).children(".assembly_name").empty().append(data['name']);

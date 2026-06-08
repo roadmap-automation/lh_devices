@@ -929,6 +929,8 @@ class GilsonPrime(GilsonLHMethod):
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
         name: str = 'NCNR_Prime'
+        Volume: str | float = 10.0
+        Repeats: str | int = 1
 
 
 class GilsonQCMDLoadLoop(GilsonLHMethod):
