@@ -92,6 +92,13 @@ class HamiltonSerial(aioserial.AioSerial):
             except asyncio.TimeoutError:
                 logging.warning(f'{self.port} => {repr(data)}: serial connection timed out!')
                 get_value_task.cancel()
+                # aioserial dispatches cancel_read() (CancelIoEx) via asyncio.shield,
+                # which runs asynchronously.  Without a brief yield here the
+                # _read_executor thread may still be alive when we flush and
+                # resend, causing it to consume the retry response before the
+                # new get_value_task can read it.
+                await asyncio.sleep(0.05)
+                self.reset_input_buffer()
 
             # if not successful try again up to max_retries, changing repeat bit
             trial += 1
@@ -146,7 +153,7 @@ class HamiltonSerial(aioserial.AioSerial):
             #printcodes(data.decode('latin-1'))
 
             # throw away first byte (always ASCII 255)
-            data = data[1:].decode()
+            data = data[1:].decode('latin-1')
             logging.debug(f'{self.port} <= {data}')
 
             # calculate checksum
@@ -154,7 +161,7 @@ class HamiltonSerial(aioserial.AioSerial):
 
             # read checksum byte
             chksum: bytes = await self.read_async(1)
-            recv_chksum = ord(chksum.decode())
+            recv_chksum = ord(chksum.decode('latin-1'))
 
             # compare checksums; if they match, put in response queue
             if recv_chksum == data_chksum:

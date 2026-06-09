@@ -2,13 +2,13 @@ import time
 import uuid
 import asyncio
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from typing import Dict
 from aiohttp import ClientSession, ClientConnectionError, web
 from enum import Enum
 from urllib.parse import urlsplit
 
-from lh_manager.liquid_handler.bedlayout import LHBedLayout, Composition, Rack, Well
+from lh_devices.core.bedlayout import LHBedLayout, Composition, Rack, Well
 
 from .qcmd_cameras import FIT0819, FIT0819Collection
 
@@ -17,7 +17,7 @@ from ..camera.acroname_hub import USBHubManager
 from ..device import DeviceBase, PollTimer
 from ..assemblies import InjectionChannelBase
 from ..layout import LayoutPlugin
-from ..methods import MethodBase
+from ..methods import MethodBase, MethodBasewithCompositionReceive
 from ..multichannel import MultiChannelAssembly
 
 class QCMDState(str, Enum):
@@ -115,14 +115,21 @@ class QCMDMeasurementDevice(DeviceBase):
 
     def _remaining_time_formatted(self) -> tuple[str | None, str | None]:
         time_elapsed = time.time() - self._start if self._start is not None else 0.0
+        sleep_time = self._sleep_time or 0.0
+        record_time = self._record_time or 0.0
 
-        sleep_time_remaining = max(0.0, self._sleep_time - time_elapsed)
-        fmt_sleep = time.strftime('%H:%M:%S' if sleep_time_remaining // 3600 else '%M:%S', time.gmtime(sleep_time_remaining)) if sleep_time_remaining > 0 else None
+        sleep_time_remaining = max(0.0, sleep_time - time_elapsed)
+        record_time_remaining = max(0.0, min(record_time + sleep_time - time_elapsed, record_time))
 
-        record_time_remaining = max(0.0, min(self._record_time + self._sleep_time - time_elapsed, self._record_time))
-        fmt_record = time.strftime('%H:%M:%S' if record_time_remaining // 3600 else '%M:%S', time.gmtime(record_time_remaining)) if record_time_remaining > 0 else None
+        def _fmt(seconds: float) -> str | None:
+            if seconds <= 0:
+                return None
+            try:
+                return time.strftime('%H:%M:%S' if seconds // 3600 else '%M:%S', time.gmtime(seconds))
+            except (OverflowError, OSError):
+                return None
 
-        return fmt_sleep, fmt_record
+        return _fmt(sleep_time_remaining), _fmt(record_time_remaining)
 
     async def _post(self, post_data: dict, wait: bool = True) -> dict | None:
         """Posts data to self.url
@@ -278,7 +285,7 @@ class QCMDMeasurementDevice(DeviceBase):
         self._sleep_time = float(sleep_time)
 
         result = await self._record_with_monitor()
-        self._sleep_time = None
+        self._sleep_time = 0.0
 
         return result
 
@@ -316,10 +323,10 @@ class QCMDMeasurementDevice(DeviceBase):
                                              'text': 'Interrupt',
                                              'visible': not self.idle},
                                 'set_sleep_time': {'type': 'textbox',
-                                                  'text': 'Set sleep time (s): ',
+                                                  'text': 'Set sleep time (min): ',
                                                   'visible': self.idle},
                                 'set_record_time': {'type': 'textbox',
-                                                  'text': 'Set record time (s): ',
+                                                  'text': 'Set record time (min): ',
                                                   'visible': self.idle},
                                                   }})
         
@@ -338,10 +345,10 @@ class QCMDMeasurementDevice(DeviceBase):
         if command == 'interrupt':
             self.interrupt()
         elif command == 'set_sleep_time':
-            self._sleep_time = float(data['value'])
+            self._sleep_time = float(data['value']) * 60
             await self.trigger_update()
         elif command == 'set_record_time':
-            self._record_time = float(data['value'])
+            self._record_time = float(data['value']) * 60
             await self.trigger_update()
         elif command == 'set_temperature':
             async def set_temp_and_update():
@@ -359,12 +366,13 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
         self.well: Well = Well(composition=Composition(), volume=1, rack_id=self.name, well_number=1, id=None)
 
-        self.methods.update({'QCMDRecord': self.QCMDRecord(self, qcmd),
-                'QCMDRecordTag': self.QCMDRecordTag(self, qcmd),
-                'QCMDSleep': self.QCMDSleep(self, qcmd),
-                #'QCMDAcceptTransfer': self.QCMDAcceptTransfer(qcmd, self.well),
-                'QCMDStart': self.QCMDStart(self, qcmd),
-                'QCMDStop': self.QCMDStop(self, qcmd)})
+        self.register('QCMDRecord', self.QCMDRecord(self, qcmd), task_type='measure')
+        self.register('QCMDRecordTag', self.QCMDRecordTag(self, qcmd), task_type='measure')
+        self.register('QCMDRecordCurrent', self.QCMDRecordCurrent(self, qcmd), task_type='measure')
+        self.register('QCMDSleep', self.QCMDSleep(self, qcmd), task_type='none')
+        #self.register('QCMDAcceptTransfer', self.QCMDAcceptTransfer(qcmd, self.well), task_type='none')
+        self.register('QCMDStart', self.QCMDStart(self, qcmd), task_type='none')
+        self.register('QCMDStop', self.QCMDStop(self, qcmd), task_type='none')
         
         self.qcmd = qcmd
 
@@ -392,8 +400,8 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
         if command == 'add_tag':
             self.run_method('QCMDRecordTag', dict(tag_name=data['value'],
-                                                  record_time=self.qcmd._record_time,
-                                                  sleep_time=self.qcmd._sleep_time))
+                                                  record_time=self.qcmd._record_time / 60,
+                                                  sleep_time=self.qcmd._sleep_time / 60))
         elif command == 'start':
             self.run_method('QCMDStart', dict(description=data['value']))
 
@@ -424,15 +432,15 @@ class QCMDMeasurementChannel(InjectionChannelBase):
         class MethodDefinition(MethodBase.MethodDefinition):
 
             name: str = 'QCMDSleep'
-            sleep_time: float = 0.0
+            sleep_time: float = 0.0  # minutes
 
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
             self.reserve_all()
-            self.logger.info(f'{self.name}: Starting sleep for {method.sleep_time} s')
-            result = await self.qcmd.sleep(method.sleep_time)
-            self.logger.info(f'{self.name}: Actual time slept {self.qcmd.result["total time"]} s')
+            self.logger.info(f'{self.name}: Starting sleep for {method.sleep_time} min')
+            result = await self.qcmd.sleep(method.sleep_time * 60)
+            self.logger.info(f'{self.name}: Actual time slept {result["total time"]} s')
             self.release_all()
 
             return result
@@ -441,21 +449,23 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
         @dataclass
         class MethodDefinition(MethodBase.MethodDefinition):
-            """Recording 
+            """Recording
 
             Args:
-                record_time (float, optional): Time to record in seconds. Defaults to 0.0.
-                sleep_time (float, optional): Time to sleep before recording in seconds. Defaults to 0.0.
+                record_time (float, optional): Time to record in minutes. Defaults to 0.0.
+                sleep_time (float, optional): Time to sleep before recording in minutes. Defaults to 0.0.
             """
             name: str = 'QCMDRecord'
-            record_time: float = 0.0
-            sleep_time: float = 0.0
+            record_time: float = 0.0  # minutes
+            sleep_time: float = 0.0   # minutes
 
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
+            if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
+                await self.throw_error('QCMD instrument is disconnected', critical=True)
             self.reserve_all()
-            result = await self.qcmd.record(method.record_time, method.sleep_time)
+            result = await self.qcmd.record(float(method.record_time or 0) * 60, float(method.sleep_time or 0) * 60)
             self.release_all()
 
             return result
@@ -468,19 +478,42 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             Args:
                 tag_name (str, optional): Tag name
-                record_time (float, optional): Time to record in seconds. Defaults to 0.0.
-                sleep_time (float, optional): Time to sleep before recording in seconds. Defaults to 0.0.
+                record_time (float, optional): Time to record in minutes. Defaults to 0.0.
+                sleep_time (float, optional): Time to sleep before recording in minutes. Defaults to 0.0.
             """
             name: str = 'QCMDRecordTag'
             tag_name: str = ''
-            record_time: float = 0.0
-            sleep_time: float = 0.0
+            record_time: float = 0.0  # minutes
+            sleep_time: float = 0.0   # minutes
 
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
+            if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
+                await self.throw_error('QCMD instrument is disconnected', critical=True)
             self.reserve_all()
-            result = await self.qcmd.record_tag(method.tag_name, method.record_time, method.sleep_time)
+            result = await self.qcmd.record_tag(method.tag_name, float(method.record_time or 0) * 60, float(method.sleep_time or 0) * 60)
+            self.release_all()
+
+            return result
+
+    class QCMDRecordCurrent(QCMDMethodBase):
+
+        @dataclass
+        class MethodDefinition(MethodBase.MethodDefinition):
+
+            name: str = 'QCMDRecordCurrent'
+            record_time: float = 0.0  # minutes
+            sleep_time: float = 0.0   # minutes
+
+        async def run(self, **kwargs):
+
+            method = self.MethodDefinition(**kwargs)
+            if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
+                await self.throw_error('QCMD instrument is disconnected', critical=True)
+            self.reserve_all()
+            tag_name = repr(self.ch.well.composition)
+            result = await self.qcmd.record_tag(tag_name, float(method.record_time or 0) * 60, float(method.sleep_time or 0) * 60)
             self.release_all()
 
             return result
@@ -544,7 +577,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             return {'start': start_result, 'temp': temp_result}
 
-class QCMDAcceptTransfer(MethodBase):
+class QCMDAcceptTransfer(MethodBasewithCompositionReceive):
 
     def __init__(self, channel: QCMDMeasurementChannel, layout: LHBedLayout):
         super().__init__([channel.qcmd])
@@ -555,20 +588,20 @@ class QCMDAcceptTransfer(MethodBase):
     class MethodDefinition(MethodBase.MethodDefinition):
 
         name: str = 'QCMDAcceptTransfer'
-        contents: dict = field(default_factory=dict)
 
     async def run(self, **kwargs):
 
         method = self.MethodDefinition(**kwargs)
-        contents = Composition.model_validate(method.contents)
         self.reserve_all()
-        self.logger.info(f'{self.name}: Received transfer of material {repr(contents)}')
         well, _ = self.layout.get_well_and_rack(self.channel.name, 1)
-        well.composition = contents
-        result = {'contents': contents.model_dump()}
+        composition_dict = await self.receive_composition()
+        if composition_dict is not None:
+            composition = Composition.model_validate(composition_dict)
+            self.logger.info(f'{self.name}: Received transfer of material {repr(composition)}')
+            well.composition = composition
         self.release_all()
 
-        return result
+        return {'composition': well.composition.model_dump()}
 
 class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
 
@@ -577,8 +610,9 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
         super().__init__(qcmd, name)
         self.devices += [camera]
 
-        self.methods.update({'QCMDRecordTag': self.QCMDRecordTagwithCamera(self, qcmd, camera),
-                             'QCMDCaptureImage': self.QCMDCaptureImage(self, qcmd, camera)})
+        self.register('QCMDRecordTag', self.QCMDRecordTagwithCamera(self, qcmd, camera), task_type='measure')
+        self.register('QCMDRecordCurrent', self.QCMDRecordCurrentwithCamera(self, qcmd, camera), task_type='measure')
+        self.register('QCMDCaptureImage', self.QCMDCaptureImage(self, qcmd, camera), task_type='measure')
 
     class QCMDMethodBasewithCamera(QCMDMeasurementChannel.QCMDMethodBase):
 
@@ -613,24 +647,52 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
 
             Args:
                 tag_name (str, optional): Tag name
-                record_time (float, optional): Time to record in seconds. Defaults to 0.0.
-                sleep_time (float, optional): Time to sleep before recording in seconds. Defaults to 0.0.
+                record_time (float, optional): Time to record in minutes. Defaults to 0.0.
+                sleep_time (float, optional): Time to sleep before recording in minutes. Defaults to 0.0.
             """
             name: str = 'QCMDRecordTag'
             tag_name: str = ''
-            record_time: float = 0.0
-            sleep_time: float = 0.0
+            record_time: float = 0.0  # minutes
+            sleep_time: float = 0.0   # minutes
 
         async def run(self, **kwargs):
 
             method = self.MethodDefinition(**kwargs)
+            if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
+                await self.throw_error('QCMD instrument is disconnected', critical=True)
             self.reserve_all()
             await self.camera.capture()
             result = {'images': {'before': self.camera.image}}
-            method_result = await self.qcmd.record_tag(method.tag_name, method.record_time, method.sleep_time)
+            method_result = await self.qcmd.record_tag(method.tag_name, float(method.record_time or 0) * 60, float(method.sleep_time or 0) * 60)
             print(method_result)
             result = result | method_result
             print(result)
+            await self.camera.capture()
+            result['images'].update({'after': self.camera.image})
+            self.release_all()
+
+            return result
+
+    class QCMDRecordCurrentwithCamera(QCMDMethodBasewithCamera):
+
+        @dataclass
+        class MethodDefinition(MethodBase.MethodDefinition):
+
+            name: str = 'QCMDRecordCurrent'
+            record_time: float = 0.0  # minutes
+            sleep_time: float = 0.0   # minutes
+
+        async def run(self, **kwargs):
+
+            method = self.MethodDefinition(**kwargs)
+            if self.qcmd.qcmd_status == QCMDState.DISCONNECTED:
+                await self.throw_error('QCMD instrument is disconnected', critical=True)
+            self.reserve_all()
+            tag_name = repr(self.ch.well.composition)
+            await self.camera.capture()
+            result = {'images': {'before': self.camera.image}}
+            method_result = await self.qcmd.record_tag(tag_name, float(method.record_time or 0) * 60, float(method.sleep_time or 0) * 60)
+            result = result | method_result
             await self.camera.capture()
             result['images'].update({'after': self.camera.image})
             self.release_all()
@@ -719,7 +781,7 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
             await self.trigger_layout_update()
 
         for ch in self.channels:
-            ch.methods.update({'QCMDAcceptTransfer': QCMDAcceptTransfer(ch, self.layout)})
+            ch.register('QCMDAcceptTransfer', QCMDAcceptTransfer(ch, self.layout), task_type='none')
             ch.method_callbacks.append(trigger_layout_update)
 
     async def run_camera_discovery(self):

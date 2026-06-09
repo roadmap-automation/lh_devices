@@ -17,11 +17,10 @@ from ..device import SyringePumpBase, ValvePositionerBase
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump
 from ..layout import LayoutPlugin
 from ..methods import MethodBase, MethodResult, MethodError
-from ..waste import WasteInterfaceBase, WasteItem
+from ..waste import WasteInterfaceBase, WasteItem, WATER
 from ..webview import sio
 
-from lh_manager.liquid_handler.bedlayout import LHBedLayout, find_composition, Rack, Well
-from lh_manager.waste_manager.wastedata import Composition, WATER
+from lh_devices.core.bedlayout import LHBedLayout, Composition, find_composition, Rack, Well
 
 class RinseSystemBase(InjectionChannelBase, LayoutPlugin):
 
@@ -242,7 +241,7 @@ class PrimeRinseSource(MethodBase):
 
         name: str = "PrimeRinseSource"
         index: str | int = 1
-        volume: str | float = 1 # mL/min
+        volume: str | float = 1 # mL
         number_of_primes: str | int = 1
 
     async def run(self, **kwargs):
@@ -313,10 +312,9 @@ class RinseSystem(AutocontrolPlugin, RinseSystemBase):
         AutocontrolPlugin.__init__(self, database_path, self.id, self.name)
         self.rinse_loop = rinse_loop
 
-        self.methods.update({'InitiateRinse': InitiateRinse(self, waste_tracker),
-                             'PrimeRinseLoop': PrimeRinseLoop(self, waste_tracker),
-                             'PrimeRinseSource': PrimeRinseSource(self, waste_tracker)
-                            })
+        self.register('InitiateRinse', InitiateRinse(self, waste_tracker), task_type='none')
+        self.register('PrimeRinseLoop', PrimeRinseLoop(self, waste_tracker), task_type='none')
+        self.register('PrimeRinseSource', PrimeRinseSource(self, waste_tracker), task_type='none')
         
         if database_path is not None:
             self.method_callbacks.append(self.async_save_to_database)

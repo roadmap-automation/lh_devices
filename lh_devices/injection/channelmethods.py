@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 
-from ..methods import MethodBase
+from ..methods import MethodBase, MethodBasewithCompositionRelay
 from ..waste import WasteInterfaceBase
 
 from .channel import RoadmapChannelBase
@@ -82,7 +82,7 @@ class PrimeLoop(MethodBase):
 
         self.release_all()
 
-class InjectLoop(MethodBase):
+class InjectLoop(MethodBasewithCompositionRelay):
     """Injects the contents of the loop of one ROADMAP channel
     """
 
@@ -92,10 +92,10 @@ class InjectLoop(MethodBase):
 
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
-        
+
         name: str = "InjectLoop"
-        pump_volume: str | float = 0, # uL
-        pump_flow_rate: str | float = 1, # mL/min
+        pump_volume: str | float = 0 # mL
+        pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
         """InjectLoop method"""
@@ -104,7 +104,7 @@ class InjectLoop(MethodBase):
 
         method = self.MethodDefinition(**kwargs)
 
-        pump_volume = float(method.pump_volume)
+        pump_volume = float(method.pump_volume) * 1000 # mL → uL
         pump_flow_rate = float(method.pump_flow_rate) * 1000 / 60 # convert to uL / s
 
         # change to inject mode
@@ -114,15 +114,19 @@ class InjectLoop(MethodBase):
         await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, pump_volume / 1000)
         self.channel.layout.carrier_well.volume -= pump_volume / 1000        
 
+        # Capture composition before primeloop() clears it
+        composition_to_relay = self.channel.well.composition
+
         # Prime loop
         await self.channel.primeloop()
         await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, self.channel.syringe_pump.syringe_volume / 1000)
 
         await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
+        self.emit_composition(composition_to_relay)
         self.release_all()
 
-class InjectLoopBubbleSensor(MethodBase):
+class InjectLoopBubbleSensor(MethodBasewithCompositionRelay):
     """Injects the contents of the loop of one ROADMAP channel, using a bubble sensor at the end of the loop to detect
         the air gap. Bubble sensor must be powered from digital output 1 (index 0) and read from digital input 1.
     """
@@ -133,10 +137,10 @@ class InjectLoopBubbleSensor(MethodBase):
 
     @dataclass
     class MethodDefinition(MethodBase.MethodDefinition):
-        
+
         name: str = "InjectLoopBubbleSensor"
-        pump_volume: str | float = 0, # uL
-        pump_flow_rate: str | float = 1, # mL/min
+        pump_volume: str | float = 0 # mL
+        pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
         """InjectLoop method"""
@@ -145,7 +149,7 @@ class InjectLoopBubbleSensor(MethodBase):
 
         method = self.MethodDefinition(**kwargs)
 
-        pump_volume = float(method.pump_volume)
+        pump_volume = float(method.pump_volume) * 1000  # mL → uL
 
         # set minimum pump volume before checking for bubbles
         min_pump_volume = 0.7 * pump_volume if pump_volume > 200 else 0
@@ -169,9 +173,13 @@ class InjectLoopBubbleSensor(MethodBase):
         await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, actual_volume / 1000)
         self.logger.info(f'{self.channel.name}.{method.name}: Actually injected {actual_volume + actual_volume0} uL')
 
+        # Capture composition before primeloop() clears it
+        composition_to_relay = self.channel.well.composition
+
         # Switch to prime loop mode and flush
         await self.channel.primeloop()
         await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, self.channel.syringe_pump.syringe_volume / 1000)
         await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
+        self.emit_composition(composition_to_relay)
         self.release_all()

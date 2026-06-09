@@ -81,6 +81,7 @@
             newdiv.append(new $('<div>').addClass("assembly_modes"))
             newdiv.append(new $('<div>').addClass("assembly_active_methods"))
             newdiv.append(new $('<div>').addClass("assembly_controls"))
+            newdiv.append(new $('<div>').addClass("assembly_method_runner"))
             let assembliesdiv = new $('<div>')
                 .addClass('sub_assemblies')
                 .addClass("grid-container")
@@ -102,6 +103,7 @@
             newdiv.append(new $('<div>').addClass("device_config"))
             newdiv.append(new $('<div>').addClass("device_state"))
             newdiv.append(new $('<div>').addClass("device_controls"))
+            newdiv.append(new $('<div>').addClass("device_method_runner"))
 
             return newdiv
         }
@@ -183,6 +185,15 @@
                                     Plotly.react(newdiv.get(0), plotobj['data'], plotobj['layout'], {responsive: true})
                                 }
                             }
+                            if ('pre' in data['state']) {
+                                if (data['state']['pre'] != null) {
+                                    let details = $('<details>').appendTo(statediv)
+                                    $('<summary>').text(data['state']['pre']['label'] ?? 'Details').appendTo(details)
+                                    $('<pre>').text(JSON.stringify(data['state']['pre']['data'], null, 2))
+                                        .css('white-space', 'pre-wrap')
+                                        .appendTo(details)
+                                }
+                            }
                             if ('image' in data['state']) {
                                 if (data['state']['image'] != null) {
                                     console.log(data['state'])
@@ -215,6 +226,7 @@
                                     }
                                 }
                             update_controls($(this).children(".device_controls"), id, data['controls'])
+                            update_method_runner($(this).children(".device_method_runner"), id, data['method_schemas'])
                         }
                         else if (data['type'] == 'assembly') {
                             $(this).children(".assembly_name").empty().append(data['name']);
@@ -222,6 +234,7 @@
                             update_modes($(this).children(".assembly_modes"), id, data['modes'], data['current_mode'])
                             update_active_methods($(this).children(".assembly_active_methods"), id, data['active_methods'])
                             update_controls($(this).children(".assembly_controls"), id, data['controls'])
+                            update_method_runner($(this).children(".assembly_method_runner"), id, data['method_schemas'])
                         }
                         set_border($(this), data['state'])
                     });
@@ -434,6 +447,69 @@
             }
         }
 
+        function update_method_runner(runnerdiv, id, schemas) {
+            if (runnerdiv.hasClass('method_runner_built')) return;
+            if (!schemas || Object.keys(schemas).length === 0) return;
+
+            runnerdiv.addClass('method_runner_built')
+
+            let headerrow = $('<div>').addClass('textbox_controls').appendTo(runnerdiv)
+            $('<div>').addClass('method_runner_label').text('Run method: ').appendTo(headerrow)
+            let select = $('<select>').css({flex: '1', minWidth: '0'}).appendTo(headerrow)
+            $('<option>').val('').text('').appendTo(select)
+            Object.keys(schemas).forEach(function(method_name) {
+                $('<option>').val(method_name).text(method_name).appendTo(select)
+            })
+            let runbutton = $('<button>').text('Run').hide().appendTo(headerrow)
+
+            let fieldsdiv = $('<div>').appendTo(runnerdiv)
+
+            let currentInputs = {}
+            let currentFields = []
+            let currentMethod = null
+
+            select.on('change', function() {
+                let method_name = select.val()
+                fieldsdiv.empty()
+                currentInputs = {}
+                currentFields = []
+                currentMethod = method_name || null
+                currentMethod ? runbutton.show() : runbutton.hide()
+                if (!currentMethod) return
+                currentFields = schemas[method_name]
+                currentFields.forEach(function(f) {
+                    let row = $('<div>').addClass('textbox_controls').appendTo(fieldsdiv)
+                    $('<div>').text(f.name + ': ').css('min-width', '10em').appendTo(row)
+                    let input
+                    if (f.type.includes('float')) {
+                        input = $('<input type="number">').attr('step', 'any').val(f.default ?? '')
+                    } else if (f.type.includes('int')) {
+                        input = $('<input type="number">').attr('step', '1').val(f.default ?? '')
+                    } else {
+                        input = $('<input type="text">').val(f.default ?? '')
+                    }
+                    input.addClass('input_text').appendTo(row)
+                    currentInputs[f.name] = input
+                })
+            })
+
+            runbutton.on('click', function() {
+                if (!currentMethod) return
+                let method_data = {}
+                currentFields.forEach(function(f) {
+                    let val = currentInputs[f.name].val()
+                    if (f.type.includes('float')) {
+                        method_data[f.name] = parseFloat(val)
+                    } else if (f.type.includes('int')) {
+                        method_data[f.name] = parseInt(val)
+                    } else {
+                        method_data[f.name] = val
+                    }
+                })
+                issue_command(id, 'run_method', {method_name: currentMethod, method_data: method_data})
+            })
+        }
+
         function format_volume(volume) {
             // volume in mL
             if (volume < 1.0) {
@@ -547,6 +623,22 @@
     }
     .assembly_active_methods {
         padding: 10px;
+    }
+    .assembly_method_runner {
+        padding: 10px;
+        border-top: 1px solid rgba(0,0,0,0.15);
+        margin-top: 4px;
+    }
+    .method_runner_label {
+        font-weight: bold;
+        margin-bottom: 4px;
+    }
+    .assembly_method_runner details {
+        margin: 4px 0;
+    }
+    .assembly_method_runner summary {
+        cursor: pointer;
+        font-family: monospace;
     }
     .monitortext {
         font-size: large;

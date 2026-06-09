@@ -6,7 +6,7 @@ from aiohttp import web
 from aiohttp.web_app import Application as Application
 from pathlib import Path
 
-from lh_manager.liquid_handler.bedlayout import LHBedLayout, Well, Rack
+from lh_devices.core.bedlayout import LHBedLayout, Well, Rack
 
 from .webview import WebNodeBase, sio
 
@@ -46,7 +46,7 @@ class LayoutPlugin(WebNodeBase):
             wells = self.layout.get_all_wells()
             wells_dict = [well.model_dump() for well in wells]
             for wd in wells_dict:
-                wd['zone'] = None
+                wd['zone'] = wd['rack_id']
             return web.Response(text=json.dumps(wells_dict), status=200)
         else:
             return web.Response(text=json.dumps(None), status=200)

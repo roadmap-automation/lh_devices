@@ -4,6 +4,8 @@ setup(
     name='lh_devices',
     version='0.1.0',
     packages=['lh_devices',
+              'lh_devices.core',
+              'lh_devices.gilson_lh',
               'lh_devices.camera',
               'lh_devices.gilson',
               'lh_devices.hamilton',
@@ -26,5 +28,6 @@ setup(
               "svg.py",
               "aio-pika",
               "roadmap-broker-client",
+              "pydantic",
     ],
 )

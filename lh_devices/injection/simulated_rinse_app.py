@@ -3,11 +3,8 @@ import datetime
 import logging
 import pathlib
 
-from aiohttp.web_app import Application as Application
-
 from ..distribution import DistributionSingleValveTwoSource
-from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, SMDSensoronHamiltonDevice
-from ..hamilton.HamiltonComm import HamiltonSerial
+from ..hamilton.HamiltonDevice import SimulatedHamiltonValvePositioner, SimulatedHamiltonSyringePump, SimulatedSensoronHamiltonDevice
 from ..valve import LoopFlowValve, DistributionValve, SyringeLValve, SyringeYValve, YValve
 from ..webview import run_socket_app
 from ..components import InjectionPort, FlowCell
@@ -16,60 +13,32 @@ from ..broker_plugin import BrokerWasteInterface, DeviceBrokerWorker
 from .channel import RoadmapChannelBubbleSensor
 from .injectionsystem import RoadmapChannelAssemblyRinse
 from ..rinse.rinsesystem import RinseSystem
-from ..notify import notifier
 
 DEVICE_ID_INJECTION = 'injection'
 DEVICE_ID_RINSE = 'rinse'
 DEVICE_ID_DISTRIBUTION = 'distribution'
 LOG_PATH = pathlib.Path(__file__).parent.parent.parent / 'logs'
 HISTORY_PATH = pathlib.Path(__file__).parent.parent.parent / 'history'
-NOTIFICATION_CONFIG_PATH = pathlib.Path(__file__).parent.parent.parent / 'notification_settings.json'
 
 async def run_injection_system():
 
-    # connect to error notifier
-    notifier.load_config(NOTIFICATION_CONFIG_PATH)
-    notifier.connect()
-
     # ============== Rinse System setup =========================
 
-    """Assumes the following setup:
+    selector_valve = SimulatedHamiltonValvePositioner(DistributionValve(8, name='selector_valve'), name='Selector Valve')
+    source_valve = SimulatedHamiltonValvePositioner(DistributionValve(4, name='source_valve'), name='Source Valve')
+    syringe_pump = SimulatedHamiltonSyringePump(SyringeYValve(name='syringe_YValve'), 5000., False, name='Syringe Pump')
 
-        o Syringe pump with a mounted Y-valve.
-        o "Selector" valve positioner with an 8-port distribution valve. Each of the ports except the common port and port 8 is 
-            connected to a solvent bottle. Port 8 is connected to waste for priming
-        o "Source" valve positioner with a 4-port distribution valve and the following connections:
-            - common port (0) connected via a sample loop (5 mL) to syringe pump Y-valve outlet
-            - port 1 connected to the common port (0) of the selector valve
-            - port 2 connected to a source of air
-            - port 3 connected to a direct injection distribution valve
-            - port 4 connected to a loop injection distribution valve
-    """
+    syringe_pump.max_dispense_flow_rate = 5 * 1000 / 60
+    syringe_pump.max_aspirate_flow_rate = 15 * 1000 / 60
 
-    # serial communications setup
-    ser_rinse = HamiltonSerial(port='COM6', baudrate=38400)
-
-    # device setup
-    selector_valve = HamiltonValvePositioner(ser_rinse, '2', DistributionValve(8, name='selector_valve'), name='Selector Valve')
-    source_valve = HamiltonValvePositioner(ser_rinse, '1', DistributionValve(4, name='source_valve'), name='Source Valve')
-    syringe_pump = HamiltonSyringePump(ser_rinse, '0', SyringeYValve(name='syringe_YValve'), 5000., False, name='Syringe Pump')
-
-    for sp in [syringe_pump]:
-        sp.max_dispense_flow_rate = 5 * 1000 / 60
-        sp.max_aspirate_flow_rate = 15 * 1000 / 60
-    
     rinse_loop = FlowCell(5000., 'rinse_loop')
 
-    # hackish attempt to ensure dead volume tracing goes the correct direction
     rinse_ip = InjectionPort('loop_injection_port')
     rinse_ip.injection_port = source_valve.valve.ports[3]
     rinse_ip._generate_nodes()
 
-    # connect loop to syringe pump and selector valve
     connect_nodes(rinse_loop.inlet_node, syringe_pump.valve.nodes[2], 0.0)
     connect_nodes(rinse_loop.outlet_node, source_valve.valve.nodes[0], 0.0)
-
-    # connect selector and source valves
     connect_nodes(selector_valve.valve.nodes[0], source_valve.valve.nodes[4], 265.0)
 
     waste_tracker = BrokerWasteInterface()
@@ -85,18 +54,16 @@ async def run_injection_system():
                                waste_tracker=waste_tracker,
                                name='Rinse System',
                                id='rinse_system')
-    
+
     rinseapp = rinse_system.create_web_app(template='roadmap.html')
     rinse_runner = await run_socket_app(rinseapp, 'localhost', 5014)
 
     # ============== Distribution System setup ==================
-    ser = HamiltonSerial(port='COM9', baudrate=38400)
 
     ip = InjectionPort('LH_injection_port')
 
-    # Distribution system
-    dvp_source = HamiltonValvePositioner(ser, '7', YValve(name='source_valve'), name='Distribution Source Valve')
-    dvp_selection = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Selection Valve')
+    dvp_source = SimulatedHamiltonValvePositioner(YValve(name='source_valve'), name='Distribution Source Valve')
+    dvp_selection = SimulatedHamiltonValvePositioner(DistributionValve(8, name='distribution_valve'), name='Distribution Selection Valve')
 
     distribution_system = DistributionSingleValveTwoSource(source_valve=dvp_source,
                                                            distribution_valve=dvp_selection,
@@ -109,25 +76,25 @@ async def run_injection_system():
 
     # ============== Injection System setup =====================
 
-    mvp0 = HamiltonValvePositioner(ser, '1', LoopFlowValve(6, name='loop_valve0'), name='Loop Valve 0')
-    outlet_bubble_sensor0 = SMDSensoronHamiltonDevice(mvp0, 2, 1)
-    inlet_bubble_sensor0 = SMDSensoronHamiltonDevice(mvp0, 1, 0)
-    sp0 = HamiltonSyringePump(ser, '0', SyringeLValve(4, name='syringe_LValve0'), 5000., False, name='Syringe Pump 0')
+    mvp0 = SimulatedHamiltonValvePositioner(LoopFlowValve(6, name='loop_valve0'), name='Loop Valve 0')
+    outlet_bubble_sensor0 = SimulatedSensoronHamiltonDevice(mvp0, 2, 1)
+    inlet_bubble_sensor0 = SimulatedSensoronHamiltonDevice(mvp0, 1, 0)
+    sp0 = SimulatedHamiltonSyringePump(SyringeLValve(4, name='syringe_LValve0'), 5000., False, name='Syringe Pump 0')
 
-    mvp1 = HamiltonValvePositioner(ser, '4', LoopFlowValve(6, name='loop_valve1'), name='Loop Valve 1')
-    outlet_bubble_sensor1 = SMDSensoronHamiltonDevice(mvp1, 2, 1)
-    inlet_bubble_sensor1 = SMDSensoronHamiltonDevice(mvp1, 1, 0)
-    sp1 = HamiltonSyringePump(ser, '3', SyringeLValve(4, name='syringe_LValve1'), 5000., False, name='Syringe Pump 1')
+    mvp1 = SimulatedHamiltonValvePositioner(LoopFlowValve(6, name='loop_valve1'), name='Loop Valve 1')
+    outlet_bubble_sensor1 = SimulatedSensoronHamiltonDevice(mvp1, 2, 1)
+    inlet_bubble_sensor1 = SimulatedSensoronHamiltonDevice(mvp1, 1, 0)
+    sp1 = SimulatedHamiltonSyringePump(SyringeLValve(4, name='syringe_LValve1'), 5000., False, name='Syringe Pump 1')
 
-    mvp2 = HamiltonValvePositioner(ser, '6', LoopFlowValve(6, name='loop_valve2'), name='Loop Valve 2')
-    outlet_bubble_sensor2 = SMDSensoronHamiltonDevice(mvp2, 2, 1)
-    inlet_bubble_sensor2 = SMDSensoronHamiltonDevice(mvp2, 1, 0)
-    sp2 = HamiltonSyringePump(ser, '5', SyringeLValve(4, name='syringe_LValve2'), 5000., False, name='Syringe Pump 2')
+    mvp2 = SimulatedHamiltonValvePositioner(LoopFlowValve(6, name='loop_valve2'), name='Loop Valve 2')
+    outlet_bubble_sensor2 = SimulatedSensoronHamiltonDevice(mvp2, 2, 1)
+    inlet_bubble_sensor2 = SimulatedSensoronHamiltonDevice(mvp2, 1, 0)
+    sp2 = SimulatedHamiltonSyringePump(SyringeLValve(4, name='syringe_LValve2'), 5000., False, name='Syringe Pump 2')
 
     for sp in [sp0, sp1, sp2]:
         sp.max_dispense_flow_rate = 5 * 1000 / 60
         sp.max_aspirate_flow_rate = 15 * 1000 / 60
-    
+
     fc0 = FlowCell(139, 'flow_cell0')
     fc1 = FlowCell(139, 'flow_cell1')
     fc2 = FlowCell(139, 'flow_cell2')
@@ -153,7 +120,6 @@ async def run_injection_system():
     connect_nodes(dvp_selection.valve.nodes[5], sp2.valve.nodes[2], 90 + 20)
 
     # direct inject: connect distribution valve port 2 to loop valve node 3 (top right)
-    # volume ~ tubing volume + 60 uL for bubble sensor
     connect_nodes(dvp_selection.valve.nodes[2], mvp0.valve.nodes[3], 120)
     connect_nodes(dvp_selection.valve.nodes[4], mvp1.valve.nodes[3], 200)
     connect_nodes(dvp_selection.valve.nodes[6], mvp2.valve.nodes[3], 200)
@@ -185,36 +151,18 @@ async def run_injection_system():
                                             database_path=HISTORY_PATH / 'injection_system.db',
                                             waste_tracker=waste_tracker,
                                             name='MultiChannel Injection System')
-    
-    injection_worker = DeviceBrokerWorker(DEVICE_ID_INJECTION,
-                                          qcmd_system,
-                                          local_port=5003,
-                                          device_type=DEVICE_ID_INJECTION,
-                                          allow_sample_mixing=True)
+
+    injection_worker = DeviceBrokerWorker(DEVICE_ID_INJECTION, qcmd_system, local_port=5003, device_type=DEVICE_ID_INJECTION, allow_sample_mixing=True)
     injection_worker.waste_interface = waste_tracker
-    rinse_worker = DeviceBrokerWorker(DEVICE_ID_RINSE,
-                                      rinse_system,
-                                      local_port=5014,
-                                      device_type=DEVICE_ID_RINSE,
-                                      allow_sample_mixing=False)
+    rinse_worker = DeviceBrokerWorker(DEVICE_ID_RINSE, rinse_system, local_port=5014, device_type=DEVICE_ID_RINSE, allow_sample_mixing=False)
     rinse_worker.waste_interface = waste_tracker
-    distribution_worker = DeviceBrokerWorker(DEVICE_ID_DISTRIBUTION,
-                                             distribution_system,
-                                             local_port=5002,
-                                             device_type=DEVICE_ID_DISTRIBUTION,
-                                             allow_sample_mixing=False)
+    distribution_worker = DeviceBrokerWorker(DEVICE_ID_DISTRIBUTION, distribution_system, local_port=5002, device_type=DEVICE_ID_DISTRIBUTION, allow_sample_mixing=False)
 
     app = qcmd_system.create_web_app(template='roadmap.html')
     runner = await run_socket_app(app, 'localhost', 5003)
 
     try:
         await qcmd_system.initialize()
-
-        #from lh_manager.liquid_handler.bedlayout import Composition, Well, Solvent
-        #rinse_system.layout.add_well_to_rack('Rinse', Well(composition=Composition(solvents=[Solvent(name='ethanol', fraction=1)]), volume=2000, rack_id='Rinse', well_number=1))
-        #rinse_system.layout.add_well_to_rack('Rinse', Well(composition=Composition(solvents=[Solvent(name='isopropanol', fraction=1)]), volume=2000, rack_id='Rinse', well_number=2))
-        #rinse_system.layout.add_well_to_rack('Rinse', Well(composition=Composition(solvents=[Solvent(name='D2O', fraction=1)]), volume=2000, rack_id='Rinse', well_number=3))
-        #rinse_system.save_layout()
 
         await asyncio.gather(
             injection_worker.start(),
@@ -230,22 +178,18 @@ async def run_injection_system():
                     rinse_runner.cleanup(),
                     distribution_runner.cleanup())
 
-if __name__=='__main__':
+if __name__ == '__main__':
 
     import sys
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    # required for different GSIOC logging level
-    output_level = logging.INFO
-
-    file_handler = logging.FileHandler(LOG_PATH / (datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_injection_log.txt'))
-    file_handler.setLevel(output_level)
-    stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(output_level)
-    logging.basicConfig(handlers=[file_handler, stream_handler],
+    logging.basicConfig(handlers=[
+                        logging.FileHandler(LOG_PATH / (datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_injection_log.txt')),
+                        logging.StreamHandler()
+                    ],
                     format='%(asctime)s.%(msecs)03d %(levelname)s %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S',
-                    level=output_level)
+                    level=logging.INFO)
 
     asyncio.run(run_injection_system(), debug=True)

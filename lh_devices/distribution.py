@@ -89,7 +89,7 @@ class DistributionSingleValveTwoSource(AutocontrolPlugin, DistributionBase, Layo
                            'Standby': Mode({source_valve: 0,
                                             distribution_valve: 0})})
         
-        self.methods.update({'InitiateDistribution': InitiateDistribution(self)})
+        self.register('InitiateDistribution', InitiateDistribution(self), task_type='none')
         
     async def _get_status(self, request):
         return web.Response(text=json.dumps(dict(status=Status.BUSY if any(dev.reserved for dev in self.devices) else Status.IDLE,

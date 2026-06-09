@@ -25,7 +25,12 @@ async def qcmd_multichannel_measure():
                                                            layout_path=LOG_PATH / 'qcmd_layout.json')
     await measurement_system.initialize()
 
-    broker_worker = DeviceBrokerWorker(DEVICE_ID, measurement_system, local_port=5005)
+    broker_worker = DeviceBrokerWorker(
+        DEVICE_ID, measurement_system, local_port=5005,
+        display_name='QCMD Instrument Array',
+        device_type='qcmd',
+        allow_sample_mixing=False,
+    )
     await broker_worker.start()
 
     app = measurement_system.create_web_app(template='roadmap.html')
@@ -56,6 +61,10 @@ async def qcmd_multichannel_measure():
         )
 
 if __name__ == '__main__':
+
+    import sys
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     logging.basicConfig(handlers=[
                         logging.FileHandler(LOG_PATH / (datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_qcmdmulti_log.txt')),

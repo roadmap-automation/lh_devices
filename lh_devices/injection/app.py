@@ -10,7 +10,6 @@ from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePu
 from ..hamilton.HamiltonComm import HamiltonSerial
 from ..valve import LoopFlowValve, DistributionValve, SyringeLValve
 from ..webview import run_socket_app
-from ..gilson.gsioc import GSIOC
 from ..components import InjectionPort, FlowCell
 from ..connections import connect_nodes
 from ..waste import RoadmapWasteInterface
@@ -24,7 +23,6 @@ DEVICE_ID = 'injection'
 
 async def run_injection_system():
     # serial communications setup
-    gsioc = GSIOC(62, 'COM13', 19200)
     ser = HamiltonSerial(port='COM9', baudrate=38400)
 
     # device setup
@@ -103,12 +101,16 @@ async def run_injection_system():
 
     qcmd_system = RoadmapChannelAssembly([channel_0, channel_1, channel_2],
                                             distribution_system=distribution_system,
-                                            gsioc=gsioc,
                                             database_path=HISTORY_PATH / 'injection_system.db',
                                             waste_tracker=waste_tracker,
                                             name='MultiChannel Injection System')
     
-    broker_worker = DeviceBrokerWorker(DEVICE_ID, qcmd_system, local_port=5003)
+    broker_worker = DeviceBrokerWorker(
+        DEVICE_ID, qcmd_system, local_port=5003,
+        display_name='Multichannel Injection System',
+        device_type='injection',
+        allow_sample_mixing=True,
+    )
     broker_worker.waste_interface = waste_tracker
 
     app = qcmd_system.create_web_app(template='roadmap.html')
@@ -116,13 +118,11 @@ async def run_injection_system():
 
     try:
         await qcmd_system.initialize()
-        gsioc_task = asyncio.create_task(gsioc.listen())
         await broker_worker.start()
         await asyncio.Event().wait()
 
     finally:
         logging.info('Closing Multichannel Injection System...')
-        gsioc_task.cancel()
         asyncio.gather(
                     runner.cleanup())
 

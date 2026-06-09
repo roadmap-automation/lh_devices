@@ -4,34 +4,32 @@ import asyncio
 from dataclasses import dataclass
 from typing import Coroutine
 
-from lh_manager.liquid_handler.bedlayout import Composition
+from lh_devices.core.bedlayout import Composition
 
 from ..assemblies import Mode
 from ..bubblesensor import BubbleSensorBase
-from ..gilson.gsioc import GSIOC
-from ..methods import MethodBase, MethodBaseDeadVolume
+from ..methods import MethodBase, MethodBasewithBrokerTrigger, MethodBasewithCompositionReceive
 from ..waste import WasteInterfaceBase
 
 from .channel import RoadmapChannelBase
 
-class LoadLoop(MethodBaseDeadVolume):
+class LoadLoop(MethodBasewithBrokerTrigger, MethodBasewithCompositionReceive):
     """Loads the loop of one ROADMAP channel
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
-        super().__init__(gsioc, [channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__([channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.dead_volume_mode: str = 'LoadLoop'
         self.distribution_mode = distribution_mode
 
     @dataclass
-    class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
-        
+    class MethodDefinition(MethodBase.MethodDefinition):
+
         name: str = "LoadLoop"
-        composition: dict = {},
-        pump_volume: str | float = 0, # uL
-        excess_volume: str | float = 0, #uL
-        air_gap: str | float = 0, #uL, not used
+        pump_volume: str | float = 0 # mL
+        excess_volume: str | float = 0 # mL
+        air_gap: str | float = 0 # mL, not used
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
@@ -40,23 +38,18 @@ class LoadLoop(MethodBaseDeadVolume):
 
         method = self.MethodDefinition(**kwargs)
 
-        pump_volume = float(method.pump_volume)
-        excess_volume = float(method.excess_volume)
-        composition = Composition.model_validate(method.composition)
+        pump_volume = float(method.pump_volume) * 1000 # mL → uL
+        excess_volume = float(method.excess_volume) * 1000 # mL → uL
 
-        # Connect to GSIOC communications
-        self.connect_gsioc()
-
-        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
-        # method to make sure this updates in time)
+        # Set dead volume for gilson_lh to relay to Trilution via broker
         await self.distribution_mode.activate()
         dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
 
-        # blocks if there's already something in the dead volume queue
+        # broker plugin reads this queue and publishes gsioc.dead_volume.<task_id>
         await self.dead_volume.put(dead_volume)
         self.logger.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
 
-        # Wait for trigger to switch to LoadLoop mode
+        # Wait for trigger from gilson_lh (via broker gsioc.trigger.<task_id>)
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
         if self.dead_volume.qsize():
@@ -67,20 +60,19 @@ class LoadLoop(MethodBaseDeadVolume):
         # Move all valves
         await asyncio.gather(self.distribution_mode.activate(), self.channel.change_mode('LoadLoop'))
 
-        # Wait for trigger to switch to PumpAspirate mode
+        # Wait for second trigger from gilson_lh
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
         await self.wait_for_trigger()
 
-        # At this point, liquid handler is done, release communications
-        self.disconnect_gsioc()
         for valve in self.distribution_mode.valves.keys():
             self.release(valve)
             await valve.trigger_update()
-        #self.release_liquid_handler.set()
 
-        # Register material in loop
-        self.channel.well.composition = composition
+        # Register material in loop; wait for composition published by gilson_lh on method completion.
         self.channel.well.volume = (pump_volume + excess_volume) / 1000
+        composition_dict = await self.receive_composition()
+        if composition_dict is not None:
+            self.channel.well.composition = Composition.model_validate(composition_dict)
 
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
         await self.channel.change_mode('PumpPrimeLoop')
@@ -96,25 +88,24 @@ class LoadLoop(MethodBaseDeadVolume):
 
         self.release_all()
 
-class LoadLoopBubbleSensor(MethodBaseDeadVolume):
+class LoadLoopBubbleSensor(MethodBasewithBrokerTrigger, MethodBasewithCompositionReceive):
     """Loads the loop of one ROADMAP channel using a bubble sensor at the waste to detect the air gap.
         Bubble sensor must be powered by digital output 2 (index 1) and read from digital input 2
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
-        super().__init__(gsioc, [channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__([channel.syringe_pump, channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.dead_volume_mode: str = 'LoadLoop'
         self.distribution_mode = distribution_mode
 
     @dataclass
-    class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
-        
+    class MethodDefinition(MethodBase.MethodDefinition):
+
         name: str = "LoadLoopBubbleSensor"
-        composition: dict = {},
-        pump_volume: str | float = 0, # uL
-        excess_volume: str | float = 0 # uL, not used
-        air_gap: str | float = 0, #uL
+        pump_volume: str | float = 0 # mL
+        excess_volume: str | float = 0 # mL, not used
+        air_gap: str | float = 0 # mL
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
@@ -124,30 +115,25 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
 
         method = self.MethodDefinition(**kwargs)
 
-        pump_volume = float(method.pump_volume)
-        excess_volume = float(method.excess_volume)
-        air_gap = float(method.air_gap)
-        composition = Composition.model_validate(method.composition)
-
-        # Connect to GSIOC communications
-        self.connect_gsioc()
+        pump_volume = float(method.pump_volume) * 1000 # mL → uL
+        excess_volume = float(method.excess_volume) * 1000 # mL → uL
+        air_gap = float(method.air_gap) * 1000 # mL → uL
 
         # Power the bubble sensor
         await self.channel.syringe_pump.set_digital_output(1, True)
 
+        # Wait for initial trigger from gilson_lh (via broker gsioc.trigger.<task_id>)
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
         await self.distribution_mode.activate()
         await self.wait_for_trigger()
 
-        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
-        # method to make sure this updates in time)
+        # Set dead volume for gilson_lh to relay to Trilution; broker plugin reads queue
         dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
 
-        # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
         self.logger.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
 
-        # Wait for trigger to switch to LoadLoop mode
+        # Wait for second trigger from gilson_lh
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
         if self.dead_volume.qsize():
@@ -159,19 +145,19 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
         # Move all valves
         await self.channel.change_mode('LoadLoop')
 
-        # Wait for trigger to switch to PumpAspirate mode
+        # Wait for third trigger from gilson_lh
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
         await self.wait_for_trigger()
 
-        # At this point, liquid handler is done, release communications
-        self.disconnect_gsioc()
         for valve in self.distribution_mode.valves.keys():
             self.release(valve)
             await valve.trigger_update()
 
-        # Register material in loop
-        self.channel.well.composition = composition
+        # Register material in loop; wait for composition published by gilson_lh on method completion.
         self.channel.well.volume = (pump_volume + excess_volume) / 1000
+        composition_dict = await self.receive_composition()
+        if composition_dict is not None:
+            self.channel.well.composition = Composition.model_validate(composition_dict)
 
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to PumpPrimeLoop mode')
         await self.channel.change_mode('PumpPrimeLoop')
@@ -228,22 +214,22 @@ class LoadLoopBubbleSensor(MethodBaseDeadVolume):
 
         self.release_all()
 
-class DirectInjectPrime(MethodBaseDeadVolume):
+class DirectInjectPrime(MethodBasewithBrokerTrigger):
     """Prime direct inject line
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
-        super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__([channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.dead_volume_mode: str = 'LHPrime'
         self.distribution_mode = distribution_mode
 
     @dataclass
-    class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
+    class MethodDefinition(MethodBase.MethodDefinition):
         
         name: str = "DirectInjectPrime"
-        pump_volume: str | float = 0, # uL
-        pump_flow_rate: str | float = 1, # mL/min        
+        pump_volume: str | float = 0 # mL
+        pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
         """Same as DirectInject but does not switch to injection mode"""
@@ -252,23 +238,18 @@ class DirectInjectPrime(MethodBaseDeadVolume):
 
         method = self.MethodDefinition(**kwargs)
 
-        # Connect to GSIOC communications
-        self.connect_gsioc()
-
-        # Wait for initial trigger
+        # Wait for initial trigger from gilson_lh (via broker gsioc.trigger.<task_id>)
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
         await self.distribution_mode.activate()
         await self.wait_for_trigger()
 
-        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
-        # method to make sure this updates in time)
+        # Set dead volume for gilson_lh to relay to Trilution; broker plugin reads queue
         dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
 
-        # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
         self.logger.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
 
-        # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
+        # Wait for second trigger from gilson_lh
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
         if self.dead_volume.qsize():
@@ -281,34 +262,32 @@ class DirectInjectPrime(MethodBaseDeadVolume):
         # submit dead volume to waste (this is the only place it is tracked; total air gap size is not tracked; assumes same carrier liquid as liquid handler)
         await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, dead_volume / 1000)
 
-        # Wait for trigger to switch to standby
+        # Wait for third trigger from gilson_lh
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
         await self.wait_for_trigger()
 
-        # switch to standby mode    
-        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        # switch to standby mode
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')
         await self.channel.change_mode('Standby')
 
-        # At this point, liquid handler is done, release communications
-        self.disconnect_gsioc()
         self.release_all()
 
-class DirectInject(MethodBaseDeadVolume):
+class DirectInject(MethodBasewithBrokerTrigger):
     """Directly inject from LH to a ROADMAP channel flow cell
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, gsioc: GSIOC, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
-        super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__([channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.dead_volume_mode: str = 'LHPrime'
         self.distribution_mode = distribution_mode
 
     @dataclass
-    class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
+    class MethodDefinition(MethodBase.MethodDefinition):
         
         name: str = "DirectInject"
-        pump_volume: str | float = 0, # uL
-        pump_flow_rate: str | float = 1, # mL/min        
+        pump_volume: str | float = 0 # mL
+        pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
@@ -317,23 +296,18 @@ class DirectInject(MethodBaseDeadVolume):
 
         method = self.MethodDefinition(**kwargs)
 
-        # Connect to GSIOC communications
-        self.connect_gsioc()
-
-        # Wait for initial trigger
+        # Wait for initial trigger from gilson_lh (via broker gsioc.trigger.<task_id>)
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
         await self.distribution_mode.activate()
         await self.wait_for_trigger()
 
-        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
-        # method to make sure this updates in time)
+        # Set dead volume for gilson_lh to relay to Trilution; broker plugin reads queue
         dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
 
-        # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
         self.logger.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
 
-        # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
+        # Wait for second trigger from gilson_lh
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
         if self.dead_volume.qsize():
@@ -343,40 +317,38 @@ class DirectInject(MethodBaseDeadVolume):
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await asyncio.gather(self.channel.change_mode('LHPrime'), self.distribution_mode.activate())
 
-        # Wait for trigger to switch to {method.name} mode (LH performs injection)
+        # Wait for third trigger from gilson_lh
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')
         await self.wait_for_trigger()
 
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHInject mode')
         await self.channel.change_mode('LHInject')
 
-        # Wait for trigger to switch to LHPrime mode (fast injection of extra volume + final air gap)
+        # Wait for fourth trigger from gilson_lh
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for third trigger')
         await self.wait_for_trigger()
 
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await self.channel.change_mode('LHPrime')
 
-        # Wait for trigger to switch to Standby mode (this may not be necessary)
+        # Wait for fifth trigger from gilson_lh
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
         await self.wait_for_trigger()
 
-        # switch to standby mode    
-        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        # switch to standby mode
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')
         await self.channel.change_mode('Standby')
 
-        # At this point, liquid handler is done, release communications
-        self.disconnect_gsioc()
         self.release_all()
 
-class DirectInjectBubbleSensor(MethodBaseDeadVolume):
+class DirectInjectBubbleSensor(MethodBasewithBrokerTrigger):
     """Directly inject from LH to measurement system through distribution valve and injection system, using bubble sensors to direct flow.
     """
 
-    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode, gsioc: GSIOC,
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode,
                  inlet_bubble_sensor: BubbleSensorBase, outlet_bubble_sensor: BubbleSensorBase,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
-        super().__init__(gsioc, [channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
+        super().__init__([channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.inlet_bubble_sensor = inlet_bubble_sensor
         self.outlet_bubble_sensor = outlet_bubble_sensor
@@ -384,11 +356,11 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         self.dead_volume_mode: str = 'LHPrime'
 
     @dataclass
-    class MethodDefinition(MethodBaseDeadVolume.MethodDefinition):
+    class MethodDefinition(MethodBase.MethodDefinition):
         
         name: str = "DirectInjectBubbleSensor"
-        pump_volume: str | float = 0, # uL
-        pump_flow_rate: str | float = 1, # mL/min
+        pump_volume: str | float = 0 # mL
+        pump_flow_rate: str | float = 1 # mL/min
 
     async def run(self, **kwargs):
         """LoadLoop method, synchronized via GSIOC to liquid handler"""
@@ -396,32 +368,28 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         self.reserve_all()
 
         method = self.MethodDefinition(**kwargs)
-        pump_volume = float(method.pump_volume)
+        pump_volume = float(method.pump_volume) * 1000 # mL → uL
         pump_flow_rate = float(method.pump_flow_rate) * 1000 / 60 # convert to uL / s
 
         # set minimum pump volume before checking for bubbles
         min_pump_volume = 0.5 * pump_volume if pump_volume > 200 else 0
 
-        # Connect to GSIOC communications
-        self.connect_gsioc()
-
         # power up bubble sensors
         await self.inlet_bubble_sensor.initialize()
         await self.outlet_bubble_sensor.initialize()
 
+        # Wait for initial trigger from gilson_lh (via broker gsioc.trigger.<task_id>)
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for initial trigger')
         await self.distribution_mode.activate()
         await self.wait_for_trigger()
 
-        # Set dead volume and wait for method to ask for it (might need brief wait in the calling
-        # method to make sure this updates in time)
+        # Set dead volume for gilson_lh to relay to Trilution; broker plugin reads queue
         dead_volume = self.channel.get_dead_volume(self.dead_volume_mode)
 
-        # blocks if there's already something in the dead volume queue
         await self.dead_volume.put(dead_volume)
         self.logger.info(f'{self.channel.name}.{method.name}: dead volume set to {dead_volume}')
 
-        # Wait for trigger to switch to LHPrime mode (fast injection of air gap + dead volume + extra volume)
+        # Wait for second trigger from gilson_lh
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for first trigger')
         await self.wait_for_trigger()
         if self.dead_volume.qsize():
@@ -479,12 +447,10 @@ class DirectInjectBubbleSensor(MethodBaseDeadVolume):
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for fourth trigger')
         await self.wait_for_trigger()
 
-        # switch to standby mode    
-        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        # switch to standby mode
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')
         await self.channel.change_mode('Standby')
 
-        # At this point, liquid handler is done, release communications
-        self.disconnect_gsioc()
         self.release_all()
 
     async def detect_air_gap(self, callback: Coroutine, poll_interval: float = 0.1, delay: float = 0.0):

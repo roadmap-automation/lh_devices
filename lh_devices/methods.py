@@ -6,12 +6,11 @@ import traceback
 
 from aiohttp import web
 from aiohttp.web_app import Application as Application
-from dataclasses import dataclass, field, fields, Field
-from typing import List, Dict, Any, Callable, TypedDict, Coroutine
+from dataclasses import dataclass, field, fields, Field, MISSING
+from typing import List, Dict, Any, Callable, TypedDict, Coroutine, Optional
 from uuid import uuid4
 
 from .device import DeviceBase, DeviceError
-from .gilson.gsioc import GSIOC, GSIOCMessage, GSIOCCommandType
 from .logutils import Loggable, MethodLogHandler, MethodLogFormatter
 from .notify import notifier
 from .webview import WebNodeBase
@@ -247,117 +246,128 @@ class MethodBasewithTrigger(MethodBase):
         self.waiting.clear()
         self.trigger.set()
 
-class MethodBasewithGSIOC(MethodBasewithTrigger):
+class MethodBasewithBrokerTrigger(MethodBasewithTrigger):
+    """Base class for IS methods that synchronise with gilson_lh via broker messages.
 
-    def __init__(self, gsioc: GSIOC, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+    Replaces MethodBasewithGSIOC + MethodBaseDeadVolume. The dead_volume queue
+    and wait_for_trigger() semantics are preserved; the GSIOC serial layer is
+    gone. The DeviceBrokerWorker monitors dead_volume and activates triggers
+    when gsioc.trigger.<task_id> arrives on the broker.
+    """
+
+    def __init__(self, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
         super().__init__(devices, waste_tracker=waste_tracker)
-
-        self.gsioc = gsioc
-
-        # container for gsioc tasks 
-        self._gsioc_tasks: List[asyncio.Task] = []
-
-    def connect_gsioc(self) -> None:
-        """Start GSIOC listener and connect."""
-
-        # TODO: This opens and closes the serial port a lot. Might be better to just start the GSIOC listener and then connect to it through monitor_gsioc
-        self._gsioc_tasks = [asyncio.create_task(self.monitor_gsioc())]
-
-    async def monitor_gsioc(self) -> None:
-        """Monitor GSIOC communications. Note that only one device should be
-            listening to a GSIOC device at a time.
-        """
-
-        self.logger.debug('Starting GSIOC monitor')
-        async with self.gsioc.client_lock:
-            self.logger.debug('Got GSIOC client lock...')
-            try:
-                while True:
-                    data: GSIOCMessage = await self.gsioc.message_queue.get()
-                    self.logger.debug(f'GSIOC got data {data}')
-                    response = await self.handle_gsioc(data)
-                    if data.messagetype == GSIOCCommandType.IMMEDIATE:
-                        await self.gsioc.response_queue.put(response)
-            except asyncio.CancelledError:
-                self.logger.debug("Stopping GSIOC monitor...")
-            except Exception:
-                raise
-
-    def disconnect_gsioc(self) -> None:
-        """Stop listening to GSIOC
-        """
-
-        for task in self._gsioc_tasks:
-            task.cancel()
-
-    async def on_cancel(self):
-        self.disconnect_gsioc()
-        return await super().on_cancel()
-    
-    async def start(self, **kwargs):
-        self.disconnect_gsioc()
-        return await super().start(**kwargs)
-
-    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
-        """Handles GSIOC messages. Put actions into gsioc_command_queue for async processing.
-
-        Args:
-            data (GSIOCMessage): GSIOC Message to be parsed / handled
-
-        Returns:
-            str: response (only for GSIOC immediate commands, else None)
-        """
-        
-        response = None
-
-        if data.data == 'Q':
-            # busy query
-            if self.waiting.is_set():
-                response = 'waiting'
-            elif all(dev.idle for dev in self.devices):
-                response = 'idle'
-            else:
-                response = 'busy'
-
-        # set trigger
-        elif data.data == 'T':
-            self.activate_trigger()
-            response = 'ok'
-
-        else:
-            response = 'error: unknown command'
-
-        return response
-    
-class MethodBaseDeadVolume(MethodBasewithGSIOC):
-
-    def __init__(self, gsioc: GSIOC, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
-        super().__init__(gsioc, devices, waste_tracker=waste_tracker)
 
         self.dead_volume: asyncio.Queue = asyncio.Queue(1)
 
-    async def handle_gsioc(self, data: GSIOCMessage) -> str | None:
 
-        # overwrites base class handling of dead volume
-        if data.data == 'V':
-            dead_volume = await self.dead_volume.get()
-            #self.logger.info(f'Sending dead volume {dead_volume}')
-            response = f'{dead_volume:0.0f}'
-        else:
-            response = await super().handle_gsioc(data)
-        
-        return response
+class MethodBasewithCompositionRelay(MethodBase):
+    """Base class for methods that relay a composition to peer devices in the same MethodGroup.
+
+    Call ``self.emit_composition(composition)`` from within ``run()`` to schedule
+    a ``composition.transfer.<task_id>`` broker event.  Peer devices that include
+    ``await_composition_transfer: true`` in their task parameters will receive the
+    composition before their own method starts.
+
+    The broker plugin publishes the event after ``run()`` returns but before
+    ``task.completed``, so peers are guaranteed to receive it while they are still
+    waiting on their own hardware tasks.
+    """
+
+    def __init__(self, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__(devices, waste_tracker)
+        self._pending_composition_transfer: Optional[dict] = None
+
+    def emit_composition(self, composition) -> None:
+        """Signal the broker to emit composition.transfer to MethodGroup peers on completion.
+
+        ``composition`` must have a ``model_dump()`` method (any Pydantic model).
+        """
+        self._pending_composition_transfer = composition.model_dump()
+
+
+class MethodBasewithCompositionReceive(MethodBase):
+    """Base class for methods that receive a composition from a MethodGroup peer.
+
+    Call ``await self.receive_composition()`` from within ``run()`` at the
+    point where the composition is needed.  The call blocks until the broker
+    delivers a ``composition.transfer`` event for this task's MethodGroup, then
+    returns the resolved composition dict (or None on timeout).
+
+    The broker plugin detects this base class automatically via ``isinstance``
+    and wires up the RabbitMQ subscription before the method starts — no flag
+    is needed in the task parameters.
+    """
+
+    def __init__(self, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__(devices, waste_tracker)
+        self._incoming_composition: asyncio.Queue = asyncio.Queue(maxsize=1)
+
+    async def receive_composition(self) -> Optional[dict]:
+        """Block until a composition arrives from a MethodGroup peer.
+
+        Returns the composition dict, or None if the broker transfer timed out.
+        Must be called exactly once per method run.
+        """
+        return await self._incoming_composition.get()
+
+
+class MethodBaseDeadVolume(MethodBasewithBrokerTrigger):
+    """Compatibility shim for code that still uses the old GSIOC-coupled base class.
+
+    The gsioc argument is accepted but ignored — GSIOC coordination is now
+    handled by the broker plugin, not the method.  qcmd/distribution.py is the
+    only known caller; it should receive the same refactor as lhmethods.py.
+    """
+
+    def __init__(self, gsioc=None, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__(devices=devices, waste_tracker=waste_tracker)
+
+    def connect_gsioc(self) -> None:
+        pass
+
+    def disconnect_gsioc(self) -> None:
+        pass
+
 
 class ActiveMethod(TypedDict):
     method: MethodBase
     method_data: dict
 
+def method_schemas_for_display(methods: dict) -> Dict:
+    """Return {method_name: [{name, type, default}, ...]} for methods with at least one
+    scalar field, excluding 'name' and complex types (Composition, WellLocation)."""
+    result = {}
+    for method_name, method in methods.items():
+        field_list = []
+        for f in fields(method.MethodDefinition):
+            if f.name == 'name':
+                continue
+            type_str = f.type if isinstance(f.type, str) else str(f.type)
+            if any(t in type_str for t in ('Composition', 'WellLocation')):
+                continue
+            if f.default is not MISSING:
+                default = f.default
+            elif f.default_factory is not MISSING:
+                continue
+            else:
+                default = None
+            field_list.append({'name': f.name, 'type': type_str, 'default': default})
+        if field_list:
+            result[method_name] = field_list
+    return result
+
+
 class MethodRunner:
 
     def __init__(self):
-        
+
         # Dictionary of known methods
         self.methods: Dict[str, MethodBase] = {}
+
+        # Task type reported in the broker schema for each registered method.
+        # Values are plain strings ('none', 'measure', 'prepare', 'transfer').
+        self.method_types: Dict[str, str] = {}
 
         # Active method with its initialization data
         self.active_methods: Dict[str, ActiveMethod] = {}
@@ -367,6 +377,11 @@ class MethodRunner:
 
         # Event that is triggered when all methods are completed
         self.event_finished: asyncio.Event = asyncio.Event()
+
+    def register(self, name: str, method: MethodBase, task_type: str = 'none') -> None:
+        """Register a method and its broker task type."""
+        self.methods[name] = method
+        self.method_types[name] = task_type
 
     @property
     def method_schema(self) -> Dict[str, tuple[Field,...]]:
@@ -412,7 +427,7 @@ class MethodRunner:
 
         for task, iinfo in self._running_tasks.items():
             if id == iinfo['id']:
-                logging.debug(f'Cancelling task {iinfo["name"]}')
+                logging.debug(f'Cancelling task {iinfo["method_name"]}')
                 task.cancel()
 
     def cancel_methods_by_name(self, method_name: str):
@@ -453,6 +468,10 @@ class MethodPlugin(WebNodeBase):
     def methods(self) -> Dict[str, MethodBase]:
         return self.method_runner.methods
 
+    def register(self, name: str, method: MethodBase, task_type: str = 'none') -> None:
+        """Register a method and its broker task type."""
+        self.method_runner.register(name, method, task_type)
+
     @property
     def active_methods(self) -> Dict[str, ActiveMethod]:
         return self.method_runner.active_methods
@@ -482,17 +501,16 @@ class MethodPlugin(WebNodeBase):
         #else:
         self.method_runner.run_method(self.process_method(method_name, method_data, id), id, method_name)
 
-    async def get_info(self) -> Dict:
-        """Updates base class information with 
+    def _method_schemas_for_display(self) -> Dict:
+        return method_schemas_for_display(self.methods)
 
-        Returns:
-            Dict: _description_
-        """
+    async def get_info(self) -> Dict:
         d = await super().get_info()
         d.update({'active_methods': {method_name: dict(method_data=active_method['method_data'],
                                                        has_error=(active_method['method'].error.error is not None),
-                                                       has_gsioc=isinstance(active_method['method'], MethodBasewithGSIOC))
-                                      for method_name, active_method in self.active_methods.items()}
+                                                       has_broker_trigger=isinstance(active_method['method'], MethodBasewithBrokerTrigger))
+                                      for method_name, active_method in self.active_methods.items()},
+                  'method_schemas': self._method_schemas_for_display()
                  }
                 )
         return d
@@ -519,6 +537,12 @@ class MethodPlugin(WebNodeBase):
             target_method = self.active_methods.get(data['method'], None)['method']
             if target_method is not None:
                 self.method_runner.cancel_methods_by_name(data['method'])
+        elif command == 'run_method':
+            method_name = data.get('method_name')
+            method_data = data.get('method_data', {})
+            if method_name in self.methods:
+                method_data['name'] = method_name
+                self.run_method(method_name, method_data)
 
     async def _handle_task(self, request: web.Request) -> web.Response:
         """Handles a submitted task"""
