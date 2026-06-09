@@ -208,8 +208,8 @@ class SoluteFormulation(Formulation):
         stripped = self.target_composition.stripped()
         needed = self.target_volume + self.Extra_Volume
 
-        # Null composition: entire volume is diluent — skip the solver entirely.
-        if not stripped.solutes and not stripped.solvents:
+        # No solutes (including null composition): entire volume is diluent.
+        if not stripped.solutes:
             diluent_well = next(
                 (w for w in self._available_wells(layout)
                  if w.composition == self.diluent
