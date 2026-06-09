@@ -113,6 +113,24 @@ class MethodContainer(BaseMethod):
 
 MethodsType = Union[BaseMethod, MethodContainer]
 
+
+def _flatten_allof_refs(schema: dict) -> None:
+    """In-place: replace allOf([{$ref: X}]) with {$ref: X} in schema properties.
+
+    Pydantic v2 wraps a $ref in allOf when the field carries extra keywords
+    (e.g. a default value).  JSON Schema allows allOf([A]) ≡ A, so flattening
+    is semantically correct and makes the frontend '$ref' in prop check work.
+    """
+    for prop in schema.get('properties', {}).values():
+        if (isinstance(prop, dict)
+                and 'allOf' in prop
+                and len(prop['allOf']) == 1
+                and '$ref' in prop['allOf'][0]):
+            ref = prop['allOf'][0]['$ref']
+            prop.clear()
+            prop['$ref'] = ref
+
+
 # ======== BaseLHMethod and concrete Pydantic methods ========
 
 WATER = Composition(solvents=[Solvent(name='H2O', fraction=1.0)])
@@ -793,13 +811,15 @@ class GilsonLHMethod(MethodBase):
         """Returns parameter schema from the underlying Pydantic class."""
         m = cls._lh_method_class
         EXCLUDE = {'status', 'tasks', 'id', 'method_name', 'display_name', 'method_type'}
+        schema = m.model_json_schema(mode='serialization')
+        _flatten_allof_refs(schema)
         return {
             'fields': [f for f in m.model_fields if f not in EXCLUDE],
             'display': display,
             'display_name': m.model_fields['display_name'].default,
             'method_type': m.model_fields['method_type'].default,
             'origin': origin,
-            'schema': m.model_json_schema(mode='serialization'),
+            'schema': schema,
         }
 
     async def _run_job(self, job, lh_methods: list) -> dict:
@@ -969,13 +989,15 @@ class GilsonFormulation(GilsonLHMethod):
         from .formulation import Formulation
         m = Formulation
         EXCLUDE = {'status', 'tasks', 'id', 'method_name', 'display_name', 'method_type'}
+        schema = m.model_json_schema(mode='serialization')
+        _flatten_allof_refs(schema)
         return {
             'fields': [f for f in m.model_fields if f not in EXCLUDE],
             'display': display,
             'display_name': m.model_fields['display_name'].default,
             'method_type': m.model_fields['method_type'].default,
             'origin': origin,
-            'schema': m.model_json_schema(mode='serialization'),
+            'schema': schema,
         }
 
     async def run(self, sample_id: str = '', task_id: str | None = None, **kwargs) -> dict:
@@ -1013,13 +1035,15 @@ class GilsonSoluteFormulation(GilsonLHMethod):
         from .formulation import SoluteFormulation
         m = SoluteFormulation
         EXCLUDE = {'status', 'tasks', 'id', 'method_name', 'display_name', 'method_type'}
+        schema = m.model_json_schema(mode='serialization')
+        _flatten_allof_refs(schema)
         return {
             'fields': [f for f in m.model_fields if f not in EXCLUDE],
             'display': display,
             'display_name': m.model_fields['display_name'].default,
             'method_type': m.model_fields['method_type'].default,
             'origin': origin,
-            'schema': m.model_json_schema(mode='serialization'),
+            'schema': schema,
         }
 
     async def run(self, sample_id: str = '', task_id: str | None = None, **kwargs) -> dict:
