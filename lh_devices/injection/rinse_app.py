@@ -198,14 +198,14 @@ async def run_injection_system():
                                       local_port=5014,
                                       device_type=DEVICE_ID_RINSE,
                                       display_name='Rinse System',
-                                      allow_sample_mixing=False)
+                                      allow_sample_mixing=True)
     rinse_worker.waste_interface = waste_tracker
     distribution_worker = DeviceBrokerWorker(DEVICE_ID_DISTRIBUTION,
                                              distribution_system,
                                              local_port=5002,
                                              device_type=DEVICE_ID_DISTRIBUTION,
                                              display_name='Distribution System',
-                                             allow_sample_mixing=False)
+                                             allow_sample_mixing=True)
 
     app = qcmd_system.create_web_app(template='roadmap.html')
     runner = await run_socket_app(app, 'localhost', 5003)
