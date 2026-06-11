@@ -543,7 +543,7 @@ class DeviceBrokerWorker:
     async def _publish_completed_from_result(self, result: MethodResult, envelope: Envelope) -> None:
         if self._exchange is None:
             return
-        retrieval_uri = f"http://localhost:{self.local_port}/GetTaskData?task_id={result.id}"
+        retrieval_uri = f"http://localhost:{self.local_port}/GetTaskFiles?task_id={result.id}"
         msg = build(
             device_id=self.device_id,
             routing_key=TASK_COMPLETED,

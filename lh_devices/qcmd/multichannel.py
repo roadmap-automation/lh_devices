@@ -1,3 +1,5 @@
+import base64
+import json
 import time
 import uuid
 import asyncio
@@ -17,7 +19,7 @@ from ..camera.acroname_hub import USBHubManager
 from ..device import DeviceBase, PollTimer
 from ..assemblies import InjectionChannelBase
 from ..layout import LayoutPlugin
-from ..methods import MethodBase, MethodBasewithCompositionReceive
+from ..methods import MethodBase, MethodBasewithCompositionReceive, MethodResult
 from ..multichannel import MultiChannelAssembly
 
 class QCMDState(str, Enum):
@@ -407,6 +409,15 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
     class QCMDMethodBase(MethodBase):
 
+        @staticmethod
+        def file_generator(record: MethodResult) -> dict:
+            d = asdict(record)
+            qcmd = d.pop('result')
+            files = {'result.json': json.dumps(d, indent=2).encode()}
+            if qcmd:
+                files['qcmd.json'] = json.dumps(qcmd, indent=2).encode()
+            return files
+
         def __init__(self, ch: InjectionChannelBase, device: QCMDMeasurementDevice):
             super().__init__(devices=[device])
             self.ch = ch
@@ -622,6 +633,15 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
 
     class QCMDCaptureImage(QCMDMethodBasewithCamera):
 
+        @staticmethod
+        def file_generator(record: MethodResult) -> dict:
+            d = asdict(record)
+            result = d.pop('result')
+            files = {'result.json': json.dumps(d, indent=2).encode()}
+            if image := result.get('image'):
+                files['capture.png'] = base64.b64decode(image)
+            return files
+
         @dataclass
         class MethodDefinition(MethodBase.MethodDefinition):
 
@@ -640,6 +660,20 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
             return {'image': self.camera.image}
 
     class QCMDRecordTagwithCamera(QCMDMethodBasewithCamera):
+
+        @staticmethod
+        def file_generator(record: MethodResult) -> dict:
+            d = asdict(record)
+            qcmd = d.pop('result')
+            images = qcmd.pop('images', {})
+            files = {'result.json': json.dumps(d, indent=2).encode()}
+            if qcmd:
+                files['qcmd.json'] = json.dumps(qcmd, indent=2).encode()
+            if before := images.get('before'):
+                files['before.png'] = base64.b64decode(before)
+            if after := images.get('after'):
+                files['after.png'] = base64.b64decode(after)
+            return files
 
         @dataclass
         class MethodDefinition(MethodBase.MethodDefinition):
@@ -673,7 +707,7 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
 
             return result
 
-    class QCMDRecordCurrentwithCamera(QCMDMethodBasewithCamera):
+    class QCMDRecordCurrentwithCamera(QCMDRecordTagwithCamera):
 
         @dataclass
         class MethodDefinition(MethodBase.MethodDefinition):

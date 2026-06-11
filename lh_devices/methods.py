@@ -58,6 +58,11 @@ class MethodBase(Loggable):
         5. waste tracking
     """
 
+    @staticmethod
+    def file_generator(record: MethodResult) -> dict:
+        from dataclasses import asdict
+        return {'result.json': json.dumps(asdict(record), indent=2).encode()}
+
     def __init__(self, devices: List[DeviceBase] = [], waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
         self.devices = devices
         self.waste_tracker = waste_tracker
@@ -559,6 +564,11 @@ class MethodPlugin(WebNodeBase):
 
         return web.Response(text='not implemented', status=500)
 
+    async def _get_task_files(self, request: web.Request) -> web.Response:
+        """Returns task result files as {filename: content_or_base64} JSON dict."""
+
+        return web.Response(text='not implemented', status=500)
+
     def _get_routes(self) -> web.RouteTableDef:
 
         routes = web.RouteTableDef()
@@ -566,14 +576,18 @@ class MethodPlugin(WebNodeBase):
         @routes.post('/SubmitTask')
         async def handle_task(request: web.Request) -> web.Response:
             return await self._handle_task(request)
-       
+
         @routes.get('/GetStatus')
         async def get_status(request: web.Request) -> web.Response:
             return await self._get_status(request)
 
         @routes.get('/GetTaskData')
         async def get_task(request: web.Request) -> web.Response:
-            return await self._get_task(request)            
+            return await self._get_task(request)
+
+        @routes.get('/GetTaskFiles')
+        async def get_task_files(request: web.Request) -> web.Response:
+            return await self._get_task_files(request)
 
         return routes
 

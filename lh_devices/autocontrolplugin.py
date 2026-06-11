@@ -1,3 +1,5 @@
+import asyncio
+import base64
 import json
 
 from aiohttp.web_app import Application as Application
@@ -52,9 +54,24 @@ class AutocontrolPlugin(MethodPlugin, DatabasePlugin):
     async def _get_task(self, request: web.Request) -> web.Response:
         """Handles requests for information about a task. Dummy method round-trips the response through a TaskData serialization process."""
         task_id = request.rel_url.query.get('task_id', '')
-        
+
         record = self.read_from_database(task_id)
         if record is None:
             return web.Response(text=f'error: id {task_id} does not exist', status=400)
 
         return web.json_response({"data": record.result})
+
+    async def _get_task_files(self, request: web.Request) -> web.Response:
+        task_id = request.rel_url.query.get('task_id', '')
+        record = self.read_from_database(task_id)
+        if record is None:
+            return web.Response(text=f'error: id {task_id} does not exist', status=400)
+        method = self.methods.get(record.method_name)
+        if method is None:
+            return web.Response(text=f'error: method {record.method_name!r} not found', status=400)
+        raw = await asyncio.to_thread(method.file_generator, record)
+        encoded = {
+            name: (data.decode() if name.endswith('.json') else base64.b64encode(data).decode())
+            for name, data in raw.items()
+        }
+        return web.json_response(encoded)

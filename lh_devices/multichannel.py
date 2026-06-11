@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 
 from aiohttp.web_app import Application as Application
@@ -56,8 +57,26 @@ class MultiChannelAssembly(AutocontrolPlugin, NestedAssemblyBase):
         
         return web.Response(text=f'error: channel {channel} does not exist', status=400)
 
+    async def _get_task_files(self, request: web.Request) -> web.Response:
+        task_id = request.rel_url.query.get('task_id', '')
+        record = self.read_from_database(task_id)
+        if record is None:
+            return web.Response(text=f'error: id {task_id} does not exist', status=400)
+        channel = next((ch for ch in self.channels if ch.name == record.source), None)
+        if channel is None:
+            return web.Response(text=f'error: channel {record.source!r} not found', status=400)
+        method = channel.methods.get(record.method_name)
+        if method is None:
+            return web.Response(text=f'error: method {record.method_name!r} not found', status=400)
+        raw = await asyncio.to_thread(method.file_generator, record)
+        encoded = {
+            name: (data.decode() if name.endswith('.json') else base64.b64encode(data).decode())
+            for name, data in raw.items()
+        }
+        return web.json_response(encoded)
+
     async def _get_status(self, request):
-            
+
             statuses = [Status.BUSY if ch.reserved else Status.IDLE for ch in self.channels]
 
             return web.Response(text=json.dumps(dict(status=Status.IDLE,
