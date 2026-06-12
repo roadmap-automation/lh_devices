@@ -375,6 +375,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
         #self.register('QCMDAcceptTransfer', self.QCMDAcceptTransfer(qcmd, self.well), task_type='none')
         self.register('QCMDStart', self.QCMDStart(self, qcmd), task_type='none')
         self.register('QCMDStop', self.QCMDStop(self, qcmd), task_type='none')
+        self.register('QCMDDummyRecord', self.QCMDDummyRecord(self, qcmd), task_type='measure')
         
         self.qcmd = qcmd
 
@@ -610,11 +611,11 @@ class QCMDMeasurementChannel(InjectionChannelBase):
         class MethodDefinition(MethodBase.MethodDefinition):
             name: str = 'QCMDDummyRecord'
             offset_hz: float = 0.0  # applied as h * offset_hz per harmonic h
-            sleep_time: float = 2.0  # seconds
+            sleep_time: float = 0.0  # minutes
 
         async def run(self, **kwargs):
             method = self.MethodDefinition(**kwargs)
-            await asyncio.sleep(method.sleep_time)
+            await asyncio.sleep(method.sleep_time * 60)
 
             f_averages = [
                 [base + h * method.offset_hz, 2.0, 0.5]
@@ -623,7 +624,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             return {
                 "images": {},
-                "total time": method.sleep_time,
+                "total time": method.sleep_time * 60,
                 "result": {
                     "calibration": None,
                     "description": "QCMDDummyRecord",
@@ -635,7 +636,7 @@ class QCMDMeasurementChannel(InjectionChannelBase):
                         {
                             "D_averages": self._BASE_D,
                             "T_average": [[25.0, 0.0, 0.0]],
-                            "delta_t": method.sleep_time,
+                            "delta_t": method.sleep_time * 60,
                             "f_averages": f_averages,
                             "t": 0,
                             "tag": "average",
