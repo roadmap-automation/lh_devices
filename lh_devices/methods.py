@@ -495,7 +495,8 @@ class MethodPlugin(WebNodeBase):
             self.active_methods.pop(method_name)
             await self.trigger_update()
 
-        await asyncio.gather(*[callback(result) for callback in self.method_callbacks])
+        for callback in self.method_callbacks:
+            await callback(result)
         
         return result
 
