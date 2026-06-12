@@ -588,6 +588,63 @@ class QCMDMeasurementChannel(InjectionChannelBase):
 
             return {'start': start_result, 'temp': temp_result}
 
+    class QCMDDummyRecord(QCMDMethodBase):
+        """Dummy QCMD measurement for pipeline testing — no real hardware required.
+
+        Returns synthetic f_averages without calling self.qcmd.record().
+        offset_hz shifts each harmonic by h * offset_hz so two calls with
+        different offsets produce a non-trivial QCMDSubtract result.
+        """
+
+        _HARMONICS = [1, 3, 5, 7, 9]
+        _BASE_F_HZ = [4957898.87, 14859588.24, 24763370.55, 34665779.16, 44568510.42]
+        _BASE_D = [
+            [0.00043953703390427234, 2.7419185560401618e-07, 7.6047138053453738e-08],
+            [0.00077663813331418918, 8.43485980920078e-07, 2.3394091956479859e-07],
+            [0.0011965228582313274,  2.4534352238706436e-06, 6.8046050005346753e-07],
+            [0.0018879922165297449,  1.4772250901155912e-06, 4.0970852367797509e-07],
+            [0.0028699243645646292,  1.8691592375852744e-06, 5.1841149793237572e-07],
+        ]
+
+        @dataclass
+        class MethodDefinition(MethodBase.MethodDefinition):
+            name: str = 'QCMDDummyRecord'
+            offset_hz: float = 0.0  # applied as h * offset_hz per harmonic h
+            sleep_time: float = 2.0  # seconds
+
+        async def run(self, **kwargs):
+            method = self.MethodDefinition(**kwargs)
+            await asyncio.sleep(method.sleep_time)
+
+            f_averages = [
+                [base + h * method.offset_hz, 2.0, 0.5]
+                for base, h in zip(self._BASE_F_HZ, self._HARMONICS)
+            ]
+
+            return {
+                "images": {},
+                "total time": method.sleep_time,
+                "result": {
+                    "calibration": None,
+                    "description": "QCMDDummyRecord",
+                    "device": "dummy",
+                    "dissipation": [],
+                    "tag_file": "",
+                    "tag_header": "",
+                    "tags": [
+                        {
+                            "D_averages": self._BASE_D,
+                            "T_average": [[25.0, 0.0, 0.0]],
+                            "delta_t": method.sleep_time,
+                            "f_averages": f_averages,
+                            "t": 0,
+                            "tag": "average",
+                        }
+                    ],
+                    "temperature": [25.0],
+                },
+            }
+
 class QCMDAcceptTransfer(MethodBasewithCompositionReceive):
 
     def __init__(self, channel: QCMDMeasurementChannel, layout: LHBedLayout):
