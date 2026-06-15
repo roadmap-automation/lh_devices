@@ -252,6 +252,7 @@ class GilsonLHBrokerWorker:
             reservation_store.release_sample(sample_id)
             logger.info("[%s] reservation cleanup for sample %s (%s).",
                         self.device_id, sample_id, message.routing_key)
+            await self._emit_layout_updated()
 
     # ------------------------------------------------------------------
     # GSIOC serial ↔ broker translation (gilson_lh side)

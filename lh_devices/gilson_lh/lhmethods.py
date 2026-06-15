@@ -1009,6 +1009,7 @@ class GilsonFormulation(GilsonLHMethod):
         try:
             lh_method = Formulation(**kwargs)
             clusters = lh_method.get_methods(layout, sample_id=sample_id or None)
+            await self.lh_iface.trigger_layout_update()
             flat_methods = [m2 for cluster in clusters for m2 in cluster.explode(layout)]
             if not flat_methods:
                 _, _, success = lh_method.get_formulation_results(layout)
@@ -1055,6 +1056,7 @@ class GilsonSoluteFormulation(GilsonLHMethod):
         try:
             lh_method = SoluteFormulation(**kwargs)
             clusters = lh_method.get_methods(layout, sample_id=sample_id or None)
+            await self.lh_iface.trigger_layout_update()
             flat_methods = [m2 for cluster in clusters for m2 in cluster.explode(layout)]
             if not flat_methods:
                 _, _, success = lh_method.get_formulation_results(layout)
