@@ -355,8 +355,7 @@ class RinseSystem(AutocontrolPlugin, RinseSystemBase):
         if command == 'prime_source':
             return self.run_method('PrimeRinseSource', dict(name='PrimeRinseSource', index=int(data['n_prime']), volume=2.0, number_of_primes=1))
             #return await self.primeloop(int(data['n_prime']))
-        if command == 'release':
+        elif command == 'release':
             await self.release()
         else:
-            await RinseSystemBase.event_handler(self, command, data)
-            await AutocontrolPlugin.event_handler(self, command, data)
+            await super().event_handler(command, data)
