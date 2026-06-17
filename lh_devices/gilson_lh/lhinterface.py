@@ -422,6 +422,7 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
             method_data = data.get('method_data', {})
             if method_name in self.methods:
                 method_data['name'] = method_name
+                method_data.setdefault('sample_id', 'GUI')
                 asyncio.create_task(self.methods[method_name].start(**method_data))
         else:
             await AutocontrolPlugin.event_handler(self, command, data)
