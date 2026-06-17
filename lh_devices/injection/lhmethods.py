@@ -399,24 +399,34 @@ class DirectInjectBubbleSensor(MethodBasewithBrokerTrigger):
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to LHPrime mode')
         await asyncio.gather(self.channel.change_mode('LHPrime'), self.distribution_mode.activate())
 
+        # Publish 0 (bubble not yet detected) BEFORE waiting for trigger 3.
+        # Trilution sends T then immediately follows with 'V'. If we published
+        # 0 after receiving T, the stale LHPrime dead volume could still be in
+        # gilson_lh's cache when that 'V' arrives — and a non-zero value would
+        # be misread as "liquid detected already". Publishing here ensures the
+        # cache is updated before the trigger round-trip completes.
+        liquid_in_line = False
+        await self.dead_volume.put(int(liquid_in_line))
+
         # Wait for another trigger, which indicates that the LH is going to start asking after the bubble status
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for trigger to traverse air gap')
         await self.wait_for_trigger()
         self.logger.info(f'{self.channel.name}.{method.name}: Traversing air gap...')
-        
-        # make sure there's always something there to read
-        liquid_in_line = False
-        await self.dead_volume.put(int(liquid_in_line))
 
-        # traverse air gap. Requires both inlet and outlet bubble sensors to contain liquid for a successful transfer (if inlet bubble sensor has air but outlet does not, likely insufficient dead volume estimation)
+        # traverse air gap. Requires both inlet and outlet bubble sensors to contain liquid.
+        # Poll at ~10 Hz; gilson_lh caches the last published value and returns it
+        # immediately on each Trilution 'V' query — no per-poll broker message needed.
         while not liquid_in_line:
             liquid_in_line = (await self.outlet_bubble_sensor.read()) & (await self.inlet_bubble_sensor.read())
-            self.logger.info(f'{self.channel.name}.{method.name}:     Outlet bubble sensor value: {int(liquid_in_line)}')
-            # if end condition reached, remove old queue value and put in current one
-            if liquid_in_line:
-                if self.dead_volume.qsize():
-                    self.dead_volume.get_nowait()
-            await self.dead_volume.put(int(liquid_in_line))
+            if not liquid_in_line:
+                self.logger.debug(f'{self.channel.name}.{method.name}: Bubble sensors: no liquid yet')
+                await asyncio.sleep(0.1)
+
+        self.logger.info(f'{self.channel.name}.{method.name}: Liquid detected at bubble sensors')
+        # Publish detected state; if relay hasn't consumed the initial 0 yet, discard it.
+        if self.dead_volume.qsize():
+            self.dead_volume.get_nowait()
+        await self.dead_volume.put(1)
 
         # Wait for trigger to switch to LHInject mode (LH performs injection)
         self.logger.info(f'{self.channel.name}.{method.name}: Waiting for second trigger')

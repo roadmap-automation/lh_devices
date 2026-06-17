@@ -214,6 +214,7 @@ class GilsonLHBrokerWorker:
         if self._gsioc is not None:
             self._current_gsioc_task_id = task_id
             self._dead_volume_event.clear()
+            self._dead_volume_value = ''  # prevent stale value from previous task being served immediately
             dead_volume_task = asyncio.create_task(self._subscribe_dead_volume(task_id))
 
         method = self.lh_iface.methods[method_name]
@@ -294,6 +295,12 @@ class GilsonLHBrokerWorker:
                         await self._gsioc.response_queue.put('ok')
 
                     elif data.data == 'V':
+                        # Block only until the first value arrives from IS; after that,
+                        # keep serving the cached value immediately on repeated queries.
+                        # IS publishes 0 at the start and 1 when liquid is detected —
+                        # intermediate Trilution 'V' queries get the last known state.
+                        # The event is NOT cleared here; it is cleared at task start
+                        # so the first 'V' of a new task correctly waits for IS.
                         try:
                             await asyncio.wait_for(self._dead_volume_event.wait(), timeout=30.0)
                             response = self._dead_volume_value
@@ -301,8 +308,6 @@ class GilsonLHBrokerWorker:
                             logger.warning("[%s] Timed out waiting for dead volume — responding with error.", self.device_id)
                             response = 'error'
                         await self._gsioc.response_queue.put(response)
-                        self._dead_volume_event.clear()
-                        self._dead_volume_value = ''
 
                     else:
                         logger.warning("[%s] Unknown GSIOC command: %r", self.device_id, data.data)
