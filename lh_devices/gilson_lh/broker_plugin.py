@@ -301,12 +301,19 @@ class GilsonLHBrokerWorker:
                         # intermediate Trilution 'V' queries get the last known state.
                         # The event is NOT cleared here; it is cleared at task start
                         # so the first 'V' of a new task correctly waits for IS.
+                        #
+                        # Timeout is short (5 s): T always precedes V and IS publishes
+                        # dead_volume within ms of the trigger, so >5 s means something
+                        # unexpected cleared the event mid-task. Respond '0' (safe
+                        # neutral/no-liquid) rather than 'error': 'error' is a
+                        # multi-character string and corrupts GSIOC serial framing if
+                        # Trilution has already closed the connection before send completes.
                         try:
-                            await asyncio.wait_for(self._dead_volume_event.wait(), timeout=30.0)
-                            response = self._dead_volume_value
+                            await asyncio.wait_for(self._dead_volume_event.wait(), timeout=5.0)
+                            response = self._dead_volume_value or '0'
                         except asyncio.TimeoutError:
-                            logger.warning("[%s] Timed out waiting for dead volume — responding with error.", self.device_id)
-                            response = 'error'
+                            logger.warning("[%s] Timed out waiting for dead volume — responding '0'.", self.device_id)
+                            response = '0'
                         await self._gsioc.response_queue.put(response)
 
                     else:
