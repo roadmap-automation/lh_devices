@@ -397,6 +397,16 @@
                             //newctrl.append(newtextbutton)
 
                         }
+                        else if (ctype=='link') {
+                            newctrl = $('<div>')
+                                            .addClass(cid)
+                                            .addClass(ctype)
+                                            .appendTo(devicediv);
+                            $('<a>').attr('href', cdata['href'])
+                                   .attr('target', '_blank')
+                                   .text(cdata['text'])
+                                   .appendTo(newctrl)
+                        }
                         else if (ctype=='file') {
                             let newctrl = $('<div>')
                                             .addClass(cid)
