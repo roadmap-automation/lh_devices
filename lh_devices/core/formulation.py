@@ -12,7 +12,15 @@ from scipy.optimize import nnls
 
 from lh_devices.core.bedlayout import Composition, LHBedLayout, Well
 
-ZERO_VOLUME_TOLERANCE = 1e-3
+# Minimum volume (mL) that the liquid handler can accurately pipette.
+# Any well whose solved volume falls at or below this threshold is treated as
+# numerical noise from the NNLS solver: it is removed from the candidate pool
+# and the solver retries without it, naturally falling back to a more dilute
+# stock that requires a larger, pipettable volume.
+#
+# Set this to the instrument's actual minimum pipettable volume.
+# For the Gilson Verity 4120 with a 100 µL syringe, use 1e-2 mL (10 µL).
+ZERO_VOLUME_TOLERANCE = 1e-2
 
 
 def make_target_vector(
@@ -116,6 +124,12 @@ def solve_formulation(
                 rack_min = layout.racks[well.rack_id].min_volume
                 if (required_volume + rack_min) > source_well_volume:
                     logging.warning('Well %s insufficient volume (needs %s + %s, has %s). Removing.', well, required_volume, rack_min, source_well_volume)
+                    wells_to_remove.append(well)
+                elif 0 < required_volume <= ZERO_VOLUME_TOLERANCE:
+                    # Volume is positive but below the minimum pipettable threshold — treat as
+                    # solver noise. Remove and retry so the solver selects a more dilute stock
+                    # that delivers a pipettable volume instead.
+                    logging.warning('Well %s requires sub-minimum volume (%.4f mL). Removing and retrying.', well, required_volume)
                     wells_to_remove.append(well)
 
             if not wells_to_remove:
