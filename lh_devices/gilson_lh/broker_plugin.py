@@ -25,6 +25,8 @@ Subprotocol cleanup:
 
 import asyncio
 import logging
+import os
+import subprocess
 from typing import Optional
 
 import aio_pika
@@ -59,6 +61,24 @@ from .reservation import reservation_store
 logger = logging.getLogger(__name__)
 
 DEVICE_ID = 'lh'
+_GEARS_EXE = os.environ.get('GEARS_EXE')
+if not _GEARS_EXE:
+    logger.warning(
+        "GEARS_EXE environment variable is not set — GEARS will not be restarted before each task. "
+        "Set GEARS_EXE to the full path of GEARS.exe to enable automatic GEARS restart."
+    )
+
+
+async def _restart_gears() -> None:
+    """Kill and relaunch GEARS before a Trilution task to clear stale TCP connections."""
+    if not _GEARS_EXE:
+        return
+    logger.info("Restarting GEARS before task...")
+    subprocess.run(["taskkill", "/IM", "GEARS.exe", "/F"], capture_output=True)
+    await asyncio.sleep(2)
+    subprocess.Popen([_GEARS_EXE])
+    await asyncio.sleep(10)
+    logger.info("GEARS restarted — proceeding with task")
 
 
 class GilsonLHBrokerWorker:
@@ -208,6 +228,7 @@ class GilsonLHBrokerWorker:
             return
 
         await self._emit(TASK_ACCEPTED, envelope, {})
+        await _restart_gears()
 
         # Set up GSIOC broker correlation for this task window.
         dead_volume_task = None
