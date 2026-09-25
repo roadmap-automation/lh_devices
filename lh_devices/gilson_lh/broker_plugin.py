@@ -62,6 +62,7 @@ logger = logging.getLogger(__name__)
 
 DEVICE_ID = 'lh'
 _GEARS_EXE = os.environ.get('GEARS_EXE')
+_GEARS_PORT = int(os.environ.get('GEARS_PORT', '50185'))
 if not _GEARS_EXE:
     logger.warning(
         "GEARS_EXE environment variable is not set — GEARS will not be restarted before each task. "
@@ -92,8 +93,28 @@ async def _restart_gears() -> None:
     except Exception:
         logger.exception("Failed to launch GEARS from %s", exe_path)
         return
-    await asyncio.sleep(10)
-    logger.info("GEARS restarted — proceeding with task")
+    logger.info("Waiting for GEARS to accept connections on port %d...", _GEARS_PORT)
+    ready = await _wait_for_gears(port=_GEARS_PORT, timeout=60.0)
+    if ready:
+        logger.info("GEARS ready — proceeding with task")
+    else:
+        logger.error("GEARS did not become ready within timeout — proceeding anyway")
+
+
+async def _wait_for_gears(port: int = 50185, timeout: float = 60.0) -> bool:
+    """Poll until GEARS accepts a TCP connection on the given port."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection('localhost', port), timeout=2.0
+            )
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except (ConnectionRefusedError, OSError, asyncio.TimeoutError):
+            await asyncio.sleep(1.0)
+    return False
 
 
 class GilsonLHBrokerWorker:
