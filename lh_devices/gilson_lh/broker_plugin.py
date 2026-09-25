@@ -26,8 +26,9 @@ Subprotocol cleanup:
 import asyncio
 import logging
 import os
-import subprocess
 from typing import Optional
+
+from .gears import restart_gears
 
 import aio_pika
 
@@ -61,60 +62,6 @@ from .reservation import reservation_store
 logger = logging.getLogger(__name__)
 
 DEVICE_ID = 'lh'
-_GEARS_EXE = os.environ.get('GEARS_EXE')
-_GEARS_PORT = int(os.environ.get('GEARS_PORT', '50185'))
-if not _GEARS_EXE:
-    logger.warning(
-        "GEARS_EXE environment variable is not set — GEARS will not be restarted before each task. "
-        "Set GEARS_EXE to the full path of GEARS.exe to enable automatic GEARS restart."
-    )
-
-
-async def _restart_gears() -> None:
-    """Kill and relaunch GEARS before a Trilution task to clear stale TCP connections."""
-    if not _GEARS_EXE:
-        return
-    import pathlib
-    exe_path = pathlib.Path(_GEARS_EXE)
-    logger.info("Restarting GEARS — exe path: %s (exists: %s)", exe_path, exe_path.exists())
-    result = subprocess.run(["taskkill", "/IM", exe_path.name, "/F"], capture_output=True, text=True)
-    if result.returncode == 0:
-        logger.info("taskkill succeeded: %s", result.stdout.strip())
-    else:
-        logger.warning("taskkill returned %d: %s", result.returncode, (result.stdout + result.stderr).strip())
-    await asyncio.sleep(2)
-    try:
-        subprocess.Popen(
-            [str(exe_path)],
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        logger.exception("Failed to launch GEARS from %s", exe_path)
-        return
-    logger.info("Waiting for GEARS to accept connections on port %d...", _GEARS_PORT)
-    ready = await _wait_for_gears(port=_GEARS_PORT, timeout=60.0)
-    if ready:
-        logger.info("GEARS ready — proceeding with task")
-    else:
-        logger.error("GEARS did not become ready within timeout — proceeding anyway")
-
-
-async def _wait_for_gears(port: int = 50185, timeout: float = 60.0) -> bool:
-    """Poll until GEARS accepts a TCP connection on the given port."""
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        try:
-            _, writer = await asyncio.wait_for(
-                asyncio.open_connection('localhost', port), timeout=2.0
-            )
-            writer.close()
-            await writer.wait_closed()
-            return True
-        except (ConnectionRefusedError, OSError, asyncio.TimeoutError):
-            await asyncio.sleep(1.0)
-    return False
 
 
 class GilsonLHBrokerWorker:
@@ -264,7 +211,7 @@ class GilsonLHBrokerWorker:
             return
 
         await self._emit(TASK_ACCEPTED, envelope, {})
-        await _restart_gears()
+        await restart_gears()
 
         # Set up GSIOC broker correlation for this task window.
         dead_volume_task = None
