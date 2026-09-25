@@ -12,6 +12,7 @@ Environment variables:
 """
 
 import asyncio
+import ctypes
 import logging
 import os
 import pathlib
@@ -71,12 +72,17 @@ def _kill_gears(exe_path: pathlib.Path) -> None:
 
 
 def _launch_gears(exe_path: pathlib.Path) -> bool:
-    try:
-        subprocess.Popen([str(exe_path)], cwd=str(exe_path.parent))
+    # ShellExecute mirrors what Windows Explorer does: launches outside any
+    # Job Object and with the correct desktop/window-station context.
+    # subprocess.Popen inherits the process-compose Job Object, which can
+    # prevent GEARS from enumerating USB devices.
+    result = ctypes.windll.shell32.ShellExecuteW(
+        None, "open", str(exe_path), None, str(exe_path.parent), 1
+    )
+    if result > 32:
         return True
-    except Exception:
-        logger.exception("Failed to launch GEARS from %s", exe_path)
-        return False
+    logger.error("ShellExecuteW failed for %s (error code %d)", exe_path, result)
+    return False
 
 
 async def _wait_for_port(port: int, timeout: float = 30.0) -> bool:
