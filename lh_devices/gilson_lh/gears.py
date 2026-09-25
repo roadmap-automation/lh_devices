@@ -43,7 +43,7 @@ async def restart_gears(max_attempts: int = 3) -> None:
 
     for attempt in range(1, max_attempts + 1):
         _kill_gears(exe_path)
-        await asyncio.sleep(2)
+        await asyncio.sleep(5)
         if not _launch_gears(exe_path):
             return
 
@@ -72,12 +72,7 @@ def _kill_gears(exe_path: pathlib.Path) -> None:
 
 def _launch_gears(exe_path: pathlib.Path) -> bool:
     try:
-        subprocess.Popen(
-            [str(exe_path)],
-            cwd=str(exe_path.parent),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        subprocess.Popen([str(exe_path)], cwd=str(exe_path.parent))
         return True
     except Exception:
         logger.exception("Failed to launch GEARS from %s", exe_path)
