@@ -47,7 +47,10 @@ async def restart_gears(max_attempts: int = 3) -> None:
 
         logger.info("[%d/%d] Waiting for '%s' in GEARS beacon...", attempt, max_attempts, _GEARS_INSTRUMENT_NAME)
         if await _wait_for_instrument_in_beacon(_GEARS_INSTRUMENT_NAME, timeout=30.0):
-            logger.info("GEARS ready — proceeding with task")
+            # empirically determined delay to allow Trilution to connect
+            logger.info("GEARS ready — pausing to allow Trilution to connect...")            
+            await asyncio.sleep(40)
+            logger.info("Pause complete — proceeding with task")            
             return
 
         logger.warning("[%d/%d] Pump not detected in beacon — restarting GEARS", attempt, max_attempts)
