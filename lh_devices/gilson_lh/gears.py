@@ -5,7 +5,6 @@ verifies the syringe pump is detected via the UDP beacon before proceeding.
 
 Environment variables:
   GEARS_EXE              Full path to the GEARS executable.
-  GEARS_PORT             TCP port GEARS listens on (default: 50185).
   GEARS_BEACON_PORT      UDP port GEARS broadcasts on (default: 50184).
   GEARS_INSTRUMENT_NAME  Instrument name to find in beacon
                          (default: Verity 4120 Syringe Pump).
@@ -23,7 +22,6 @@ import xml.etree.ElementTree as ET
 logger = logging.getLogger(__name__)
 
 _GEARS_EXE = os.environ.get('GEARS_EXE')
-_GEARS_PORT = int(os.environ.get('GEARS_PORT', '50185'))
 _GEARS_BEACON_PORT = int(os.environ.get('GEARS_BEACON_PORT', '50184'))
 _GEARS_INSTRUMENT_NAME = os.environ.get('GEARS_INSTRUMENT_NAME', 'Verity 4120 Syringe Pump')
 
@@ -46,11 +44,6 @@ async def restart_gears(max_attempts: int = 3) -> None:
         await _kill_gears(exe_path)
         if not _launch_gears(exe_path):
             return
-
-        logger.info("[%d/%d] Waiting for GEARS on port %d...", attempt, max_attempts, _GEARS_PORT)
-        if not await _wait_for_port(_GEARS_PORT, timeout=30.0):
-            logger.warning("[%d/%d] GEARS did not start listening — retrying", attempt, max_attempts)
-            continue
 
         logger.info("[%d/%d] Waiting for '%s' in GEARS beacon...", attempt, max_attempts, _GEARS_INSTRUMENT_NAME)
         if await _wait_for_instrument_in_beacon(_GEARS_INSTRUMENT_NAME, timeout=30.0):
@@ -113,22 +106,6 @@ def _launch_gears(exe_path: pathlib.Path) -> bool:
     if result > 32:
         return True
     logger.error("ShellExecuteW failed for %s (error code %d)", exe_path, result)
-    return False
-
-
-async def _wait_for_port(port: int, timeout: float = 30.0) -> bool:
-    """Poll until GEARS accepts a TCP connection on the given port."""
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        try:
-            _, writer = await asyncio.wait_for(
-                asyncio.open_connection('localhost', port), timeout=2.0
-            )
-            writer.close()
-            await writer.wait_closed()
-            return True
-        except (ConnectionRefusedError, OSError, asyncio.TimeoutError):
-            await asyncio.sleep(1.0)
     return False
 
 
