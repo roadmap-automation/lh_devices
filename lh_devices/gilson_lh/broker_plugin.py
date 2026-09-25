@@ -76,7 +76,7 @@ async def _restart_gears() -> None:
     import pathlib
     exe_path = pathlib.Path(_GEARS_EXE)
     logger.info("Restarting GEARS — exe path: %s (exists: %s)", exe_path, exe_path.exists())
-    result = subprocess.run(["taskkill", "/IM", "GEARS.exe", "/F"], capture_output=True, text=True)
+    result = subprocess.run(["taskkill", "/IM", exe_path.name, "/F"], capture_output=True, text=True)
     if result.returncode == 0:
         logger.info("taskkill succeeded: %s", result.stdout.strip())
     else:
