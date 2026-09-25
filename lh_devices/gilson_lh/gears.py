@@ -44,7 +44,6 @@ async def restart_gears(max_attempts: int = 3) -> None:
 
     for attempt in range(1, max_attempts + 1):
         _kill_gears(exe_path)
-        await asyncio.sleep(5)
         if not _launch_gears(exe_path):
             return
 
@@ -64,11 +63,31 @@ async def restart_gears(max_attempts: int = 3) -> None:
 
 
 def _kill_gears(exe_path: pathlib.Path) -> None:
-    result = subprocess.run(["taskkill", "/IM", exe_path.name, "/F"], capture_output=True, text=True)
+    # Graceful shutdown first so GEARS releases the USB device handle cleanly.
+    # Force-kill (/F) skips cleanup, leaving USB handles in limbo for an
+    # unpredictable time, causing the new instance to fail USB enumeration.
+    result = subprocess.run(["taskkill", "/IM", exe_path.name], capture_output=True, text=True)
     if result.returncode == 0:
-        logger.info("taskkill: %s", result.stdout.strip())
+        logger.info("taskkill (graceful): %s", result.stdout.strip())
+        # Give GEARS time to exit and release USB handles before we relaunch.
+        import time
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            check = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {exe_path.name}", "/NH"],
+                capture_output=True, text=True,
+            )
+            if exe_path.name.lower() not in check.stdout.lower():
+                logger.info("GEARS exited cleanly")
+                return
+            time.sleep(0.5)
+        logger.warning("GEARS did not exit within 10s — force killing")
     else:
-        logger.warning("taskkill returned %d: %s", result.returncode, (result.stdout + result.stderr).strip())
+        logger.info("taskkill: %s (code %d — likely not running)", (result.stdout + result.stderr).strip(), result.returncode)
+
+    result = subprocess.run(["taskkill", "/IM", exe_path.name, "/F"], capture_output=True, text=True)
+    if result.returncode not in (0, 128):
+        logger.warning("force taskkill returned %d: %s", result.returncode, (result.stdout + result.stderr).strip())
 
 
 def _launch_gears(exe_path: pathlib.Path) -> bool:
