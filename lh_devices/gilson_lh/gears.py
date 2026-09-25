@@ -17,7 +17,6 @@ import logging
 import os
 import pathlib
 import socket
-import subprocess
 import xml.etree.ElementTree as ET
 
 logger = logging.getLogger(__name__)
@@ -43,7 +42,7 @@ async def restart_gears(max_attempts: int = 3) -> None:
     logger.info("GEARS exe: %s (exists: %s)", exe_path, exe_path.exists())
 
     for attempt in range(1, max_attempts + 1):
-        _kill_gears(exe_path)
+        await _kill_gears(exe_path)
         if not _launch_gears(exe_path):
             return
 
@@ -62,32 +61,36 @@ async def restart_gears(max_attempts: int = 3) -> None:
     logger.error("GEARS failed to detect pump after %d attempts — proceeding anyway", max_attempts)
 
 
-def _kill_gears(exe_path: pathlib.Path) -> None:
-    # Graceful shutdown first so GEARS releases the USB device handle cleanly.
-    # Force-kill (/F) skips cleanup, leaving USB handles in limbo for an
-    # unpredictable time, causing the new instance to fail USB enumeration.
-    result = subprocess.run(["taskkill", "/IM", exe_path.name], capture_output=True, text=True)
-    if result.returncode == 0:
-        logger.info("taskkill (graceful): %s", result.stdout.strip())
-        # Give GEARS time to exit and release USB handles before we relaunch.
-        import time
-        deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline:
-            check = subprocess.run(
-                ["tasklist", "/FI", f"IMAGENAME eq {exe_path.name}", "/NH"],
-                capture_output=True, text=True,
-            )
-            if exe_path.name.lower() not in check.stdout.lower():
-                logger.info("GEARS exited cleanly")
-                return
-            time.sleep(0.5)
-        logger.warning("GEARS did not exit within 10s — force killing")
-    else:
-        logger.info("taskkill: %s (code %d — likely not running)", (result.stdout + result.stderr).strip(), result.returncode)
+async def _kill_gears(exe_path: pathlib.Path) -> None:
+    # Force kill, then poll until the process disappears from tasklist.
+    # Once it's gone the kernel has released all its handles, including the
+    # USB device — so the new instance can enumerate the pump reliably.
+    proc = await asyncio.create_subprocess_exec(
+        "taskkill", "/IM", exe_path.name, "/F",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode == 128:
+        logger.info("taskkill: GEARS was not running")
+        return
+    if proc.returncode != 0:
+        logger.warning("taskkill returned %d: %s", proc.returncode, (stdout + stderr).decode().strip())
+        return
+    logger.info("taskkill: %s", stdout.decode().strip())
 
-    result = subprocess.run(["taskkill", "/IM", exe_path.name, "/F"], capture_output=True, text=True)
-    if result.returncode not in (0, 128):
-        logger.warning("force taskkill returned %d: %s", result.returncode, (result.stdout + result.stderr).strip())
+    deadline = asyncio.get_event_loop().time() + 10.0
+    while asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.5)
+        check = await asyncio.create_subprocess_exec(
+            "tasklist", "/FI", f"IMAGENAME eq {exe_path.name}", "/NH",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await check.communicate()
+        if exe_path.name.lower() not in out.decode().lower():
+            logger.info("GEARS process gone — USB handles released")
+            return
+
+    logger.warning("GEARS still in tasklist after 10s — proceeding anyway")
 
 
 def _launch_gears(exe_path: pathlib.Path) -> bool:
