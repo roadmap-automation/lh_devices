@@ -17,6 +17,7 @@ import logging
 import os
 import pathlib
 import socket
+import subprocess
 import xml.etree.ElementTree as ET
 
 logger = logging.getLogger(__name__)
@@ -65,28 +66,36 @@ async def _kill_gears(exe_path: pathlib.Path) -> None:
     # Force kill, then poll until the process disappears from tasklist.
     # Once it's gone the kernel has released all its handles, including the
     # USB device — so the new instance can enumerate the pump reliably.
-    proc = await asyncio.create_subprocess_exec(
-        "taskkill", "/IM", exe_path.name, "/F",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    # run_in_executor is used because SelectorEventLoop (Windows default)
+    # does not support asyncio.create_subprocess_exec.
+    loop = asyncio.get_event_loop()
+
+    result = await loop.run_in_executor(
+        None,
+        lambda: subprocess.run(
+            ["taskkill", "/IM", exe_path.name, "/F"],
+            capture_output=True, text=True,
+        ),
     )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode == 128:
+    if result.returncode == 128:
         logger.info("taskkill: GEARS was not running")
         return
-    if proc.returncode != 0:
-        logger.warning("taskkill returned %d: %s", proc.returncode, (stdout + stderr).decode().strip())
+    if result.returncode != 0:
+        logger.warning("taskkill returned %d: %s", result.returncode, (result.stdout + result.stderr).strip())
         return
-    logger.info("taskkill: %s", stdout.decode().strip())
+    logger.info("taskkill: %s", result.stdout.strip())
 
-    deadline = asyncio.get_event_loop().time() + 10.0
-    while asyncio.get_event_loop().time() < deadline:
+    deadline = loop.time() + 10.0
+    while loop.time() < deadline:
         await asyncio.sleep(0.5)
-        check = await asyncio.create_subprocess_exec(
-            "tasklist", "/FI", f"IMAGENAME eq {exe_path.name}", "/NH",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        check = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {exe_path.name}", "/NH"],
+                capture_output=True, text=True,
+            ),
         )
-        out, _ = await check.communicate()
-        if exe_path.name.lower() not in out.decode().lower():
+        if exe_path.name.lower() not in check.stdout.lower():
             logger.info("GEARS process gone — USB handles released")
             return
 
