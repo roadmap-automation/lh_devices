@@ -73,10 +73,25 @@ async def _restart_gears() -> None:
     """Kill and relaunch GEARS before a Trilution task to clear stale TCP connections."""
     if not _GEARS_EXE:
         return
-    logger.info("Restarting GEARS before task...")
-    subprocess.run(["taskkill", "/IM", "GEARS.exe", "/F"], capture_output=True)
+    import pathlib
+    exe_path = pathlib.Path(_GEARS_EXE)
+    logger.info("Restarting GEARS — exe path: %s (exists: %s)", exe_path, exe_path.exists())
+    result = subprocess.run(["taskkill", "/IM", "GEARS.exe", "/F"], capture_output=True, text=True)
+    if result.returncode == 0:
+        logger.info("taskkill succeeded: %s", result.stdout.strip())
+    else:
+        logger.warning("taskkill returned %d: %s", result.returncode, (result.stdout + result.stderr).strip())
     await asyncio.sleep(2)
-    subprocess.Popen([_GEARS_EXE])
+    try:
+        subprocess.Popen(
+            [str(exe_path)],
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        logger.exception("Failed to launch GEARS from %s", exe_path)
+        return
     await asyncio.sleep(10)
     logger.info("GEARS restarted — proceeding with task")
 
