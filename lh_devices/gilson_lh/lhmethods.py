@@ -19,6 +19,11 @@ if TYPE_CHECKING:
     from .lhinterface import LHInterface
     from .resolver import WellResolver
 
+# Aspirate rate is capped so that every aspiration takes at least this long.
+# Protects septum vials and reduces pressure spikes on small volumes.
+_MIN_ASPIRATE_TIME_MIN: float = 0.5  # 30 seconds
+_LH_MIN_FLOW_RATE: float = 0.1       # mL/min — Gilson hardware floor
+
 # ======== Gilson-LH-specific Pydantic base classes (from core/methods.py) ========
 
 EXCLUDE_FIELDS = set(["method_name", "display_name", "complete", "method_type", "id", "tasks", "status"])
@@ -311,6 +316,15 @@ class TransferWithRinse(TransferMethod):
         Target_Zone: Zone
         Target_Well: str
 
+    @property
+    def effective_aspirate_flow_rate(self) -> float:
+        """Aspirate rate sent to the instrument, capped so aspiration takes at least
+        _MIN_ASPIRATE_TIME_MIN (30 s). Protects septum vials from excess vacuum and
+        reduces pressure spikes on small volumes. Floored at the Gilson hardware minimum
+        (_LH_MIN_FLOW_RATE). The stored Aspirate_Flow_Rate field is the user-configured
+        upper bound and is not modified."""
+        return max(_LH_MIN_FLOW_RATE, min(self.Aspirate_Flow_Rate, self.Volume / _MIN_ASPIRATE_TIME_MIN))
+
     def render_lh_method(self, sample_name: str, sample_description: str,
                          resolver: 'WellResolver') -> List[BaseLHMethod.lh_method]:
         self.Source = resolver.resolve(self.Source)
@@ -325,7 +339,7 @@ class TransferWithRinse(TransferMethod):
             Source_Well=source_well,
             Volume=f'{self.Volume}',
             Flow_Rate=f'{self.Flow_Rate}',
-            Aspirate_Flow_Rate=f'{self.Aspirate_Flow_Rate}',
+            Aspirate_Flow_Rate=f'{self.effective_aspirate_flow_rate}',
             Extra_Volume=f'{self.Extra_Volume}',
             Outside_Rinse_Volume=f'{self.Outside_Rinse_Volume}',
             Inside_Rinse_Volume=f'{self.Inside_Rinse_Volume}',
@@ -342,7 +356,7 @@ class TransferWithRinse(TransferMethod):
     def estimated_time(self, layout: LHBedLayout) -> float:
         base_time = super().estimated_time(layout)
         rinse_time = 23.0 / 60.0
-        return self.Volume / self.Flow_Rate + self.Volume / self.Aspirate_Flow_Rate + self.Air_Gap / 0.3 + base_time + rinse_time
+        return self.Volume / self.Flow_Rate + self.Volume / self.effective_aspirate_flow_rate + self.Air_Gap / 0.3 + base_time + rinse_time
 
     def execute(self, layout):
         layout.carrier_well.volume -= (self.Outside_Rinse_Volume + self.Inside_Rinse_Volume)
