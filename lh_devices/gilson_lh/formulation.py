@@ -172,7 +172,16 @@ class Formulation(MethodContainer):
 
             if len(volumes) > 1:
                 total_volume = sum(volumes)
-                mix_volume = max(0.9 * total_volume, 0.1)
+                rack = layout.racks.get(self.Target.rack_id or "Mix")
+                rack_min = rack.min_volume if rack else 0.0
+                safe_headroom = total_volume - rack_min
+                mix_volume = max(min(0.9 * total_volume, safe_headroom), 0.5 * rack_min)
+                if safe_headroom < 0.5 * rack_min:
+                    logging.warning(
+                        "Mix volume limited to %.3f mL (safe headroom=%.3f mL, "
+                        "rack_min=%.3f mL); mixing efficiency may be reduced.",
+                        mix_volume, safe_headroom, rack_min,
+                    )
                 methods.append(MixWithRinse(
                     Target=self.Target,
                     Volume=mix_volume,
