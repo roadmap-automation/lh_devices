@@ -211,7 +211,7 @@ class GilsonLHBrokerWorker:
             return
 
         await self._emit(TASK_ACCEPTED, envelope, {})
-        await restart_gears()
+        #await restart_gears()
 
         # Set up GSIOC broker correlation for this task window.
         dead_volume_task = None
