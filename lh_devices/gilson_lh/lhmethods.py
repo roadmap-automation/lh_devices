@@ -21,8 +21,10 @@ if TYPE_CHECKING:
 
 # Aspirate rate is capped so that every aspiration takes at least this long.
 # Protects septum vials and reduces pressure spikes on small volumes.
-_MIN_ASPIRATE_TIME_MIN: float = 0.5  # 30 seconds
-_LH_MIN_FLOW_RATE: float = 0.1       # mL/min — Gilson hardware floor
+_MIN_ASPIRATE_TIME_MIN: float = 0.5   # 30 seconds
+_LH_MIN_FLOW_RATE: float = 0.1        # mL/min — Gilson hardware floor
+
+from lh_devices.core.formulation import effective_extra_volume as _effective_extra_volume
 
 # ======== Gilson-LH-specific Pydantic base classes (from core/methods.py) ========
 
@@ -340,7 +342,7 @@ class TransferWithRinse(TransferMethod):
             Volume=f'{self.Volume}',
             Flow_Rate=f'{self.Flow_Rate}',
             Aspirate_Flow_Rate=f'{self.effective_aspirate_flow_rate}',
-            Extra_Volume=f'{self.Extra_Volume}',
+            Extra_Volume=f'{self.effective_extra_volume}',
             Outside_Rinse_Volume=f'{self.Outside_Rinse_Volume}',
             Inside_Rinse_Volume=f'{self.Inside_Rinse_Volume}',
             Air_Gap=f'{self.Air_Gap}',
@@ -350,8 +352,15 @@ class TransferWithRinse(TransferMethod):
         ).to_dict()]
 
     @property
+    def effective_extra_volume(self) -> float:
+        """Volume-scaled transfer overhead sent to the instrument. Scales at 10% of
+        transfer volume, floored at _MIN_EXTRA_VOLUME and capped at the configured
+        Extra_Volume. The stored Extra_Volume field is the user-configured upper bound."""
+        return _effective_extra_volume(self.Volume, self.Extra_Volume)
+
+    @property
     def transfer_volume(self):
-        return self.Volume + self.Extra_Volume
+        return self.Volume + self.effective_extra_volume
 
     def estimated_time(self, layout: LHBedLayout) -> float:
         base_time = super().estimated_time(layout)
@@ -370,7 +379,7 @@ class TransferWithRinse(TransferMethod):
         else:
             source_composition = self.Source.expected_composition
         new_waste = WasteItem()
-        new_waste.mix_with(volume=self.Extra_Volume, composition=source_composition)
+        new_waste.mix_with(volume=self.effective_extra_volume, composition=source_composition)
         new_waste.mix_with(volume=self.Outside_Rinse_Volume + self.Inside_Rinse_Volume, composition=layout.carrier_well.composition)
         return new_waste
 

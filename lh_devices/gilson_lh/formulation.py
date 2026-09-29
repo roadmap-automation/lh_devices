@@ -9,6 +9,7 @@ from lh_devices.core.bedlayout import Composition, LHBedLayout, Well, WellLocati
 from .reservation import reservation_store
 from lh_devices.core.formulation import (
     ZERO_VOLUME_TOLERANCE,
+    effective_extra_volume,
     make_target_vector,
     select_wells,
     make_source_matrix,
@@ -73,6 +74,7 @@ class Formulation(MethodContainer):
         return _solve_formulation_core(
             self._available_wells(layout), layout,
             self.target_composition.stripped(), target_volume, self.exact_match,
+            configured_extra_volume=self.Extra_Volume,
         )
 
     def _inflated_target(self, layout: LHBedLayout) -> float:

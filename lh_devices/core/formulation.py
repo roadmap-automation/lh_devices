@@ -22,6 +22,21 @@ from lh_devices.core.bedlayout import Composition, LHBedLayout, Well
 # For the Gilson Verity 4120 with a 100 µL syringe, use 1e-2 mL (10 µL).
 ZERO_VOLUME_TOLERANCE = 1e-2
 
+# Transfer overhead scaling: the instrument aspirates extra volume beyond what
+# it delivers, consuming from the source well without contributing to the target.
+# 10% of the transfer volume, floored at MIN_EXTRA_VOLUME, capped at the
+# caller-configured Extra_Volume.
+MIN_EXTRA_VOLUME: float = 0.02       # 20 µL
+EXTRA_VOLUME_FRACTION: float = 0.10  # 10%
+
+
+def effective_extra_volume(volume: float, configured: float) -> float:
+    """Transfer overhead volume consumed from the source well but not delivered.
+
+    Scales at EXTRA_VOLUME_FRACTION of the transfer volume, floored at
+    MIN_EXTRA_VOLUME and capped at the caller's configured Extra_Volume."""
+    return max(MIN_EXTRA_VOLUME, min(configured, EXTRA_VOLUME_FRACTION * volume))
+
 
 def make_target_vector(
     target_composition: Composition,
@@ -83,6 +98,7 @@ def solve_formulation(
     target_composition: Composition,
     target_volume: float,
     exact_match: bool = True,
+    configured_extra_volume: float = 0.0,
 ) -> Dict[str, Any]:
     """Solve a formulation from a pre-filtered list of candidate wells.
 
@@ -122,8 +138,9 @@ def solve_formulation(
             wells_to_remove = []
             for well, source_well_volume, required_volume in zip(source_wells_current, source_well_volumes, required_volumes):
                 rack_min = layout.racks[well.rack_id].min_volume
-                if (required_volume + rack_min) > source_well_volume:
-                    logging.warning('Well %s insufficient volume (needs %s + %s, has %s). Removing.', well, required_volume, rack_min, source_well_volume)
+                extra = effective_extra_volume(required_volume, configured_extra_volume)
+                if (required_volume + extra + rack_min) > source_well_volume:
+                    logging.warning('Well %s insufficient volume (needs %s + %s extra + %s rack_min, has %s). Removing.', well, required_volume, extra, rack_min, source_well_volume)
                     wells_to_remove.append(well)
                 elif 0 < required_volume <= ZERO_VOLUME_TOLERANCE:
                     # Volume is positive but below the minimum pipettable threshold — treat as
