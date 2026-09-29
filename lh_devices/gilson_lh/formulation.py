@@ -178,20 +178,27 @@ class Formulation(MethodContainer):
                 rack_min = rack.min_volume if rack else 0.0
                 # Subtract Extra_Volume because the LH adds it back during the mix aspirate.
                 safe_headroom = total_volume - rack_min - self.Extra_Volume
-                mix_volume = max(min(0.9 * total_volume, safe_headroom), 0.5 * rack_min)
-                if safe_headroom < 0.5 * rack_min:
+                if safe_headroom < ZERO_VOLUME_TOLERANCE:
                     logging.warning(
-                        "Mix volume limited to %.3f mL (safe headroom=%.3f mL, "
-                        "rack_min=%.3f mL); mixing efficiency may be reduced.",
-                        mix_volume, safe_headroom, rack_min,
+                        "Skipping mix step: safe_headroom=%.4f mL (total=%.3f, "
+                        "rack_min=%.3f, extra=%.3f).",
+                        safe_headroom, total_volume, rack_min, self.Extra_Volume,
                     )
-                methods.append(MixWithRinse(
-                    Target=self.Target,
-                    Volume=mix_volume,
-                    Aspirate_Flow_Rate=self.Aspirate_Flow_Rate,
-                    Flow_Rate=self.Flow_Rate,
-                    Use_Liquid_Level_Detection=self.Use_Liquid_Level_Detection,
-                ))
+                else:
+                    mix_volume = min(max(0.9 * total_volume, 0.5 * rack_min), safe_headroom)
+                    if safe_headroom < 0.5 * rack_min:
+                        logging.warning(
+                            "Mix volume limited to %.3f mL (safe headroom=%.3f mL, "
+                            "rack_min=%.3f mL); mixing efficiency may be reduced.",
+                            mix_volume, safe_headroom, rack_min,
+                        )
+                    methods.append(MixWithRinse(
+                        Target=self.Target,
+                        Volume=mix_volume,
+                        Aspirate_Flow_Rate=self.Aspirate_Flow_Rate,
+                        Flow_Rate=self.Flow_Rate,
+                        Use_Liquid_Level_Detection=self.Use_Liquid_Level_Detection,
+                    ))
 
         return [] if not methods else [LHMethodCluster(methods=methods)]
 
