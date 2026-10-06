@@ -208,7 +208,8 @@ class FIT0819Collection(CameraCollectionBase):
                 slot.address = address
                 baseline.add(address)
                 self.logger.info(f"Acroname Port {port} mapped to {slot.name} ({address})")
-                await slot.capture()
+                await asyncio.to_thread(slot._capture)
+                await slot.trigger_update()
             elif len(newly_discovered) > 1:
                 self.logger.warning(f"Port {port}: Multiple new cameras appeared! Found: {newly_discovered}")
             else:
