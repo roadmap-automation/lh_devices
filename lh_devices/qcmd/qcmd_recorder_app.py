@@ -6,7 +6,7 @@ import webbrowser
 
 from ..gilson.gsioc import GSIOC
 from .recorder import QCMDRecorderDevicewithCamera
-from ..camera.camera import FIT0819
+from .qcmd_cameras import FIT0819
 from ..notify import notifier
 from ..webview import run_socket_app
 

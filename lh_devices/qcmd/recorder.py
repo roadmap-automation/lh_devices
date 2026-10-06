@@ -9,7 +9,8 @@ from typing import Coroutine
 from aiohttp import ClientSession, ClientConnectionError
 from urllib.parse import urlsplit
 
-from ..camera.camera import CameraDeviceBase, FIT0819
+from ..camera.camera import CameraDeviceBase
+from .qcmd_cameras import FIT0819
 from ..gilson.gsioc import GSIOCMessage
 from ..assemblies import AssemblyBasewithGSIOC
 from ..logutils import Loggable
