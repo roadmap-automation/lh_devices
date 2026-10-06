@@ -30,7 +30,7 @@ class QCMDState(str, Enum):
 
 class QCMDMeasurementDevice(DeviceBase):
     
-    def __init__(self, http_address: str = 'http://localhost:5011/QCMD/0/', device_id: str = None, name='QCMDRecorder', channel_index: int = 0) -> None:
+    def __init__(self, http_address: str = 'http://localhost:5011/QCMD/0/', device_id: str = None, name='QCMDRecorder', serial: str | None = None) -> None:
 
         DeviceBase.__init__(self, device_id=device_id, name=name)
         self.poll_interval = 1.0
@@ -41,7 +41,7 @@ class QCMDMeasurementDevice(DeviceBase):
         self.session = ClientSession(self._base_url)
         self.request_lock: asyncio.Lock = asyncio.Lock()
         self.url_path = url_parts.path
-        self.channel_index = channel_index
+        self._serial = serial
         self.timeout = 10
         self.qcmd_status: str = QCMDState.DISCONNECTED
 
@@ -311,7 +311,7 @@ class QCMDMeasurementDevice(DeviceBase):
         d = await super().get_info()
         sleep_time_remaining, record_time_remaining = self._remaining_time_formatted()
         measuring = self.qcmd_status == QCMDState.MEASURING
-        monitor_url = f'{self._base_url}/monitor/{self.channel_index}/'
+        monitor_url = f'{self._base_url}/monitor/id/{self._serial}/' if self._serial else None
         d.update({'type': 'device',
                   'state': {'idle': self.idle,
                             'reserved': self.reserved,
@@ -337,7 +337,7 @@ class QCMDMeasurementDevice(DeviceBase):
                                 'monitor': {'type': 'link',
                                             'text': 'Live data' if measuring else 'Last run',
                                             'href': monitor_url,
-                                            'visible': (self.qcmd_status != QCMDState.DISCONNECTED)},
+                                            'visible': (monitor_url is not None and self.qcmd_status != QCMDState.DISCONNECTED)},
                                                   }})
         
         return d    
@@ -828,7 +828,7 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
                 
                 device = QCMDMeasurementDevice(f'http://{qcmd_address}:{qcmd_port}/QCMD/id/{qcmd_id}/',
                                                name=f'QCMD Measurement Device {i}, Serial Number {qcmd_id}',
-                                               channel_index=i)
+                                               serial=qcmd_id)
                 channels.append(QCMDMeasurementChannelwithCamera(device, camera=camera_slot, name=f'QCMD Measurement Channel {i}'))
         else:
             channels = []
@@ -839,8 +839,7 @@ class QCMDMultiChannelMeasurementDevice(MultiChannelAssembly, LayoutPlugin):
                 self.camera_collection.register_slot(camera_slot)
                 
                 device = QCMDMeasurementDevice(f'http://{qcmd_address}:{qcmd_port}/QCMD/{i}/',
-                                               name=f'QCMD Measurement Device {i}',
-                                               channel_index=i)
+                                               name=f'QCMD Measurement Device {i}')
                 channels.append(QCMDMeasurementChannelwithCamera(device, camera=camera_slot, name=f'QCMD Measurement Channel {i}'))
 
         super().__init__(channels=channels,
