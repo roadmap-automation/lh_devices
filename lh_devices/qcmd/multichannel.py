@@ -687,9 +687,24 @@ class QCMDMeasurementChannelwithCamera(QCMDMeasurementChannel):
         super().__init__(qcmd, name)
         self.devices += [camera]
 
+        self.register('QCMDStart', self.QCMDStartwithCamera(self, qcmd, camera), task_type='none')
         self.register('QCMDRecordTag', self.QCMDRecordTagwithCamera(self, qcmd, camera), task_type='measure')
         self.register('QCMDRecordCurrent', self.QCMDRecordCurrentwithCamera(self, qcmd, camera), task_type='measure')
         self.register('QCMDCaptureImage', self.QCMDCaptureImage(self, qcmd, camera), task_type='measure')
+
+    class QCMDStartwithCamera(QCMDMeasurementChannel.QCMDStart):
+
+        def __init__(self, ch: QCMDMeasurementChannel, device: QCMDMeasurementDevice, camera: CameraDeviceBase):
+            super().__init__(ch, device)
+            self.camera = camera
+
+        async def run(self, **kwargs):
+            result = await super().run(**kwargs)
+            # Capture twice: first image discards auto-exposure transient, second is the clean reference.
+            await asyncio.to_thread(self.camera._capture)
+            await asyncio.to_thread(self.camera._capture)
+            await self.camera.trigger_update()
+            return result
 
     class QCMDMethodBasewithCamera(QCMDMeasurementChannel.QCMDMethodBase):
 
