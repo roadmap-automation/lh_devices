@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import logging
+import os
 import pathlib
 
 from aiohttp.web_app import Application as Application
@@ -47,7 +48,7 @@ async def run_injection_system():
     """
 
     # serial communications setup
-    ser_rinse = HamiltonSerial(port='COM6', baudrate=38400)
+    ser_rinse = HamiltonSerial(port=os.environ.get('HAMILTON_RINSE_PORT', 'COM6'), baudrate=38400)
 
     # device setup
     selector_valve = HamiltonValvePositioner(ser_rinse, '2', DistributionValve(8, name='selector_valve'), name='Selector Valve')
@@ -90,7 +91,7 @@ async def run_injection_system():
     rinse_runner = await run_socket_app(rinseapp, 'localhost', 5014)
 
     # ============== Distribution System setup ==================
-    ser = HamiltonSerial(port='COM9', baudrate=38400)
+    ser = HamiltonSerial(port=os.environ.get('HAMILTON_INJECTION_PORT', 'COM9'), baudrate=38400)
 
     ip = InjectionPort('LH_injection_port')
 

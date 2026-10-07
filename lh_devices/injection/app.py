@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import logging
+import os
 import pathlib
 
 from aiohttp.web_app import Application as Application
@@ -23,7 +24,7 @@ DEVICE_ID = 'injection'
 
 async def run_injection_system():
     # serial communications setup
-    ser = HamiltonSerial(port='COM9', baudrate=38400)
+    ser = HamiltonSerial(port=os.environ.get('HAMILTON_INJECTION_PORT', 'COM9'), baudrate=38400)
 
     # device setup
     dvp = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Valve')

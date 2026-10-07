@@ -10,6 +10,7 @@ Port 5001 (matches lh_manager's legacy lhdevice.address).
 import asyncio
 import datetime
 import logging
+import os
 
 from lh_devices.core.bedlayout import LHBedLayout
 from lh_devices.webview import run_socket_app
@@ -42,7 +43,11 @@ async def run():
 
     # GSIOC serial connection (Trilution ↔ gilson_lh ↔ broker)
     try:
-        gsioc = GSIOC(62, 'COM13', 19200)
+        gsioc = GSIOC(
+            int(os.environ.get('GSIOC_ADDRESS', '62')),
+            os.environ.get('GSIOC_PORT', 'COM13'),
+            19200,
+        )
         _gsioc_handler = logging.FileHandler(
             LOG_PATH / (datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_gsioc_log.txt')
         )
