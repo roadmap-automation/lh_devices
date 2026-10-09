@@ -3,6 +3,7 @@ import logging
 import numpy as np
 from pydantic import Field
 
+from lh_devices.methods import MethodException
 from .lhmethods import MixWithRinse, TransferWithRinse, LHMethodCluster, MethodContainer, MethodType, MethodsType
 
 from lh_devices.core.bedlayout import Composition, LHBedLayout, Well, WellLocation
@@ -61,6 +62,7 @@ class Formulation(MethodContainer):
     Use_Liquid_Level_Detection: bool = True
 
     _formulation_results: Tuple[List[float], List[Well], bool] | None = None
+    _failure_reason: str | None = None
 
     def _available_wells(self, layout: LHBedLayout) -> List[Well]:
         """Wells in include_zones, excluding any actively claimed by another sample."""
@@ -80,8 +82,14 @@ class Formulation(MethodContainer):
     def _inflated_target(self, layout: LHBedLayout) -> float:
         """Volume to prepare when mixing is needed: accounts for mix overhead, inject overhead,
         and the target well's rack minimum volume."""
-        rack_id = self.Target.rack_id or "Mix"
-        rack = layout.racks.get(rack_id)
+        rack_id = self.Target.rack_id
+        if not rack_id:
+            # Pre-claim: estimate rack_min from the first allow_mixing rack available
+            rack_id = next(
+                (name for name, r in layout.racks.items() if r.allow_mixing),
+                None,
+            )
+        rack = layout.racks.get(rack_id) if rack_id else None
         rack_min = rack.min_volume if rack else 0.0
         return self.target_volume + rack_min + 2 * self.Extra_Volume
 
@@ -97,6 +105,7 @@ class Formulation(MethodContainer):
 
         if not result['success']:
             logging.error(result['error'])
+            self._failure_reason = result.get('failure_reason')
             self._formulation_results = [], [], False
             return self._formulation_results
 
@@ -104,6 +113,7 @@ class Formulation(MethodContainer):
         result2 = self._solve(layout, self._inflated_target(layout))
         if not result2['success']:
             logging.error(result2['error'])
+            self._failure_reason = result2.get('failure_reason')
         self._formulation_results = result2['volumes'], result2['wells'], result2['success']
         logging.info(self._formulation_results)
         return self._formulation_results
@@ -132,6 +142,10 @@ class Formulation(MethodContainer):
                                     well_number=wells[0].well_number,
                                     expected_composition=self.target_composition)
 
+    @property
+    def failure_reason(self) -> str | None:
+        return self._failure_reason
+
     def get_methods(self, layout: LHBedLayout, sample_id: str | None = None) -> List[MethodsType]:
         methods = []
         volumes, wells, success = self.get_formulation_results(layout)
@@ -149,11 +163,13 @@ class Formulation(MethodContainer):
             elif success:
                 # Multi-source: claim an empty Mix well for the formulation target.
                 claimed = reservation_store.reserve_claim(
-                    sample_id, self.Target.id, layout, rack_id="Mix"
+                    sample_id, self.Target.id, layout,
+                    required_volume=self._inflated_target(layout),
                 )
                 if claimed is None:
-                    raise RuntimeError(
-                        f"No empty Mix well available for allocation {self.Target.id!r}"
+                    raise MethodException(
+                        f"No empty Mix well available for allocation {self.Target.id!r}",
+                        retry=True,
                     )
                 self.Target = claimed
 
@@ -174,7 +190,7 @@ class Formulation(MethodContainer):
 
             if len(volumes) > 1:
                 total_volume = sum(volumes)
-                rack = layout.racks.get(self.Target.rack_id or "Mix")
+                rack = layout.racks.get(self.Target.rack_id or "")
                 rack_min = rack.min_volume if rack else 0.0
                 # Subtract Extra_Volume because the LH adds it back during the mix aspirate.
                 safe_headroom = total_volume - rack_min - self.Extra_Volume
@@ -240,6 +256,7 @@ class SoluteFormulation(Formulation):
                     'Null composition: diluent (%s) not available with sufficient volume (%.3f mL)',
                     self.diluent, needed,
                 )
+                self._failure_reason = 'insufficient_volume'
                 self._formulation_results = [], [], False
                 return self._formulation_results
             self._formulation_results = [needed], [diluent_well], True
@@ -269,6 +286,7 @@ class SoluteFormulation(Formulation):
 
         if not result['success']:
             logging.error(result['error'])
+            self._failure_reason = result.get('failure_reason')
             self._formulation_results = [], [], False
             return self._formulation_results
 
@@ -278,6 +296,7 @@ class SoluteFormulation(Formulation):
         if not np.isclose(diluent_volume, 0.0, atol=ZERO_VOLUME_TOLERANCE):
             if diluent_volume < 0:
                 logging.error('Diluent volume less than zero; should never happen')
+                self._failure_reason = 'unsolvable'
                 self._formulation_results = [], [], False
                 return self._formulation_results
 
@@ -292,6 +311,7 @@ class SoluteFormulation(Formulation):
                     'No diluent well (%s) with sufficient volume (%.3f mL) available on bed',
                     self.diluent, diluent_volume,
                 )
+                self._failure_reason = 'insufficient_volume'
                 self._formulation_results = [], [], False
                 return self._formulation_results
             volumes += [diluent_volume]

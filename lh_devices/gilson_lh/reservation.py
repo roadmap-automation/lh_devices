@@ -51,20 +51,43 @@ class WellReservationStore:
     # Public API
     # ------------------------------------------------------------------
 
-    def reserve_claim(self, sample_id: str, uuid: str, layout: LHBedLayout, rack_id: str) -> WellLocation | None:
-        """Assign the next empty well in rack_id to (sample_id, uuid).
+    def reserve_claim(self, sample_id: str, uuid: str, layout: LHBedLayout, required_volume: float = 0.0) -> WellLocation | None:
+        """Assign the next empty well in an allow_mixing rack to (sample_id, uuid).
+
+        Selects the best-fit rack: smallest max_volume >= required_volume among
+        racks with allow_mixing=True that have at least one unclaimed empty well.
+        Falls back to the smallest allow_mixing rack if none fits the volume (overflow
+        is caught at execute time by MethodError checks).
 
         If (sample_id, uuid) is already claimed, return the existing location.
-        Returns None if no empty well is available.
+        Returns None if no allow_mixing rack with an empty well is available.
         """
         existing = self._lookup(sample_id, uuid)
         if existing is not None:
             return existing
 
-        next_empty = layout.find_next_empty(rack_id)
-        if next_empty is None:
-            logger.error("reserve_claim: no empty well in rack %s", rack_id)
+        candidates = [
+            (name, rack)
+            for name, rack in layout.racks.items()
+            if rack.allow_mixing and layout.find_next_empty(name) is not None
+        ]
+
+        if not candidates:
+            logger.error("reserve_claim: no allow_mixing rack with empty wells available")
             return None
+
+        fitting = [(name, rack) for name, rack in candidates if rack.max_volume >= required_volume]
+        if fitting:
+            chosen_name, _ = min(fitting, key=lambda x: x[1].max_volume)
+        else:
+            chosen_name, _ = min(candidates, key=lambda x: x[1].max_volume)
+            logger.warning(
+                "reserve_claim: no allow_mixing rack fits required volume %.3f mL; "
+                "using %s (max_volume=%.3f) — overflow check will run at execute time",
+                required_volume, chosen_name, layout.racks[chosen_name].max_volume,
+            )
+
+        next_empty = layout.find_next_empty(chosen_name)
 
         # Mark the well in the layout with this uuid so infer_location can find it
         well, _ = layout.get_well_and_rack(next_empty.rack_id, next_empty.well_number)

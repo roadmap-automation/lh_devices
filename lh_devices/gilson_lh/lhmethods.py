@@ -9,7 +9,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, validator, ValidationError
 
 from lh_devices.core.bedlayout import LHBedLayout, WellLocation, Well, Solution, Composition, Solvent
-from lh_devices.methods import MethodBase
+from lh_devices.methods import MethodBase, MethodException
 from lh_devices.waste import WasteItem
 
 from .status import MethodError, SampleStatus
@@ -1037,7 +1037,17 @@ class GilsonFormulation(GilsonLHMethod):
             if not flat_methods:
                 _, _, success = lh_method.get_formulation_results(layout)
                 if not success:
-                    raise RuntimeError('Formulation failed: no valid source wells found')
+                    reason = lh_method.failure_reason
+                    if reason == 'insufficient_volume':
+                        raise MethodException(
+                            'Formulation failed: source wells exhausted — refill and clear fault to retry',
+                            retry=True,
+                        )
+                    else:
+                        raise MethodException(
+                            f'Formulation failed ({reason or "unknown"}) — check formulation specification and resubmit',
+                            retry=False,
+                        )
                 return {}
             from .lhinterface import LHJob
             job = LHJob(id=task_id or str(uuid4()))
@@ -1084,7 +1094,17 @@ class GilsonSoluteFormulation(GilsonLHMethod):
             if not flat_methods:
                 _, _, success = lh_method.get_formulation_results(layout)
                 if not success:
-                    raise RuntimeError('SoluteFormulation failed: no valid source wells found')
+                    reason = lh_method.failure_reason
+                    if reason == 'insufficient_volume':
+                        raise MethodException(
+                            'SoluteFormulation failed: source wells exhausted — refill and clear fault to retry',
+                            retry=True,
+                        )
+                    else:
+                        raise MethodException(
+                            f'SoluteFormulation failed ({reason or "unknown"}) — check formulation specification and resubmit',
+                            retry=False,
+                        )
                 return {}
             from .lhinterface import LHJob
             job = LHJob(id=task_id or str(uuid4()))

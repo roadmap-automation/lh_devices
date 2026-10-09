@@ -111,11 +111,11 @@ def solve_formulation(
     source_wells, source_components = select_wells(wells, target_names, exact_match)
 
     if not source_wells:
-        return {'success': False, 'error': 'Cannot create formulation: no acceptable solutions available', 'volumes': [], 'wells': []}
+        return {'success': False, 'failure_reason': 'no_material', 'error': 'Cannot create formulation: no acceptable solutions available', 'volumes': [], 'wells': []}
 
     for target_name in target_names:
         if target_name not in source_components:
-            return {'success': False, 'error': f'Cannot make formulation: {target_name} is missing', 'volumes': [], 'wells': []}
+            return {'success': False, 'failure_reason': 'no_material', 'error': f'Cannot make formulation: {target_name} is missing', 'volumes': [], 'wells': []}
 
     source_wells_current = list(source_wells)
 
@@ -124,7 +124,7 @@ def solve_formulation(
         source_matrix, source_wells_current = make_source_matrix(target_names, source_wells_current, target_units)
 
         if not source_wells_current:
-            return {'success': False, 'error': 'Solver failed: Ran out of source wells', 'volumes': [], 'wells': []}
+            return {'success': False, 'failure_reason': 'insufficient_volume', 'error': 'Solver failed: Ran out of source wells', 'volumes': [], 'wells': []}
 
         logging.info('Source matrix: %s', source_matrix)
 
@@ -156,13 +156,13 @@ def solve_formulation(
                     if vol * target_volume > ZERO_VOLUME_TOLERANCE:
                         volumes.append(vol * target_volume)
                         result_wells.append(well)
-                return {'success': True, 'error': None, 'volumes': volumes, 'wells': result_wells}
+                return {'success': True, 'failure_reason': None, 'error': None, 'volumes': volumes, 'wells': result_wells}
             else:
                 for w in wells_to_remove:
                     if w in source_wells_current:
                         source_wells_current.remove(w)
                 if not source_wells_current:
-                    return {'success': False, 'error': 'Insufficient volume in source wells', 'volumes': [], 'wells': []}
+                    return {'success': False, 'failure_reason': 'insufficient_volume', 'error': 'Insufficient volume in source wells', 'volumes': [], 'wells': []}
         else:
             logging.warning('Bad residual %s', f'{res:0.0e}')
-            return {'success': False, 'error': f'Cannot solve formulation (Residual: {res:0.0e})', 'volumes': [], 'wells': []}
+            return {'success': False, 'failure_reason': 'unsolvable', 'error': f'Cannot solve formulation (Residual: {res:0.0e})', 'volumes': [], 'wells': []}
