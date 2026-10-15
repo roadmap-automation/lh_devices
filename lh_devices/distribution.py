@@ -83,9 +83,12 @@ class DistributionSingleValveTwoSource(AutocontrolPlugin, DistributionBase, Layo
         DistributionBase.__init__(self, distribution_valve.valve.n_positions, [distribution_valve, source_valve], injection_port, name, id)
         LayoutPlugin.__init__(self, self.id, self.name)
 
+        self.source_valve = source_valve
+
         self.modes = {str(i): Mode({distribution_valve: i}, final_node=distribution_valve.get_nodes()[i]) for i in range(self.n_positions + 1)}
         self.modes.update({'LH': Mode({source_valve: 1}),
                            'Rinse': Mode({source_valve: 3}),
+                           'Manual': Mode({source_valve: 2}),
                            'Standby': Mode({source_valve: 0,
                                             distribution_valve: 0})})
         

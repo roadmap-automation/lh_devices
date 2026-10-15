@@ -317,6 +317,63 @@ class MethodBasewithCompositionReceive(MethodBase):
         return await self._incoming_composition.get()
 
 
+class ManualMethodMixin:
+    """Mixin for methods that require explicit operator confirmation to complete.
+
+    The method calls ``await self.wait_for_proceed(steps)`` and blocks until
+    ``set_proceed()`` is called — either by the instrument UI (via the
+    ``proceed_method`` SocketIO command) or by the broker adapter when an
+    ``intervention.cleared`` message arrives.
+
+    ``steps`` may be a single reason string or a list of sequential step
+    strings.  For a list, the method blocks once per step; each step publishes
+    a fresh ``intervention.manual_step`` so the PS banner text updates in place.
+
+    The broker plugin detects this mixin via ``isinstance`` and wires up the
+    intervention subscription and publication automatically.
+    """
+
+    _proceed_event: asyncio.Event | None = None
+    waiting_for_proceed: bool = False
+    waiting_reason: str | None = None
+
+    async def wait_for_proceed(
+        self,
+        steps: 'str | list[str]',
+        on_waiting=None,
+    ) -> None:
+        """Block until set_proceed() is called, once per step.
+
+        on_waiting: optional async callable(reason: str) invoked after the
+                    event is armed and waiting_reason is set.  broker_plugin
+                    passes its publish-intervention coroutine here so the
+                    publish happens only after the subscription is ready.
+        """
+        if isinstance(steps, str):
+            steps = [steps]
+        for step in steps:
+            self._proceed_event = asyncio.Event()
+            self.waiting_for_proceed = True
+            self.waiting_reason = step
+            if on_waiting:
+                await on_waiting(step)
+            await self._proceed_event.wait()
+        self.waiting_for_proceed = False
+        self.waiting_reason = None
+
+    # Callbacks set by broker_plugin; None when running without a broker.
+    # _on_waiting_callback(reason): called inside wait_for_proceed() after the event
+    #   is armed — publishes intervention.manual_step to the broker.
+    # _on_proceed_callback(): called by event_handler after set_proceed() — publishes
+    #   intervention.cleared to the broker so PS clears its banner.
+    _on_waiting_callback: 'object | None' = None
+    _on_proceed_callback: 'object | None' = None
+
+    def set_proceed(self) -> None:
+        if self._proceed_event is not None:
+            self._proceed_event.set()
+
+
 class MethodBaseDeadVolume(MethodBasewithBrokerTrigger):
     """Compatibility shim for code that still uses the old GSIOC-coupled base class.
 
@@ -514,7 +571,9 @@ class MethodPlugin(WebNodeBase):
         d = await super().get_info()
         d.update({'active_methods': {method_name: dict(method_data=active_method['method_data'],
                                                        has_error=(active_method['method'].error.error is not None),
-                                                       has_broker_trigger=isinstance(active_method['method'], MethodBasewithBrokerTrigger))
+                                                       has_broker_trigger=isinstance(active_method['method'], MethodBasewithBrokerTrigger),
+                                                       is_manual=isinstance(active_method['method'], ManualMethodMixin),
+                                                       waiting_reason=active_method['method'].waiting_reason if isinstance(active_method['method'], ManualMethodMixin) else None)
                                       for method_name, active_method in self.active_methods.items()},
                   'method_schemas': self._method_schemas_for_display()
                  }
@@ -539,6 +598,14 @@ class MethodPlugin(WebNodeBase):
             target_method: MethodBasewithTrigger = self.active_methods.get(data['method'], None)['method']
             if target_method is not None:
                 target_method.activate_trigger()
+        elif command == 'proceed_method':
+            active = self.active_methods.get(data['method'], None)
+            if active is not None and isinstance(active['method'], ManualMethodMixin):
+                method = active['method']
+                method.set_proceed()
+                if method._on_proceed_callback is not None:
+                    asyncio.create_task(method._on_proceed_callback())
+                await self.trigger_update()
         elif command == 'cancel_method':
             target_method = self.active_methods.get(data['method'], None)['method']
             if target_method is not None:

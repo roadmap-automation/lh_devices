@@ -14,7 +14,7 @@ from ..waste import WasteInterfaceBase
 
 from .channel import RoadmapChannelBubbleSensor
 from .channelmethods import InjectLoop, InjectLoopBubbleSensor, PrimeLoop, RoadmapChannelInit, RoadmapChannelSleep
-from .lhmethods import LoadLoop, LoadLoopBubbleSensor, DirectInject, DirectInjectBubbleSensor, DirectInjectPrime
+from .lhmethods import LoadLoop, LoadLoopBubbleSensor, DirectInject, DirectInjectBubbleSensor, DirectInjectPrime, ManualInjectBubbleSensor
 from .rinsemethods import RinseLoadLoop, RinseLoadLoopBubbleSensor, RinseDirectInjectPrime, RinseDirectInject, RinseDirectInjectBubbleSensor
 
 class RoadmapChannelAssembly(MultiChannelAssembly, LayoutPlugin):
@@ -85,6 +85,13 @@ class RoadmapChannelAssembly(MultiChannelAssembly, LayoutPlugin):
             ch.register('RoadmapChannelInit', RoadmapChannelInit(ch), task_type='none')
             ch.register('RoadmapChannelSleep', RoadmapChannelSleep(ch), task_type='none')
             ch.register('PrimeLoop', PrimeLoop(ch, waste_tracker=waste_tracker), task_type='none')
+            manual_direct_mode = ModeGroup([distribution_system.modes[str(2 + 2 * i)],
+                                            distribution_system.modes['Manual']])
+            ch.register('ManualInjectBubbleSensor',
+                ManualInjectBubbleSensor(ch, manual_direct_mode,
+                                         switch_device=distribution_system.source_valve,
+                                         waste_tracker=waste_tracker),
+                task_type='none')
 
         self.distribution_system = distribution_system
 
@@ -191,7 +198,14 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin):
             ch.register('RinseDirectInjectPrime', RinseDirectInjectPrime(ch, rinse_direct_mode, rinse_system, waste_tracker=waste_tracker), task_type='none')
             ch.register('RinseDirectInject', RinseDirectInject(ch, rinse_direct_mode, rinse_system, waste_tracker=waste_tracker), task_type='none')
             ch.register('RinseDirectInjectBubbleSensor', RinseDirectInjectBubbleSensor(ch, rinse_direct_mode, rinse_system, ch.inlet_bubble_sensor, ch.outlet_bubble_sensor, waste_tracker=waste_tracker), task_type='none')
-            
+            manual_direct_mode = ModeGroup([distribution_system.modes[str(2 + 2 * i)],
+                                            distribution_system.modes['Manual']])
+            ch.register('ManualInjectBubbleSensor',
+                ManualInjectBubbleSensor(ch, manual_direct_mode,
+                                         switch_device=distribution_system.source_valve,
+                                         waste_tracker=waste_tracker),
+                task_type='none')
+
             ch.method_callbacks.append(trigger_layout_update)
             
         self.distribution_system = distribution_system

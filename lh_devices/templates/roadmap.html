@@ -286,6 +286,15 @@
                                 issue_command(id, 'cancel_method', {'method': method_name})
                             })
                             .appendTo(newdiv);
+                        if (active_method['is_manual'] && active_method['waiting_reason']) {
+                            $('<div>').text(active_method['waiting_reason']).appendTo(newdiv);
+                            $('<button>')
+                                .text('Done')
+                                .on('click', function () {
+                                    issue_command(id, 'proceed_method', {'method': method_name})
+                                })
+                                .appendTo(newdiv);
+                        }
                         if (active_method['has_error']) {
                             newdiv.addClass("error_text")
                             $('<button>')

@@ -8,7 +8,8 @@ from lh_devices.core.bedlayout import Composition
 
 from ..assemblies import Mode
 from ..bubblesensor import BubbleSensorBase
-from ..methods import MethodBase, MethodBasewithBrokerTrigger, MethodBasewithCompositionReceive
+from ..hamilton.HamiltonDevice import HamiltonValvePositioner
+from ..methods import MethodBase, MethodBasewithBrokerTrigger, MethodBasewithCompositionReceive, MethodBasewithCompositionRelay, ManualMethodMixin
 from ..waste import WasteInterfaceBase
 
 from .channel import RoadmapChannelBase
@@ -474,9 +475,99 @@ class DirectInjectBubbleSensor(MethodBasewithBrokerTrigger):
             while liquid_in_line:
                 _, liquid_in_line = await asyncio.gather(asyncio.sleep(poll_interval), self.inlet_bubble_sensor.read())
 
-            self.logger.info(f'{self.channel.name}.detect_air_gap: Air detected, activating callback')            
+            self.logger.info(f'{self.channel.name}.detect_air_gap: Air detected, activating callback')
             await callback
         except asyncio.CancelledError:
             pass
         finally:
             callback.close()
+
+class ManualInjectBubbleSensor(ManualMethodMixin, MethodBasewithCompositionRelay):
+    """Manual injection method. Operator routes flow via physical PURGE/INJECT switches;
+    this method polls DI inputs on the MVP and mirrors valve state to the channel.
+    Blocks until operator clicks Done in the instrument UI.
+    """
+
+    def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode,
+                 switch_device: HamiltonValvePositioner,
+                 switch_di_purge: int = 1, switch_di_inject: int = 2,
+                 waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
+        super().__init__([channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
+        self.channel = channel
+        self.distribution_mode = distribution_mode
+        self.switch_device = switch_device
+        self.switch_di_purge = switch_di_purge
+        self.switch_di_inject = switch_di_inject
+
+    @dataclass
+    class MethodDefinition(MethodBase.MethodDefinition):
+
+        name: str = "ManualInjectBubbleSensor"
+        composition: dict | None = None
+        volume: float = 0.0
+        wash_composition: dict | None = None
+        wash_volume: float = 0.0
+
+    async def run(self, **kwargs):
+
+        self.reserve_all()
+
+        method = self.MethodDefinition(**kwargs)
+
+        # Safety check: if INJECT switch is already active at startup, warn and wait
+        while not (await self.switch_device.get_digital_input(self.switch_di_inject)):
+            self.logger.warning(f'{self.channel.name}.{method.name}: INJECT switch already active at startup, waiting...')
+            await asyncio.sleep(0.5)
+
+        await self.distribution_mode.activate()
+
+        injected_flag = False
+        current_channel_mode: str | None = None
+
+        async def poll_switches():
+            nonlocal injected_flag, current_channel_mode
+            try:
+                while True:
+                    purge_active = not (await self.switch_device.get_digital_input(self.switch_di_purge))
+                    inject_active = not (await self.switch_device.get_digital_input(self.switch_di_inject))
+
+                    if inject_active:
+                        if current_channel_mode != 'LHInject':
+                            await self.channel.change_mode('LHInject')
+                            current_channel_mode = 'LHInject'
+                            injected_flag = True
+                    elif purge_active:
+                        if current_channel_mode != 'LHPrime':
+                            await self.channel.change_mode('LHPrime')
+                            current_channel_mode = 'LHPrime'
+                    else:
+                        if current_channel_mode != 'Standby':
+                            await self.channel.change_mode('Standby')
+                            current_channel_mode = 'Standby'
+
+                    await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                pass
+
+        poll_task = asyncio.create_task(poll_switches())
+
+        await self.wait_for_proceed("Manual injection required", on_waiting=self._on_waiting_callback)
+
+        poll_task.cancel()
+        await asyncio.sleep(0)
+
+        if injected_flag:
+            if method.composition is not None:
+                self.channel.well.composition = Composition.model_validate(method.composition)
+            self.channel.well.volume = method.volume
+
+            dead_volume = self.channel.get_dead_volume('LHPrime')
+            await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, dead_volume / 1000)
+
+            if method.wash_composition is not None:
+                await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, method.wash_volume)
+
+        self.emit_composition(self.channel.well.composition)
+
+        await self.channel.change_mode('Standby')
+        self.release_all()

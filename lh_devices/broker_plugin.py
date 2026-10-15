@@ -42,7 +42,9 @@ from roadmap_broker_client.topics import (
     DEVICE_ANNOUNCE_REQUEST,
     DEVICE_REGISTERED,
     INSTRUMENT_EXCHANGE,
+    INTERVENTION_MANUAL_STEP,
     LAYOUT_UPDATED,
+    PROTOCOL_EXCHANGE,
     TASK_ACCEPTED,
     TASK_COMPLETED,
     TASK_FAILED,
@@ -50,10 +52,12 @@ from roadmap_broker_client.topics import (
     composition_transfer_key,
     gsioc_dead_volume_key,
     gsioc_trigger_key,
+    intervention_cleared_key,
 )
 
 from .history import HistoryDB
 from .methods import (
+    ManualMethodMixin,
     MethodBasewithBrokerTrigger,
     MethodBasewithCompositionRelay,
     MethodBasewithCompositionReceive,
@@ -177,12 +181,18 @@ class DeviceBrokerWorker:
         self._method_done_events: dict[str, asyncio.Event] = {}
 
         self._exchange: Optional[aio_pika.abc.AbstractExchange] = None
+        # Protocol exchange reference — used for intervention pub/sub.
+        self._protocol_exchange: Optional[aio_pika.abc.AbstractExchange] = None
         # Stored in start() so composition transfer and GSIOC subscriptions can declare temporary queues.
         self._amqp_channel: Optional[aio_pika.abc.AbstractChannel] = None
         # Filled in during start() so BrokerWasteInterface can publish.
         self.waste_interface: Optional['BrokerWasteInterface'] = None
         # Active dead-volume relay tasks keyed by task_id; cancelled on method completion.
         self._relay_tasks: dict[str, asyncio.Task] = {}
+        # Intervention subscription tasks keyed by task_id; cancelled on method completion.
+        self._intervention_tasks: dict[str, asyncio.Task] = {}
+        # Done-events for intervention loops keyed by task_id.
+        self._intervention_done_events: dict[str, asyncio.Event] = {}
 
     # ------------------------------------------------------------------
     # Startup
@@ -197,6 +207,7 @@ class DeviceBrokerWorker:
         await declare_topology(channel)
 
         self._exchange = await channel.get_exchange(INSTRUMENT_EXCHANGE)
+        self._protocol_exchange = await channel.get_exchange(PROTOCOL_EXCHANGE)
 
         if self._num_channels is None:
             self._num_channels = len(self.assembly.channels)
@@ -365,6 +376,79 @@ class DeviceBrokerWorker:
                 pass
 
     # ------------------------------------------------------------------
+    # Manual method intervention (ManualMethodMixin)
+    # ------------------------------------------------------------------
+
+    async def _publish_intervention_manual_step(
+        self, task_id: str, envelope: Envelope, reason: str
+    ) -> None:
+        if self._protocol_exchange is None:
+            return
+        msg = build(
+            device_id=self.device_id,
+            routing_key=INTERVENTION_MANUAL_STEP,
+            task_id=envelope.task_id,
+            assigned_channel=envelope.assigned_channel,
+            payload={"reason": reason},
+        )
+        await publish(self._protocol_exchange, INTERVENTION_MANUAL_STEP, msg)
+        logger.debug("[%s] intervention.manual_step published for task %s.", self.device_id, task_id)
+
+    async def _await_intervention_cleared(
+        self,
+        method_instance: 'ManualMethodMixin',
+        task_id: str,
+        done_event: asyncio.Event,
+    ) -> None:
+        """Subscribe to intervention.cleared.<task_id> and call set_proceed() on each receipt.
+
+        Loops until done_event is set (method completes).  Multi-step methods call
+        wait_for_proceed() multiple times, so multiple cleared signals may arrive.
+        When set_proceed() is triggered locally (instrument UI), this subscription
+        still fires (device echoes cleared to broker); it just calls set_proceed()
+        on an already-resolved event, which is a no-op.
+        """
+        if self._amqp_channel is None or self._protocol_exchange is None:
+            return
+        rk = intervention_cleared_key(task_id)
+        queue = await self._amqp_channel.declare_queue(exclusive=True, auto_delete=True)
+        await queue.bind(self._protocol_exchange, routing_key=rk)
+
+        async def _on_cleared(msg: aio_pika.abc.AbstractIncomingMessage) -> None:
+            async with msg.process():
+                method_instance.set_proceed()
+                logger.debug("[%s] intervention.cleared received for task %s.", self.device_id, task_id)
+
+        consumer_tag = await queue.consume(_on_cleared)
+        try:
+            await done_event.wait()
+        finally:
+            try:
+                await queue.cancel(consumer_tag)
+            except Exception:
+                pass
+
+    async def _publish_intervention_cleared(self, task_id: str, envelope: Envelope) -> None:
+        """Publish intervention.cleared.<task_id> so PS clears its banner.
+
+        Called by the instrument UI path (proceed_method SocketIO command) after
+        set_proceed() has already been called locally.  PS receives this and removes
+        the intervention from its active list.
+        """
+        if self._protocol_exchange is None:
+            return
+        rk = intervention_cleared_key(task_id)
+        msg = build(
+            device_id=self.device_id,
+            routing_key=rk,
+            task_id=envelope.task_id,
+            assigned_channel=envelope.assigned_channel,
+            payload={"action": "done"},
+        )
+        await publish(self._protocol_exchange, rk, msg)
+        logger.debug("[%s] intervention.cleared published for task %s.", self.device_id, task_id)
+
+    # ------------------------------------------------------------------
     # Service discovery
     # ------------------------------------------------------------------
 
@@ -494,6 +578,24 @@ class DeviceBrokerWorker:
             asyncio.create_task(self._feed_incoming_composition(method_instance, task_id, subscription_ready))
             await subscription_ready.wait()
 
+        # Manual methods: wire on_waiting callback and subscribe to intervention.cleared.
+        # The subscription loops so multi-step methods (list of reasons) each get a cleared signal.
+        if isinstance(method_instance, ManualMethodMixin):
+            done_event = asyncio.Event()
+            self._intervention_done_events[task_id] = done_event
+
+            async def _on_waiting(reason: str, _tid=task_id, _env=envelope) -> None:
+                await self._publish_intervention_manual_step(_tid, _env, reason)
+
+            async def _on_proceed(_tid=task_id, _env=envelope) -> None:
+                await self._publish_intervention_cleared(_tid, _env)
+
+            method_instance._on_waiting_callback = _on_waiting
+            method_instance._on_proceed_callback = _on_proceed
+            self._intervention_tasks[task_id] = asyncio.create_task(
+                self._await_intervention_cleared(method_instance, task_id, done_event)
+            )
+
         ch.run_method(method_name, method_data, id=task_id)
 
     # ------------------------------------------------------------------
@@ -513,6 +615,14 @@ class DeviceBrokerWorker:
         relay_task = self._relay_tasks.pop(result.id, None)
         if relay_task is not None:
             relay_task.cancel()
+
+        # Signal intervention subscription loop to stop.
+        intervention_done = self._intervention_done_events.pop(result.id, None)
+        if intervention_done is not None:
+            intervention_done.set()
+        intervention_task = self._intervention_tasks.pop(result.id, None)
+        if intervention_task is not None:
+            intervention_task.cancel()
 
         envelope = self._pending.pop(result.id, None)
         if envelope is None:
