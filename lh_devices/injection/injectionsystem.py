@@ -90,6 +90,8 @@ class RoadmapChannelAssembly(MultiChannelAssembly, LayoutPlugin):
             ch.register('ManualInjectBubbleSensor',
                 ManualInjectBubbleSensor(ch, manual_direct_mode,
                                          switch_device=distribution_system.source_valve,
+                                         inlet_bubble_sensor=ch.inlet_bubble_sensor,
+                                         outlet_bubble_sensor=ch.outlet_bubble_sensor,
                                          waste_tracker=waste_tracker),
                 task_type='none')
 
@@ -203,6 +205,8 @@ class RoadmapChannelAssemblyRinse(MultiChannelAssembly, LayoutPlugin):
             ch.register('ManualInjectBubbleSensor',
                 ManualInjectBubbleSensor(ch, manual_direct_mode,
                                          switch_device=distribution_system.source_valve,
+                                         inlet_bubble_sensor=ch.inlet_bubble_sensor,
+                                         outlet_bubble_sensor=ch.outlet_bubble_sensor,
                                          waste_tracker=waste_tracker),
                 task_type='none')
 

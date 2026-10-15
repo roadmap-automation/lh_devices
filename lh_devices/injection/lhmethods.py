@@ -490,12 +490,16 @@ class ManualInjectBubbleSensor(ManualMethodMixin, MethodBasewithCompositionRelay
 
     def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode,
                  switch_device: HamiltonValvePositioner,
+                 inlet_bubble_sensor: BubbleSensorBase,
+                 outlet_bubble_sensor: BubbleSensorBase,
                  switch_di_purge: int = 2, switch_di_inject: int = 1,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
         super().__init__([channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
         self.distribution_mode = distribution_mode
         self.switch_device = switch_device
+        self.inlet_bubble_sensor = inlet_bubble_sensor
+        self.outlet_bubble_sensor = outlet_bubble_sensor
         self.switch_di_purge = switch_di_purge
         self.switch_di_inject = switch_di_inject
 
@@ -513,6 +517,10 @@ class ManualInjectBubbleSensor(ManualMethodMixin, MethodBasewithCompositionRelay
         self.reserve_all()
 
         method = self.MethodDefinition(**kwargs)
+
+        # Power up bubble sensors
+        await self.inlet_bubble_sensor.initialize()
+        await self.outlet_bubble_sensor.initialize()
 
         # Safety check: if INJECT switch is already active at startup, warn and wait
         while not (await self.switch_device.get_digital_input(self.switch_di_inject)):
