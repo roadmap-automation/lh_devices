@@ -503,9 +503,9 @@ class ManualInjectBubbleSensor(ManualMethodMixin, MethodBasewithCompositionRelay
     class MethodDefinition(MethodBase.MethodDefinition):
 
         name: str = "ManualInjectBubbleSensor"
-        composition: dict = field(default_factory=dict)
+        composition: Composition = field(default_factory=Composition)
         volume: float = 0.0
-        wash_composition: dict = field(default_factory=dict)
+        wash_composition: Composition = field(default_factory=Composition)
         wash_volume: float = 0.0
 
     async def run(self, **kwargs):
@@ -557,21 +557,18 @@ class ManualInjectBubbleSensor(ManualMethodMixin, MethodBasewithCompositionRelay
         await asyncio.sleep(0)
 
         if injected_flag:
-            if method.composition:
-                self.channel.well.composition = Composition.model_validate(method.composition)
-            self.channel.well.volume = method.volume
+            composition = Composition.model_validate(method.composition)
+            if composition.solvents:
+                self.channel.well.composition = composition
+                self.channel.well.volume = method.volume
+                await self.waste_tracker.submit(WasteItem(composition=composition, volume=method.volume))
 
-            if method.composition:
-                await self.waste_tracker.submit(WasteItem(
-                    composition=Composition.model_validate(method.composition),
-                    volume=method.volume))
+            wash = Composition.model_validate(method.wash_composition)
+            if wash.solvents:
+                await self.waste_tracker.submit(WasteItem(composition=wash, volume=method.wash_volume))
 
-            if method.wash_composition:
-                await self.waste_tracker.submit(WasteItem(
-                    composition=Composition.model_validate(method.wash_composition),
-                    volume=method.wash_volume))
-
-        self.emit_composition(self.channel.well.composition)
+        if self.channel.well.composition is not None:
+            self.emit_composition(self.channel.well.composition)
 
         await self.channel.change_mode('Standby')
         self.release_all()
