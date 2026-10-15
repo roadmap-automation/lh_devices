@@ -1619,6 +1619,9 @@ class SMDSensoronHamiltonDevice(BubbleSensorBase):
     async def initialize(self) -> None:
         return await self.device.run_until_idle(self.device.set_digital_output(self.power_digital_output, True))
 
+    async def deinitialize(self) -> None:
+        return await self.device.run_until_idle(self.device.set_digital_output(self.power_digital_output, False))
+
     async def read(self) -> bool:
         """Read bubble sensor
 
@@ -1635,6 +1638,9 @@ class SimulatedSensoronHamiltonDevice(BubbleSensorBase):
         self.device = device
 
     async def initialize(self) -> None:
+        ...
+
+    async def deinitialize(self) -> None:
         ...
 
     async def read(self) -> bool:

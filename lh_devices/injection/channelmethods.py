@@ -181,4 +181,6 @@ class InjectLoopBubbleSensor(MethodBasewithCompositionRelay):
         await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, self.channel.syringe_pump.syringe_volume / 1000)
         await self.channel.syringe_pump.run_until_idle(self.channel.syringe_pump.home())
 
+        await self.channel.syringe_pump.set_digital_output(0, False)
+
         self.release_all()

@@ -210,8 +210,10 @@ class LoadLoopBubbleSensor(MethodBasewithBrokerTrigger, MethodBasewithCompositio
         await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, total_water_volume / 1000)
 
         # switch to standby mode
-        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')            
+        self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')
         await self.channel.change_mode('Standby')
+
+        await self.channel.syringe_pump.set_digital_output(1, False)
 
         self.release_all()
 
@@ -462,6 +464,9 @@ class DirectInjectBubbleSensor(MethodBasewithBrokerTrigger):
         self.logger.info(f'{self.channel.name}.{method.name}: Switching to Standby mode')
         await self.channel.change_mode('Standby')
 
+        await self.inlet_bubble_sensor.deinitialize()
+        await self.outlet_bubble_sensor.deinitialize()
+
         self.release_all()
 
     async def detect_air_gap(self, callback: Coroutine, poll_interval: float = 0.1, delay: float = 0.0):
@@ -579,4 +584,8 @@ class ManualInjectBubbleSensor(ManualMethodMixin, MethodBasewithCompositionRelay
             self.emit_composition(self.channel.well.composition)
 
         await self.channel.change_mode('Standby')
+
+        await self.inlet_bubble_sensor.deinitialize()
+        await self.outlet_bubble_sensor.deinitialize()
+
         self.release_all()

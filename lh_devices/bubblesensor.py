@@ -14,6 +14,11 @@ class BubbleSensorBase:
 
         raise NotImplementedError
 
+    async def deinitialize(self) -> None:
+        """Deinitializes the bubble sensor (e.g. powers it off)"""
+
+        raise NotImplementedError
+
     async def read(self) -> bool:
         """Reads the bubble sensor and returns its value
 
