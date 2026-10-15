@@ -9,7 +9,7 @@ from aiohttp.web_app import Application as Application
 from ..distribution import DistributionSingleValveTwoSource
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner, HamiltonSyringePump, SMDSensoronHamiltonDevice
 from ..hamilton.HamiltonComm import HamiltonSerial
-from ..valve import LoopFlowValve, DistributionValve, SyringeLValve, SyringeYValve, YValve
+from ..valve import LoopFlowValve, DistributionValve, SyringeLValve, SyringeYValve, SymmetricDistributionValve
 from ..webview import run_socket_app
 from ..components import InjectionPort, FlowCell
 from ..connections import connect_nodes
@@ -96,7 +96,7 @@ async def run_injection_system():
     ip = InjectionPort('LH_injection_port')
 
     # Distribution system
-    dvp_source = HamiltonValvePositioner(ser, '7', YValve(name='source_valve'), name='Distribution Source Valve')
+    dvp_source = HamiltonValvePositioner(ser, '7', SymmetricDistributionValve(3, name='source_valve'), name='Distribution Source Valve')
     dvp_selection = HamiltonValvePositioner(ser, '2', DistributionValve(8, name='distribution_valve'), name='Distribution Selection Valve')
 
     distribution_system = DistributionSingleValveTwoSource(source_valve=dvp_source,

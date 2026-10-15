@@ -91,6 +91,11 @@ class ValveBase(ComponentBase, PositionerBase):
             self.update_connections()
     
     @property
+    def angle_step(self) -> float:
+        """Angular step between consecutive positions in degrees."""
+        return 360 / self.n_positions
+
+    @property
     def state(self) -> ValveState:
         """Gets the current state
         """
@@ -181,6 +186,33 @@ class DistributionValve(ValveBase):
         if self.position != 0:
             self._portmap[0] = self.position
             self._portmap[self.position] = 0
+
+class SymmetricDistributionValve(ValveBase):
+    """Distribution valve whose outlets are spaced at equal angles that do not evenly divide 360°.
+
+    Example: 3 outlets on a 4-position MVP body (90° per step). Positions 1–n_ports are valid;
+    the remaining physical slot is left unconnected and blocked by validate_move.
+
+    Appears identical to DistributionValve(n_ports) in the UI, but drives the motor with the
+    correct angle_step = 360 / (n_ports + 1) instead of 360 / n_ports.
+    """
+
+    def __init__(self, n_ports: int, position: int = 0, ports: List[Port] = [], name=None) -> None:
+        # n_positions = n_ports so validate_move and UI only expose positions 1..n_ports
+        super().__init__(n_ports + 1, n_ports, position, ports, name)
+        self.hamilton_valve_code = 4
+
+    @property
+    def angle_step(self) -> float:
+        """90° per step: one extra physical slot beyond the connected outlets."""
+        return 360 / (self.n_ports)
+
+    def update_map(self):
+        self._portmap = {}
+        if self.position != 0:
+            self._portmap[0] = self.position
+            self._portmap[self.position] = 0
+
 
 class LoopFlowValve(ValveBase):
     """Loop flow valve representation, with n_ports and 2 positions. Port 0 is the bottom port. 
