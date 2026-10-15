@@ -287,9 +287,9 @@
                             })
                             .appendTo(newdiv);
                         if (active_method['is_manual'] && active_method['waiting_reason']) {
-                            $('<div>').text(active_method['waiting_reason']).appendTo(newdiv);
+                            $('<div>').text(active_method['waiting_reason']).addClass('manual_prompt').appendTo(newdiv);
                             $('<button>')
-                                .text('Done')
+                                .text('Proceed')
                                 .on('click', function () {
                                     issue_command(id, 'proceed_method', {'method': method_name})
                                 })
@@ -733,6 +733,11 @@
     }
     .active_text {
         color: green
+    }
+    .manual_prompt {
+        font-style: italic;
+        color: #555;
+        margin-top: 4px;
     }
     .error_text {
         color: darkred

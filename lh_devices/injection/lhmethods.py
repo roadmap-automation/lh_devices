@@ -1,7 +1,7 @@
 """Methods requiring coordination with a liquid handler for a ROADMAP channel"""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Coroutine
 
 from lh_devices.core.bedlayout import Composition
@@ -10,7 +10,7 @@ from ..assemblies import Mode
 from ..bubblesensor import BubbleSensorBase
 from ..hamilton.HamiltonDevice import HamiltonValvePositioner
 from ..methods import MethodBase, MethodBasewithBrokerTrigger, MethodBasewithCompositionReceive, MethodBasewithCompositionRelay, ManualMethodMixin
-from ..waste import WasteInterfaceBase
+from ..waste import WasteInterfaceBase, WasteItem
 
 from .channel import RoadmapChannelBase
 
@@ -490,7 +490,7 @@ class ManualInjectBubbleSensor(ManualMethodMixin, MethodBasewithCompositionRelay
 
     def __init__(self, channel: RoadmapChannelBase, distribution_mode: Mode,
                  switch_device: HamiltonValvePositioner,
-                 switch_di_purge: int = 1, switch_di_inject: int = 2,
+                 switch_di_purge: int = 2, switch_di_inject: int = 1,
                  waste_tracker: WasteInterfaceBase = WasteInterfaceBase()) -> None:
         super().__init__([channel.loop_valve, *distribution_mode.valves.keys()], waste_tracker=waste_tracker)
         self.channel = channel
@@ -503,9 +503,9 @@ class ManualInjectBubbleSensor(ManualMethodMixin, MethodBasewithCompositionRelay
     class MethodDefinition(MethodBase.MethodDefinition):
 
         name: str = "ManualInjectBubbleSensor"
-        composition: dict | None = None
+        composition: dict = field(default_factory=dict)
         volume: float = 0.0
-        wash_composition: dict | None = None
+        wash_composition: dict = field(default_factory=dict)
         wash_volume: float = 0.0
 
     async def run(self, **kwargs):
@@ -551,21 +551,25 @@ class ManualInjectBubbleSensor(ManualMethodMixin, MethodBasewithCompositionRelay
 
         poll_task = asyncio.create_task(poll_switches())
 
-        await self.wait_for_proceed("Manual injection required", on_waiting=self._on_waiting_callback)
+        await self.wait_for_proceed("Waiting for user to confirm injection completion", on_waiting=self._on_waiting_callback)
 
         poll_task.cancel()
         await asyncio.sleep(0)
 
         if injected_flag:
-            if method.composition is not None:
+            if method.composition:
                 self.channel.well.composition = Composition.model_validate(method.composition)
             self.channel.well.volume = method.volume
 
-            dead_volume = self.channel.get_dead_volume('LHPrime')
-            await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, dead_volume / 1000)
+            if method.composition:
+                await self.waste_tracker.submit(WasteItem(
+                    composition=Composition.model_validate(method.composition),
+                    volume=method.volume))
 
-            if method.wash_composition is not None:
-                await self.waste_tracker.submit_carrier(self.channel.layout.carrier_well, method.wash_volume)
+            if method.wash_composition:
+                await self.waste_tracker.submit(WasteItem(
+                    composition=Composition.model_validate(method.wash_composition),
+                    volume=method.wash_volume))
 
         self.emit_composition(self.channel.well.composition)
 
