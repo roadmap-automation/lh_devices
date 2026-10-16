@@ -500,6 +500,15 @@ class DeviceBrokerWorker:
                 done_event = self._method_done_events.pop(task_id, None)
                 if done_event is not None:
                     done_event.set()
+                # Publish intervention.cleared so PS banner is dismissed even if the task
+                # was cancelled while wait_for_proceed was still blocking.
+                intervention_done = self._intervention_done_events.pop(task_id, None)
+                if intervention_done is not None:
+                    asyncio.create_task(self._publish_intervention_cleared(task_id, pending_env))
+                    intervention_done.set()
+                    intervention_task = self._intervention_tasks.pop(task_id, None)
+                    if intervention_task is not None:
+                        intervention_task.cancel()
                 # Cancel the physical method asyncio task so on_cancel() releases devices.
                 channel_index = pending_env.assigned_channel if pending_env.assigned_channel is not None else 0
                 if channel_index < len(self.assembly.channels):
@@ -616,9 +625,15 @@ class DeviceBrokerWorker:
         if relay_task is not None:
             relay_task.cancel()
 
-        # Signal intervention subscription loop to stop.
+        # Signal intervention subscription loop to stop. Publish cleared unconditionally
+        # so the PS banner is removed even if the method failed or was cancelled while
+        # wait_for_proceed was blocking (the normal proceed path already published it;
+        # receiving a redundant cleared on PS side is harmless).
         intervention_done = self._intervention_done_events.pop(result.id, None)
         if intervention_done is not None:
+            env = self._pending.get(result.id)  # peek — pop happens below
+            if env is not None:
+                asyncio.create_task(self._publish_intervention_cleared(result.id, env))
             intervention_done.set()
         intervention_task = self._intervention_tasks.pop(result.id, None)
         if intervention_task is not None:
