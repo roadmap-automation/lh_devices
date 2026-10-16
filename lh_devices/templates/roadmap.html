@@ -406,6 +406,14 @@
                             //newctrl.append(newtextbutton)
 
                         }
+                        else if (ctype=='label') {
+                            newctrl = $('<div>')
+                                            .addClass(cid)
+                                            .addClass(ctype)
+                                            .appendTo(devicediv);
+                            $('<span>').text(cdata['text'] + ': ').appendTo(newctrl)
+                            $('<span>').text(cdata['current'] ?? '').appendTo(newctrl)
+                        }
                         else if (ctype=='link') {
                             newctrl = $('<div>')
                                             .addClass(cid)
