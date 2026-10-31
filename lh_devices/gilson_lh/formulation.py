@@ -276,8 +276,21 @@ class SoluteFormulation(Formulation):
         # Mixing path: solutes + diluent top-up, always ≥2 transfers.
         inflated = self._inflated_target(layout)
 
+        # Only admit wells whose solutes are all within the union of target
+        # solutes and diluent solutes. Extra solvents are acceptable; extra
+        # solutes (e.g. DPPC in an isopropanol stock) would contaminate the
+        # sample silently because the NNLS system only sees target components.
+        allowed_solute_names = (
+            {s.name for s in stripped.solutes}
+            | {s.name for s in self.diluent.solutes}
+        )
+        solver_wells = [
+            w for w in self._available_wells(layout)
+            if all(s.name in allowed_solute_names for s in w.composition.solutes)
+        ]
+
         result = _solve_formulation_core(
-            wells=self._available_wells(layout),
+            wells=solver_wells,
             layout=layout,
             target_composition=stripped,
             target_volume=inflated,
