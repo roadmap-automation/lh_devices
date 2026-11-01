@@ -127,7 +127,7 @@ async def run_injection_system():
 
     for sp in [sp0, sp1, sp2]:
         sp.max_dispense_flow_rate = 5 * 1000 / 60
-        sp.max_aspirate_flow_rate = 15 * 1000 / 60
+        sp.max_aspirate_flow_rate = 10 * 1000 / 60
     
     fc0 = FlowCell(139, 'flow_cell0')
     fc1 = FlowCell(139, 'flow_cell1')
@@ -145,8 +145,8 @@ async def run_injection_system():
     connect_nodes(dvp_source.valve.nodes[0], dvp_selection.valve.nodes[0], 80 + 20)
 
     # connect LH and rinse system to distribution system
-    connect_nodes(ip.nodes[0], dvp_source.valve.nodes[1], 262 + 20)
-    connect_nodes(rinse_ip.nodes[0], dvp_source.valve.nodes[2], 242 + 20)
+    connect_nodes(ip.nodes[0], dvp_source.valve.nodes[1], 288 + 20) # old volume: 262
+    connect_nodes(rinse_ip.nodes[0], dvp_source.valve.nodes[3], 450 + 20) # old volume: 242
 
     # loop inject: connect distribution valve port 1 to syringe pump valve node 2 (top)
     connect_nodes(dvp_selection.valve.nodes[1], sp0.valve.nodes[2], 73 + 20)
