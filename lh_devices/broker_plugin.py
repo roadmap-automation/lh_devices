@@ -164,6 +164,7 @@ class DeviceBrokerWorker:
         num_channels: Optional[int] = None,
         allow_sample_mixing: bool = True,
         hardware_concurrency: Optional[int] = None,
+        measure_concurrency: Optional[int] = None,
     ) -> None:
         self.device_id = device_id
         self.assembly = assembly
@@ -172,10 +173,10 @@ class DeviceBrokerWorker:
         self.device_type = device_type
         self._num_channels = num_channels  # resolved to len(channels) in start() if None
         self.allow_sample_mixing = allow_sample_mixing
-        # Maximum number of channels that can run hardware tasks simultaneously.
-        # None means fully parallel (one task per channel). Set to 1 for devices
-        # that share a single physical task manager across all channels (e.g. NICE).
+        # Caps simultaneous tasks of any type across all channels.
         self._hardware_concurrency = hardware_concurrency
+        # Caps simultaneous MEASURE tasks only; other task types are unconstrained.
+        self._measure_concurrency = measure_concurrency
 
         # Maps task_id → inbound Envelope so the completion callback can build
         # the correct outbound envelope (sample_id, assigned_channel, policy).
@@ -472,6 +473,7 @@ class DeviceBrokerWorker:
                 "num_channels": nc,
                 "allow_sample_mixing": self.allow_sample_mixing,
                 "hardware_concurrency": hc,
+                "measure_concurrency": self._measure_concurrency,
                 "address": f"http://localhost:{self.local_port}",
                 "methods": self._methods_schema,
             },
