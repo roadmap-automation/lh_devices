@@ -86,8 +86,14 @@ class DatabasePlugin:
         Args:
             result (MethodResult): result to save
         """
-
-        await asyncio.to_thread(self.save_to_database, result)
+        try:
+            await asyncio.to_thread(self.save_to_database, result)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "Failed to save method result to history DB for task %s",
+                result.id,
+            )
 
     def save_to_database(self, result: MethodResult):
         """Saves a method result to the database, only if a task id is associated with it
