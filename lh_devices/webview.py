@@ -61,8 +61,9 @@ class WebNodeBase(Loggable):
             state = await self.get_info()
             try:
                 json_state = json.dumps(state)
-            except TypeError:
+            except TypeError as e:
                 print(state)
+                return web.Response(text=f'{{"error": "state not serialisable: {e}"}}', status=500)
 
             return web.Response(text=json_state, status=200)
 

@@ -210,6 +210,12 @@ class GilsonLHBrokerWorker:
             await self._emit(TASK_FAILED, envelope, {'error': f'Unknown method: {method_name}'})
             return
 
+        from .lhinterface import InterfaceStatus
+        if self.lh_iface.get_status() == InterfaceStatus.ERROR:
+            logger.error("[%s] Rejecting task %s: interface is in error state", self.device_id, task_id)
+            await self._emit(TASK_FAILED, envelope, {'error': 'LH interface is in error state; clear the error before resuming'})
+            return
+
         await self._emit(TASK_ACCEPTED, envelope, {})
         #await restart_gears()
 
