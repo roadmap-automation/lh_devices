@@ -424,6 +424,30 @@
                                    .text(cdata['text'])
                                    .appendTo(newctrl)
                         }
+                        else if (ctype=='textbox_grid') {
+                            let newctrl = $('<div>')
+                                            .addClass(cid)
+                                            .addClass('textbox_grid_container')
+                                            .appendTo(devicediv);
+                            for (const [fid, fdata] of Object.entries(cdata['fields'])) {
+                                let cell = $('<div>').addClass('textbox_grid_cell').appendTo(newctrl);
+                                $('<div>').text(fdata['text']).appendTo(cell);
+                                let inputcontainer = $('<div>').addClass('textbox_controls').appendTo(cell);
+                                let newtext = $('<input type=text>')
+                                    .addClass('input_text')
+                                    .val(fdata.current ?? '')
+                                    .appendTo(inputcontainer);
+                                let newtextbutton = $('<button>')
+                                    .addClass('textbutton')
+                                    .text('Go')
+                                    .appendTo(inputcontainer);
+                                (function(fid_, newtext_) {
+                                    newtextbutton.on('click', function() {
+                                        issue_command(device_id, fid_, {'value': newtext_.val()});
+                                    });
+                                })(fid, newtext);
+                            }
+                        }
                         else if (ctype=='file') {
                             let newctrl = $('<div>')
                                             .addClass(cid)
@@ -807,6 +831,17 @@
         border-radius: 5px;
         min-width: 20%;
         font-stretch: narrower;
+    }
+    .textbox_grid_container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 0.5rem;
+        margin: 4px 0;
+    }
+    .textbox_grid_cell {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
     }
     .digital_button {
         border-radius: 0.6em;
