@@ -186,7 +186,7 @@ class RinseLoadLoopBubbleSensor(RinseLoadLoop):
             total_water_volume += air_gap_volume
 
             # if bubble size big enough to plausibly be the air gap, break the loop
-            if air_gap_volume > 0.4 * air_gap:
+            if air_gap_volume >= 0.35 * air_gap:
                 air_gap_detected = True
             else:
                 max_dispense_volume -= (actual_volume + air_gap_volume)
