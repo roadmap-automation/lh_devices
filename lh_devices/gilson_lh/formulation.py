@@ -238,9 +238,9 @@ def _composition_matches(target: Composition, candidate: Composition, exact_matc
 
 
 class DilutionFactorFormulation(Formulation):
-    """Dilutes a source composition by a fixed factor using a diluent.
+    """Dilutes a stock composition by a fixed factor using a diluent.
 
-    target_composition: composition of the stock well to look for on the bed.
+    source_composition: composition of the stock well to look for on the bed.
     dilution_factor == 1: reserve that well directly (no mixing).
     dilution_factor > 1: transfer target_volume/factor from the stock well, top up with diluent.
     dilution_factor < 1: always fails (cannot concentrate).
@@ -252,6 +252,7 @@ class DilutionFactorFormulation(Formulation):
     method_name: Literal['DilutionFactorFormulation'] = 'DilutionFactorFormulation'
     display_name: Literal['DilutionFactorFormulation'] = 'DilutionFactorFormulation'
     exact_match: bool = True
+    source_composition: Composition = Field(default_factory=Composition)
     diluent: Composition = Field(default_factory=Composition)
     dilution_factor: float = 1.0
 
@@ -270,13 +271,13 @@ class DilutionFactorFormulation(Formulation):
         if np.isclose(factor, 1.0, atol=ZERO_VOLUME_TOLERANCE):
             source_well = next(
                 (w for w in self._available_wells(layout)
-                 if _composition_matches(self.target_composition, w.composition, self.exact_match)
+                 if _composition_matches(self.source_composition, w.composition, self.exact_match)
                  and w.volume >= needed + layout.racks[w.rack_id].min_volume),
                 None,
             )
             if source_well is None:
                 logging.error(
-                    '%s: no source well matching target_composition with sufficient volume '
+                    '%s: no source well matching source_composition with sufficient volume '
                     '(%.3f mL) for factor=1', cls, needed,
                 )
                 self._failure_reason = 'insufficient_volume'
@@ -314,13 +315,13 @@ class DilutionFactorFormulation(Formulation):
 
         source_well = next(
             (w for w in self._available_wells(layout)
-             if _composition_matches(self.target_composition, w.composition, self.exact_match)
+             if _composition_matches(self.source_composition, w.composition, self.exact_match)
              and w.volume >= stock_volume + layout.racks[w.rack_id].min_volume),
             None,
         )
         if source_well is None:
             logging.error(
-                '%s: no source well matching target_composition with sufficient volume (%.3f mL)',
+                '%s: no source well matching source_composition with sufficient volume (%.3f mL)',
                 cls, stock_volume,
             )
             self._failure_reason = 'insufficient_volume'
@@ -346,54 +347,62 @@ class DilutionFactorFormulation(Formulation):
         logging.info('%s factor=%.4f: %s', cls, factor, self._formulation_results)
         return self._formulation_results
 
+    def get_target_well(self, layout: LHBedLayout) -> WellLocation:
+        volumes, wells, success = self.get_formulation_results(layout)
+        if success:
+            if len(volumes) > 1:
+                return self.Target
+            else:
+                return WellLocation(rack_id=wells[0].rack_id,
+                                    well_number=wells[0].well_number,
+                                    expected_composition=self.source_composition)
+
     def formulate(self, layout: LHBedLayout) -> Tuple[List[float], List[Well], bool]:
         return self._formulate_with_factor(layout, self.dilution_factor)
 
 
 class DilutionToConcentrationFormulation(DilutionFactorFormulation):
-    """Dilutes a stock composition to a target concentration for one or more reference solutes.
+    """Dilutes a stock composition until one or more solutes reach a target concentration.
 
-    target_composition: composition of the stock well to look for on the bed (e.g. A+B at stock
-        concentrations). Used for well matching, not as the desired output.
-    final_solute_composition: specifies the desired final concentration of one or more solutes
-        (e.g. just B at B_target). The dilution factor is derived from the ratio of each
-        solute's stock concentration to its reference concentration. If multiple solutes are
-        specified they must all imply the same factor (consistent dilution); inconsistency
-        is caught early. Units are assumed to match between stock and reference.
+    source_composition: composition of the stock well to look for on the bed (e.g. A+B at stock
+        concentrations). Used for both well matching and deriving the dilution factor.
+    target_composition: specifies the desired final concentration of one or more solutes
+        (e.g. just B at B_target). The dilution factor is computed as stock_conc / target_conc
+        for each specified solute. If multiple solutes are given they must all imply the same
+        factor (consistent dilution); inconsistency is caught early. Units are assumed to match.
     diluent: composition to top up with after taking the stock fraction.
     """
 
     method_name: Literal['DilutionToConcentrationFormulation'] = 'DilutionToConcentrationFormulation'
     display_name: Literal['DilutionToConcentrationFormulation'] = 'DilutionToConcentrationFormulation'
-    final_solute_composition: Composition = Field(default_factory=Composition)
 
-    def _compute_factor_from_reference(self) -> float | None:
-        ref_solutes = {s.name: s for s in self.final_solute_composition.stripped().solutes}
-        stock_solutes = {s.name: s for s in self.target_composition.stripped().solutes}
+    def _compute_factor_from_target(self) -> float | None:
+        target_solutes = {s.name: s for s in self.target_composition.stripped().solutes}
+        stock_solutes = {s.name: s for s in self.source_composition.stripped().solutes}
 
-        if not ref_solutes:
-            logging.error('DilutionToConcentrationFormulation: final_solute_composition has no solutes')
+        if not target_solutes:
+            logging.error('DilutionToConcentrationFormulation: target_composition has no solutes')
             return None
 
         factors = []
-        for name, ref_solute in ref_solutes.items():
+        for name, target_solute in target_solutes.items():
             if name not in stock_solutes:
                 logging.error(
-                    'DilutionToConcentrationFormulation: reference solute %r not found in '
-                    'target_composition (stock)', name,
+                    'DilutionToConcentrationFormulation: target solute %r not found in source_composition',
+                    name,
                 )
                 return None
-            if ref_solute.concentration <= 0:
+            if target_solute.concentration <= 0:
                 logging.error(
-                    'DilutionToConcentrationFormulation: reference concentration for %r must be > 0', name,
+                    'DilutionToConcentrationFormulation: target concentration for %r must be > 0', name,
                 )
                 return None
             stock_conc = stock_solutes[name].concentration
-            factors.append(stock_conc / ref_solute.concentration)
+            factors.append(stock_conc / target_solute.concentration)
 
         if len(factors) > 1 and not np.allclose(factors, factors[0], rtol=1e-3):
             logging.error(
-                'DilutionToConcentrationFormulation: reference solutes imply inconsistent '
+                'DilutionToConcentrationFormulation: target solutes imply inconsistent '
                 'dilution factors %s — all specified solutes must be diluted by the same factor',
                 factors,
             )
@@ -402,9 +411,9 @@ class DilutionToConcentrationFormulation(DilutionFactorFormulation):
         return factors[0]
 
     def formulate(self, layout: LHBedLayout) -> Tuple[List[float], List[Well], bool]:
-        factor = self._compute_factor_from_reference()
+        factor = self._compute_factor_from_target()
         if factor is None:
-            self._failure_reason = 'invalid_reference'
+            self._failure_reason = 'invalid_target'
             self._formulation_results = [], [], False
             return self._formulation_results
         return self._formulate_with_factor(layout, factor)

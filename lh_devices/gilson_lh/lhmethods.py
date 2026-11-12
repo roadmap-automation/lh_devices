@@ -1125,7 +1125,7 @@ class GilsonDilutionFactorFormulation(GilsonLHMethod):
     def get_pydantic_schema(cls, display: bool = True, origin: str = 'lh') -> dict:
         from .formulation import DilutionFactorFormulation
         m = DilutionFactorFormulation
-        EXCLUDE = {'status', 'tasks', 'id', 'method_name', 'display_name', 'method_type'}
+        EXCLUDE = {'status', 'tasks', 'id', 'method_name', 'display_name', 'method_type', 'target_composition'}
         schema = m.model_json_schema(mode='serialization')
         _flatten_allof_refs(schema)
         return {
@@ -1231,10 +1231,10 @@ class GilsonDilutionToConcentrationFormulation(GilsonLHMethod):
                             'volume below the minimum pipettable volume — increase target volume',
                             retry=False,
                         )
-                    elif reason == 'invalid_reference':
+                    elif reason == 'invalid_target':
                         raise MethodException(
                             'DilutionToConcentrationFormulation failed: could not compute dilution factor '
-                            'from final_solute_composition — check that reference solutes exist in target_composition '
+                            'from target_composition — check that all target solutes exist in source_composition '
                             'at higher concentrations and all imply the same factor',
                             retry=False,
                         )
