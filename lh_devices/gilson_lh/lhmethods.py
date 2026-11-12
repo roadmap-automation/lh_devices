@@ -1112,3 +1112,141 @@ class GilsonSoluteFormulation(GilsonLHMethod):
             return await self._run_job(job, flat_methods)
         finally:
             self.release_all()
+
+
+class GilsonDilutionFactorFormulation(GilsonLHMethod):
+    """MethodBase wrapper for DilutionFactorFormulation — lazy-imports to avoid circular."""
+
+    @dataclass
+    class MethodDefinition(MethodBase.MethodDefinition):
+        name: str = 'DilutionFactorFormulation'
+
+    @classmethod
+    def get_pydantic_schema(cls, display: bool = True, origin: str = 'lh') -> dict:
+        from .formulation import DilutionFactorFormulation
+        m = DilutionFactorFormulation
+        EXCLUDE = {'status', 'tasks', 'id', 'method_name', 'display_name', 'method_type'}
+        schema = m.model_json_schema(mode='serialization')
+        _flatten_allof_refs(schema)
+        return {
+            'fields': [f for f in m.model_fields if f not in EXCLUDE],
+            'display': display,
+            'display_name': m.model_fields['display_name'].default,
+            'method_type': m.model_fields['method_type'].default,
+            'origin': origin,
+            'schema': schema,
+        }
+
+    async def run(self, sample_id: str = '', task_id: str | None = None, **kwargs) -> dict:
+        from .formulation import DilutionFactorFormulation
+        layout = self.lh_iface.layout
+        if layout is None:
+            raise Exception('LH layout not loaded')
+        self.reserve_all()
+        try:
+            lh_method = DilutionFactorFormulation(**kwargs)
+            clusters = lh_method.get_methods(layout, sample_id=sample_id or None)
+            await self.lh_iface.trigger_layout_update()
+            flat_methods = [m2 for cluster in clusters for m2 in cluster.explode(layout)]
+            if not flat_methods:
+                _, _, success = lh_method.get_formulation_results(layout)
+                if not success:
+                    reason = lh_method.failure_reason
+                    if reason == 'insufficient_volume':
+                        raise MethodException(
+                            'DilutionFactorFormulation failed: source wells exhausted — refill and clear fault to retry',
+                            retry=True,
+                        )
+                    elif reason == 'below_minimum_volume':
+                        raise MethodException(
+                            'DilutionFactorFormulation failed: dilution factor produces a volume below the '
+                            'minimum pipettable volume — reduce the factor or increase target volume',
+                            retry=False,
+                        )
+                    elif reason == 'invalid_factor':
+                        raise MethodException(
+                            'DilutionFactorFormulation failed: dilution_factor < 1 (cannot concentrate)',
+                            retry=False,
+                        )
+                    else:
+                        raise MethodException(
+                            f'DilutionFactorFormulation failed ({reason or "unknown"}) — check specification and resubmit',
+                            retry=False,
+                        )
+                return {}
+            from .lhinterface import LHJob
+            job = LHJob(id=task_id or str(uuid4()))
+            job.setup_method_data(sample_id, '', flat_methods, layout)
+            return await self._run_job(job, flat_methods)
+        finally:
+            self.release_all()
+
+
+class GilsonDilutionToConcentrationFormulation(GilsonLHMethod):
+    """MethodBase wrapper for DilutionToConcentrationFormulation — lazy-imports to avoid circular."""
+
+    @dataclass
+    class MethodDefinition(MethodBase.MethodDefinition):
+        name: str = 'DilutionToConcentrationFormulation'
+
+    @classmethod
+    def get_pydantic_schema(cls, display: bool = True, origin: str = 'lh') -> dict:
+        from .formulation import DilutionToConcentrationFormulation
+        m = DilutionToConcentrationFormulation
+        EXCLUDE = {'status', 'tasks', 'id', 'method_name', 'display_name', 'method_type', 'dilution_factor'}
+        schema = m.model_json_schema(mode='serialization')
+        _flatten_allof_refs(schema)
+        return {
+            'fields': [f for f in m.model_fields if f not in EXCLUDE],
+            'display': display,
+            'display_name': m.model_fields['display_name'].default,
+            'method_type': m.model_fields['method_type'].default,
+            'origin': origin,
+            'schema': schema,
+        }
+
+    async def run(self, sample_id: str = '', task_id: str | None = None, **kwargs) -> dict:
+        from .formulation import DilutionToConcentrationFormulation
+        layout = self.lh_iface.layout
+        if layout is None:
+            raise Exception('LH layout not loaded')
+        self.reserve_all()
+        try:
+            lh_method = DilutionToConcentrationFormulation(**kwargs)
+            clusters = lh_method.get_methods(layout, sample_id=sample_id or None)
+            await self.lh_iface.trigger_layout_update()
+            flat_methods = [m2 for cluster in clusters for m2 in cluster.explode(layout)]
+            if not flat_methods:
+                _, _, success = lh_method.get_formulation_results(layout)
+                if not success:
+                    reason = lh_method.failure_reason
+                    if reason == 'insufficient_volume':
+                        raise MethodException(
+                            'DilutionToConcentrationFormulation failed: source wells exhausted — refill and clear fault to retry',
+                            retry=True,
+                        )
+                    elif reason == 'below_minimum_volume':
+                        raise MethodException(
+                            'DilutionToConcentrationFormulation failed: computed dilution factor produces a '
+                            'volume below the minimum pipettable volume — increase target volume',
+                            retry=False,
+                        )
+                    elif reason == 'invalid_reference':
+                        raise MethodException(
+                            'DilutionToConcentrationFormulation failed: could not compute dilution factor '
+                            'from final_solute_composition — check that reference solutes exist in target_composition '
+                            'at higher concentrations and all imply the same factor',
+                            retry=False,
+                        )
+                    else:
+                        raise MethodException(
+                            f'DilutionToConcentrationFormulation failed ({reason or "unknown"}) — check specification and resubmit',
+                            retry=False,
+                        )
+                return {}
+            from .lhinterface import LHJob
+            job = LHJob(id=task_id or str(uuid4()))
+            job.setup_method_data(sample_id, '', flat_methods, layout)
+            return await self._run_job(job, flat_methods)
+        finally:
+            self.release_all()

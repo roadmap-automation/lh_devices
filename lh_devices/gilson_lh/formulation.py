@@ -231,6 +231,185 @@ class Formulation(MethodContainer):
         return get_all_wells_in_zones(layout, self.include_zones)
 
 
+def _composition_matches(target: Composition, candidate: Composition, exact_match: bool) -> bool:
+    if exact_match:
+        return candidate == target
+    return _solutes_match(target, candidate)
+
+
+class DilutionFactorFormulation(Formulation):
+    """Dilutes a source composition by a fixed factor using a diluent.
+
+    target_composition: composition of the stock well to look for on the bed.
+    dilution_factor == 1: reserve that well directly (no mixing).
+    dilution_factor > 1: transfer target_volume/factor from the stock well, top up with diluent.
+    dilution_factor < 1: always fails (cannot concentrate).
+
+    Both stock and diluent volumes are checked against ZERO_VOLUME_TOLERANCE before any
+    well search, so mis-specified factors are caught early with a clear error.
+    """
+
+    method_name: Literal['DilutionFactorFormulation'] = 'DilutionFactorFormulation'
+    display_name: Literal['DilutionFactorFormulation'] = 'DilutionFactorFormulation'
+    exact_match: bool = True
+    diluent: Composition = Field(default_factory=Composition)
+    dilution_factor: float = 1.0
+
+    def _formulate_with_factor(self, layout: LHBedLayout, factor: float) -> Tuple[List[float], List[Well], bool]:
+        """Core dilution logic shared with DilutionToConcentrationFormulation."""
+        cls = type(self).__name__
+
+        if factor < 1.0 - ZERO_VOLUME_TOLERANCE:
+            logging.error('%s: dilution_factor %.4f < 1 (cannot concentrate)', cls, factor)
+            self._failure_reason = 'invalid_factor'
+            self._formulation_results = [], [], False
+            return self._formulation_results
+
+        needed = self.target_volume + self.Extra_Volume
+
+        if np.isclose(factor, 1.0, atol=ZERO_VOLUME_TOLERANCE):
+            source_well = next(
+                (w for w in self._available_wells(layout)
+                 if _composition_matches(self.target_composition, w.composition, self.exact_match)
+                 and w.volume >= needed + layout.racks[w.rack_id].min_volume),
+                None,
+            )
+            if source_well is None:
+                logging.error(
+                    '%s: no source well matching target_composition with sufficient volume '
+                    '(%.3f mL) for factor=1', cls, needed,
+                )
+                self._failure_reason = 'insufficient_volume'
+                self._formulation_results = [], [], False
+                return self._formulation_results
+            self._formulation_results = [needed], [source_well], True
+            logging.info('%s factor=1: %s', cls, self._formulation_results)
+            return self._formulation_results
+
+        # factor > 1: validate minimum pipettable volumes before searching wells
+        stock_check = self.target_volume / factor
+        diluent_check = self.target_volume - stock_check
+        if stock_check < ZERO_VOLUME_TOLERANCE:
+            logging.error(
+                '%s: stock volume %.4f mL at factor=%.4f is below minimum pipettable '
+                'volume %.4f mL (target_volume=%.4f mL) — reduce factor or increase target volume',
+                cls, stock_check, factor, ZERO_VOLUME_TOLERANCE, self.target_volume,
+            )
+            self._failure_reason = 'below_minimum_volume'
+            self._formulation_results = [], [], False
+            return self._formulation_results
+        if diluent_check < ZERO_VOLUME_TOLERANCE:
+            logging.error(
+                '%s: diluent volume %.4f mL at factor=%.4f is below minimum pipettable '
+                'volume %.4f mL — increase target volume or reduce dilution factor',
+                cls, diluent_check, factor, ZERO_VOLUME_TOLERANCE,
+            )
+            self._failure_reason = 'below_minimum_volume'
+            self._formulation_results = [], [], False
+            return self._formulation_results
+
+        inflated = self._inflated_target(layout)
+        stock_volume = inflated / factor
+        diluent_volume = inflated - stock_volume
+
+        source_well = next(
+            (w for w in self._available_wells(layout)
+             if _composition_matches(self.target_composition, w.composition, self.exact_match)
+             and w.volume >= stock_volume + layout.racks[w.rack_id].min_volume),
+            None,
+        )
+        if source_well is None:
+            logging.error(
+                '%s: no source well matching target_composition with sufficient volume (%.3f mL)',
+                cls, stock_volume,
+            )
+            self._failure_reason = 'insufficient_volume'
+            self._formulation_results = [], [], False
+            return self._formulation_results
+
+        diluent_well = next(
+            (w for w in self._available_wells(layout)
+             if w.composition == self.diluent
+             and w.volume >= diluent_volume + layout.racks[w.rack_id].min_volume),
+            None,
+        )
+        if diluent_well is None:
+            logging.error(
+                '%s: no diluent well (%s) with sufficient volume (%.3f mL)',
+                cls, self.diluent, diluent_volume,
+            )
+            self._failure_reason = 'insufficient_volume'
+            self._formulation_results = [], [], False
+            return self._formulation_results
+
+        self._formulation_results = [stock_volume, diluent_volume], [source_well, diluent_well], True
+        logging.info('%s factor=%.4f: %s', cls, factor, self._formulation_results)
+        return self._formulation_results
+
+    def formulate(self, layout: LHBedLayout) -> Tuple[List[float], List[Well], bool]:
+        return self._formulate_with_factor(layout, self.dilution_factor)
+
+
+class DilutionToConcentrationFormulation(DilutionFactorFormulation):
+    """Dilutes a stock composition to a target concentration for one or more reference solutes.
+
+    target_composition: composition of the stock well to look for on the bed (e.g. A+B at stock
+        concentrations). Used for well matching, not as the desired output.
+    final_solute_composition: specifies the desired final concentration of one or more solutes
+        (e.g. just B at B_target). The dilution factor is derived from the ratio of each
+        solute's stock concentration to its reference concentration. If multiple solutes are
+        specified they must all imply the same factor (consistent dilution); inconsistency
+        is caught early. Units are assumed to match between stock and reference.
+    diluent: composition to top up with after taking the stock fraction.
+    """
+
+    method_name: Literal['DilutionToConcentrationFormulation'] = 'DilutionToConcentrationFormulation'
+    display_name: Literal['DilutionToConcentrationFormulation'] = 'DilutionToConcentrationFormulation'
+    final_solute_composition: Composition = Field(default_factory=Composition)
+
+    def _compute_factor_from_reference(self) -> float | None:
+        ref_solutes = {s.name: s for s in self.final_solute_composition.stripped().solutes}
+        stock_solutes = {s.name: s for s in self.target_composition.stripped().solutes}
+
+        if not ref_solutes:
+            logging.error('DilutionToConcentrationFormulation: final_solute_composition has no solutes')
+            return None
+
+        factors = []
+        for name, ref_solute in ref_solutes.items():
+            if name not in stock_solutes:
+                logging.error(
+                    'DilutionToConcentrationFormulation: reference solute %r not found in '
+                    'target_composition (stock)', name,
+                )
+                return None
+            if ref_solute.concentration <= 0:
+                logging.error(
+                    'DilutionToConcentrationFormulation: reference concentration for %r must be > 0', name,
+                )
+                return None
+            stock_conc = stock_solutes[name].concentration
+            factors.append(stock_conc / ref_solute.concentration)
+
+        if len(factors) > 1 and not np.allclose(factors, factors[0], rtol=1e-3):
+            logging.error(
+                'DilutionToConcentrationFormulation: reference solutes imply inconsistent '
+                'dilution factors %s — all specified solutes must be diluted by the same factor',
+                factors,
+            )
+            return None
+
+        return factors[0]
+
+    def formulate(self, layout: LHBedLayout) -> Tuple[List[float], List[Well], bool]:
+        factor = self._compute_factor_from_reference()
+        if factor is None:
+            self._failure_reason = 'invalid_reference'
+            self._formulation_results = [], [], False
+            return self._formulation_results
+        return self._formulate_with_factor(layout, factor)
+
+
 class SoluteFormulation(Formulation):
     """Subclass of Formulation. Solutes are specified; remaining volume is filled with diluent."""
 
