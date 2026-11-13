@@ -185,8 +185,8 @@ class RinseLoadLoopBubbleSensor(RinseLoadLoop):
             self.logger.info(f'{self.channel.name}.{method.name}: Total air gap volume: {air_gap_volume} uL')
             total_water_volume += air_gap_volume
 
-            # if bubble size big enough to plausibly be the air gap, break the loop
-            if air_gap_volume >= 0.35 * air_gap:
+            # if accumulated air gap volume big enough to plausibly be the air gap, break the loop
+            if total_air_gap_volume >= 0.35 * air_gap:
                 air_gap_detected = True
             else:
                 max_dispense_volume -= (actual_volume + air_gap_volume)
