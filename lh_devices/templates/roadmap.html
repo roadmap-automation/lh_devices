@@ -491,7 +491,21 @@
                                     .css('white-space', 'pre-wrap')
                                     .appendTo(newdetails)
                             }
-                        }                                     
+                        }
+                        else if (ctype == 'checkbox') {
+                            newctrl = $('<div>')
+                                            .addClass(cid)
+                                            .addClass(ctype)
+                                            .appendTo(devicediv);
+                            let cb = $('<input type=checkbox>')
+                                .prop('checked', cdata.current ?? false)
+                                .prop('disabled', !(cdata.enabled ?? true))
+                                .appendTo(newctrl);
+                            $('<label>').text(cdata['text']).appendTo(newctrl);
+                            cb.on('change', function () {
+                                issue_command(device_id, cid, {'value': cb.prop('checked')})
+                            })
+                        }
                         //devicediv.append(newctrl)
                     }
                 }
