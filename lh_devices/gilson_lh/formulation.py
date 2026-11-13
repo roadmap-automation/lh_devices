@@ -477,10 +477,14 @@ class SoluteFormulation(Formulation):
             if all(s.name in allowed_solute_names for s in w.composition.solutes)
         ]
 
+        # Solutes only — solvents are the diluent, handled by the top-up below.
+        # Including solvents in the NNLS target causes the solver to draw from
+        # pure-diluent wells, inflating total volume beyond inflated.
+        solutes_only = stripped.model_copy(update={'solvents': []})
         result = _solve_formulation_core(
             wells=solver_wells,
             layout=layout,
-            target_composition=stripped,
+            target_composition=solutes_only,
             target_volume=inflated,
             exact_match=False,
         )
