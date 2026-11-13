@@ -85,6 +85,7 @@ class GilsonLHBrokerWorker:
         self._amqp_channel: Optional[aio_pika.abc.AbstractChannel] = None
         self._methods_schema: dict[str, dict] = {}  # built in start()
 
+
         # GSIOC serial ↔ broker translation
         self._gsioc: Optional[GSIOC] = gsioc
         self._current_gsioc_task_id: Optional[str] = None
@@ -175,8 +176,24 @@ class GilsonLHBrokerWorker:
 
         if verb == 'submit_task':
             await self._on_submit_task(envelope, message)
+        elif verb == 'cancel_task':
+            await self._on_cancel_task(envelope, message)
         else:
             logger.warning("[%s] Unknown command verb '%s'", self.device_id, verb)
+
+    async def _on_cancel_task(
+        self, envelope: Envelope, message: aio_pika.abc.AbstractIncomingMessage
+    ) -> None:
+        task_id = str(envelope.task_id)
+        logger.info("[%s] cancel_task received for task %s", self.device_id, task_id)
+        self._cancelled_tasks.add(task_id)
+        active = self.lh_iface._active_job
+        if active is not None and str(active.id) == task_id:
+            logger.info("[%s] cancelling active job %s via broker", self.device_id, task_id)
+            await self.lh_iface.deactivate()
+            await self._emit(TASK_FAILED, envelope, {'error': 'Task cancelled by operator'})
+        else:
+            logger.info("[%s] cancel_task for %s — not currently active", self.device_id, task_id)
 
     async def _on_submit_task(
         self, envelope: Envelope, message: aio_pika.abc.AbstractIncomingMessage
@@ -196,13 +213,24 @@ class GilsonLHBrokerWorker:
 
         parameters = {**raw_params, 'sample_id': sample_id, 'task_id': task_id}
 
-        # Idempotency: if this task_id is already in job history, re-publish completed
+        # Idempotency: check job history before running hardware.
         with LHJobHistory() as history:
             existing = history.get_job_by_uuid(task_id)
-        if existing is not None and existing.get_result_status() == ResultStatus.SUCCESS:
-            logger.info("[%s] task %s already complete — re-publishing.", self.device_id, task_id)
-            await self._emit(TASK_COMPLETED, envelope, {})
-            return
+        if existing is not None:
+            status = existing.get_result_status()
+            if status == ResultStatus.SUCCESS:
+                logger.info("[%s] task %s already complete — re-publishing.", self.device_id, task_id)
+                await self._emit(TASK_COMPLETED, envelope, {})
+                return
+            if status == ResultStatus.EMPTY:
+                # Job was activated (exists in history) but never received a Trilution
+                # result — it was interrupted mid-run (operator cancelled or connection
+                # dropped while the message was unacked). Re-running risks duplicate
+                # physical actions; fail the redelivery instead.
+                logger.warning("[%s] task %s redelivered with no result — was interrupted; publishing task.failed.", self.device_id, task_id)
+                await self._emit(TASK_FAILED, envelope, {'error': 'Task interrupted before completion (redelivered)'})
+                return
+            # FAIL or INCOMPLETE: allow retry so the operator can recover hardware errors.
 
         if method_name not in self.lh_iface.methods:
             logger.error("[%s] Unknown method: %s", self.device_id, method_name)
