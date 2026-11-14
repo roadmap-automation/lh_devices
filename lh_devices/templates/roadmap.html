@@ -185,7 +185,7 @@
                                     let newdiv = $('<div>').addClass('plotcontainer')
                                     newdiv.appendTo(statediv)
                                     let plotobj = JSON.parse(data['state']['plot'].replace(new RegExp('\n', 'g'), '<br>'))
-                                    Plotly.react(newdiv.get(0), plotobj['data'], plotobj['layout'], {responsive: true})
+                                    Plotly.react(newdiv.get(0), plotobj['data'], plotobj['layout'], {responsive: true, locale: 'en-fix'})
                                 }
                             }
                             if ('pre' in data['state']) {
