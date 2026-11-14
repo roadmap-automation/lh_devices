@@ -472,9 +472,17 @@ class SoluteFormulation(Formulation):
             {s.name for s in stripped.solutes}
             | {s.name for s in self.diluent.solutes}
         )
+        # Build a pH requirement map: target solutes that specify a pH.
+        # Wells whose solute has a *different* (non-None) pH are excluded.
+        target_ph = {s.name: s.pH for s in stripped.solutes if s.pH is not None}
         solver_wells = [
             w for w in self._available_wells(layout)
             if all(s.name in allowed_solute_names for s in w.composition.solutes)
+            and all(
+                s.pH is None or abs(s.pH - target_ph[s.name]) < 0.01
+                for s in w.composition.solutes
+                if s.name in target_ph
+            )
         ]
 
         # Solutes only — solvents are the diluent, handled by the top-up below.
