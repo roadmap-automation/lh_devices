@@ -1,12 +1,10 @@
 <!DOCTYPE html>
 <head>
+    <meta charset="utf-8">
     <script src="static/lib/jquery/jquery-3.7.1.min.js"></script>
     <script src="static/lib/socket.io/socket.io-4.7.2.min.js"></script>
     <script src="static/lib/plotly/plotly-2.27.0.min.js"></script>
     <script>
-        Plotly.register({moduleType:'locale', name:'en-fix', dictionary:{},
-            format:{decimal:'.',thousands:',',grouping:[3],currency:['$',''],minus:'-'}});
-        Plotly.setPlotConfig({locale:'en-fix'});
         var socket = io()
 
         function issue_command(id, command, data) {
@@ -185,7 +183,7 @@
                                     let newdiv = $('<div>').addClass('plotcontainer')
                                     newdiv.appendTo(statediv)
                                     let plotobj = JSON.parse(data['state']['plot'].replace(new RegExp('\n', 'g'), '<br>'))
-                                    Plotly.react(newdiv.get(0), plotobj['data'], plotobj['layout'], {responsive: true, locale: 'en-fix'})
+                                    Plotly.react(newdiv.get(0), plotobj['data'], plotobj['layout'], {responsive: true})
                                 }
                             }
                             if ('pre' in data['state']) {
