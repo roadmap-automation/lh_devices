@@ -353,8 +353,12 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
         d = await AutocontrolPlugin.get_info(self)
         d.update(await DeviceBase.get_info(self))
 
-        # Mirror has_error into DeviceBase.error so roadmap.html shows the red border.
-        d['state']['error']['error'] = 'LH error' if self.has_error else None
+        # Mirror has_error (and any method-level error) into DeviceBase.error so
+        # roadmap.html shows the red border and the "Clear Error" button appears.
+        method_error = next(
+            (m.error.error for m in self.methods.values() if m.error.error is not None), None
+        )
+        d['state']['error']['error'] = method_error or ('LH error' if self.has_error else None)
 
         status = self.get_status()
         d['lh_status'] = status
@@ -382,8 +386,8 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
             'clear_lh_error': {
                 'type': 'button',
                 'text': 'Clear Error',
-                'visible': self.has_error,
-                'enabled': self.has_error,
+                'visible': self.has_error or method_error is not None,
+                'enabled': self.has_error or method_error is not None,
             },
             'resubmit_active_job': {
                 'type': 'button',
@@ -409,9 +413,11 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
             self.running = not self.running
             await self.trigger_update()
         elif command == 'clear_lh_error':
-            if self.has_error:
-                self.has_error = False
-                await self.trigger_update()
+            self.has_error = False
+            for method in self.methods.values():
+                if method.error.error is not None:
+                    method.error.clear()
+            await self.trigger_update()
         elif command == 'resubmit_active_job':
             if self._active_job is not None:
                 self._active_job.LH_id += 1

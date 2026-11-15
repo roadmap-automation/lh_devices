@@ -1045,8 +1045,8 @@ class GilsonFormulation(GilsonLHMethod):
                         )
                     else:
                         raise MethodException(
-                            f'Formulation failed ({reason or "unknown"}) — check formulation specification and resubmit',
-                            retry=False,
+                            f'Formulation failed ({reason or "unknown"}) — fix bed/composition and clear error to retry',
+                            retry=True,
                         )
                 return {}
             from .lhinterface import LHJob
@@ -1102,8 +1102,8 @@ class GilsonSoluteFormulation(GilsonLHMethod):
                         )
                     else:
                         raise MethodException(
-                            f'SoluteFormulation failed ({reason or "unknown"}) — check formulation specification and resubmit',
-                            retry=False,
+                            f'SoluteFormulation failed ({reason or "unknown"}) — fix bed/composition and clear error to retry',
+                            retry=True,
                         )
                 return {}
             from .lhinterface import LHJob
@@ -1160,18 +1160,18 @@ class GilsonDilutionFactorFormulation(GilsonLHMethod):
                     elif reason == 'below_minimum_volume':
                         raise MethodException(
                             'DilutionFactorFormulation failed: dilution factor produces a volume below the '
-                            'minimum pipettable volume — reduce the factor or increase target volume',
-                            retry=False,
+                            'minimum pipettable volume — fix factor or target volume and clear error to retry',
+                            retry=True,
                         )
                     elif reason == 'invalid_factor':
                         raise MethodException(
-                            'DilutionFactorFormulation failed: dilution_factor < 1 (cannot concentrate)',
-                            retry=False,
+                            'DilutionFactorFormulation failed: dilution_factor < 1 (cannot concentrate) — fix and clear error to retry',
+                            retry=True,
                         )
                     else:
                         raise MethodException(
-                            f'DilutionFactorFormulation failed ({reason or "unknown"}) — check specification and resubmit',
-                            retry=False,
+                            f'DilutionFactorFormulation failed ({reason or "unknown"}) — fix bed/composition and clear error to retry',
+                            retry=True,
                         )
                 return {}
             from .lhinterface import LHJob
@@ -1228,20 +1228,20 @@ class GilsonDilutionToConcentrationFormulation(GilsonLHMethod):
                     elif reason == 'below_minimum_volume':
                         raise MethodException(
                             'DilutionToConcentrationFormulation failed: computed dilution factor produces a '
-                            'volume below the minimum pipettable volume — increase target volume',
-                            retry=False,
+                            'volume below the minimum pipettable volume — fix target volume and clear error to retry',
+                            retry=True,
                         )
                     elif reason == 'invalid_target':
                         raise MethodException(
                             'DilutionToConcentrationFormulation failed: could not compute dilution factor '
                             'from target_composition — check that all target solutes exist in source_composition '
-                            'at higher concentrations and all imply the same factor',
-                            retry=False,
+                            'at higher concentrations and all imply the same factor; clear error to retry',
+                            retry=True,
                         )
                     else:
                         raise MethodException(
-                            f'DilutionToConcentrationFormulation failed ({reason or "unknown"}) — check specification and resubmit',
-                            retry=False,
+                            f'DilutionToConcentrationFormulation failed ({reason or "unknown"}) — fix bed/composition and clear error to retry',
+                            retry=True,
                         )
                 return {}
             from .lhinterface import LHJob
