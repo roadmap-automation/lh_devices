@@ -86,6 +86,8 @@ class GilsonLHBrokerWorker:
         self._methods_schema: dict[str, dict] = {}  # built in start()
 
 
+        self._cancelled_tasks: set[str] = set()
+
         # GSIOC serial ↔ broker translation
         self._gsioc: Optional[GSIOC] = gsioc
         self._current_gsioc_task_id: Optional[str] = None
