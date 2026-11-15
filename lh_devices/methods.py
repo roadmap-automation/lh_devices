@@ -198,11 +198,12 @@ class MethodBase(Loggable):
             for device in self.devices:
                 device.logger.removeHandler(self.log_handler)
         
+        log_snapshot = copy.copy(self.metadata)
         return MethodResult(method_name=self.name,
                         method_data=kwargs,
-                        log=copy.copy(self.metadata),
-                        created_time=self.metadata[0]['time'],
-                        finished_time=self.metadata[-1]['time'],
+                        log=log_snapshot,
+                        created_time=log_snapshot[0]['time'] if log_snapshot else '',
+                        finished_time=log_snapshot[-1]['time'] if log_snapshot else '',
                         result=result)
 
     async def throw_error(self, error: str, critical: bool = False, retry: bool = False) -> None:
