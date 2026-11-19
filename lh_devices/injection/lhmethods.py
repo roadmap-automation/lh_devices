@@ -538,25 +538,44 @@ class ManualInjectBubbleSensor(ManualMethodMixin, MethodBasewithCompositionRelay
         current_channel_mode: str | None = None
 
         async def poll_switches():
+            """Poll DI inputs and mirror switch state to channel mode.
+
+            The physical PURGE (DI2) and INJECT (DI1) switches are active-low:
+            pressed → get_digital_input returns False → active = True.
+
+            Software debounce: a mode transition is only committed after
+            `debounce_reads` consecutive polls agree on the same state.  This
+            prevents mechanical switch bounce from triggering spurious valve
+            movements, which would appear in logs as rapid repeated mode changes
+            and could leave Loop Valve in an error state.
+            """
             nonlocal injected_flag, current_channel_mode
+            pending_mode: str | None = None
+            pending_count = 0
+            debounce_reads = 5  # ~500 ms at 100 ms poll interval
             try:
                 while True:
                     purge_active = not (await self.switch_device.get_digital_input(self.switch_di_purge))
                     inject_active = not (await self.switch_device.get_digital_input(self.switch_di_inject))
 
                     if inject_active:
-                        if current_channel_mode != 'LHInject':
-                            await self.channel.change_mode('LHInject')
-                            current_channel_mode = 'LHInject'
-                            injected_flag = True
+                        desired_mode = 'LHInject'
                     elif purge_active:
-                        if current_channel_mode != 'LHPrime':
-                            await self.channel.change_mode('LHPrime')
-                            current_channel_mode = 'LHPrime'
+                        desired_mode = 'LHPrime'
                     else:
-                        if current_channel_mode != 'Standby':
-                            await self.channel.change_mode('Standby')
-                            current_channel_mode = 'Standby'
+                        desired_mode = 'Standby'
+
+                    if desired_mode == pending_mode:
+                        pending_count += 1
+                    else:
+                        pending_mode = desired_mode
+                        pending_count = 1
+
+                    if pending_count >= debounce_reads and current_channel_mode != pending_mode:
+                        await self.channel.change_mode(pending_mode)
+                        current_channel_mode = pending_mode
+                        if pending_mode == 'LHInject':
+                            injected_flag = True
 
                     await asyncio.sleep(0.1)
             except asyncio.CancelledError:
