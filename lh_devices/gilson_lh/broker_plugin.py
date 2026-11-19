@@ -258,23 +258,17 @@ class GilsonLHBrokerWorker:
             dead_volume_task = asyncio.create_task(self._subscribe_dead_volume(task_id))
 
         method = self.lh_iface.methods[method_name]
-        try:
-            result = await method.start(**parameters)  # blocks; message un-acked until complete
-        except Exception as exc:
-            # method.start() should return (not raise), but MethodException can propagate
-            # when retry=True.  Catch it here so the AMQP message is acked (not nacked+requeued)
-            # and TASK_FAILED is published so lh_manager can put the task into a recoverable
-            # error state rather than looping indefinitely.
-            logger.error("[%s] method.start raised for task %s: %s", self.device_id, task_id, exc)
-            if dead_volume_task is not None:
-                dead_volume_task.cancel()
-                self._current_gsioc_task_id = None
-            await self._emit(TASK_FAILED, envelope, {'error': str(exc)})
-            return
+        result = await method.start(**parameters)  # blocks; message un-acked until complete
 
         if dead_volume_task is not None:
             dead_volume_task.cancel()
             self._current_gsioc_task_id = None
+
+        # "Fail Task" button sets _broker_abort_requested to escape the retry loop inside
+        # start() without publishing TASK_COMPLETED on an empty result.
+        if self.lh_iface._broker_abort_requested and not result.result.get('error'):
+            result.result['error'] = 'Task aborted by operator — fix parameters and resubmit'
+            self.lh_iface._broker_abort_requested = False
 
         if result.result.get('error'):
             await self._emit(TASK_FAILED, envelope, {'error': result.result['error']})

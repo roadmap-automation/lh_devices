@@ -215,6 +215,7 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
         self._active_job: LHJob | None = None
         self.running: bool = True
         self.has_error: bool = False
+        self._broker_abort_requested: bool = False  # set by "Fail Task" button; checked by broker_plugin
 
         # Async callables: f(job, *args, **kwargs) -> None
         self.validation_callbacks: List[Callable] = []
@@ -389,6 +390,12 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
                 'visible': self.has_error or method_error is not None,
                 'enabled': self.has_error or method_error is not None,
             },
+            'fail_current_task': {
+                'type': 'button',
+                'text': 'Fail Task (send to lh_manager)',
+                'visible': method_error is not None,
+                'enabled': method_error is not None,
+            },
             'resubmit_active_job': {
                 'type': 'button',
                 'text': 'Resubmit Active Job',
@@ -417,6 +424,15 @@ class LHInterface(AutocontrolPlugin, DeviceBase, LayoutPlugin):
             for method in self.methods.values():
                 if method.error.error is not None:
                     method.error.clear()
+            await self.trigger_update()
+        elif command == 'fail_current_task':
+            # Mark this abort so broker_plugin publishes TASK_FAILED instead of TASK_COMPLETED
+            # when start() returns its empty {} result after the error is cleared with retry=False.
+            self._broker_abort_requested = True
+            self.has_error = False
+            for method in self.methods.values():
+                if method.error.error is not None:
+                    method.error.clear(retry=False)
             await self.trigger_update()
         elif command == 'resubmit_active_job':
             if self._active_job is not None:
