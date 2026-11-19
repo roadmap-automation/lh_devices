@@ -258,7 +258,19 @@ class GilsonLHBrokerWorker:
             dead_volume_task = asyncio.create_task(self._subscribe_dead_volume(task_id))
 
         method = self.lh_iface.methods[method_name]
-        result = await method.start(**parameters)  # blocks; message un-acked until complete
+        try:
+            result = await method.start(**parameters)  # blocks; message un-acked until complete
+        except Exception as exc:
+            # method.start() should return (not raise), but MethodException can propagate
+            # when retry=True.  Catch it here so the AMQP message is acked (not nacked+requeued)
+            # and TASK_FAILED is published so lh_manager can put the task into a recoverable
+            # error state rather than looping indefinitely.
+            logger.error("[%s] method.start raised for task %s: %s", self.device_id, task_id, exc)
+            if dead_volume_task is not None:
+                dead_volume_task.cancel()
+                self._current_gsioc_task_id = None
+            await self._emit(TASK_FAILED, envelope, {'error': str(exc)})
+            return
 
         if dead_volume_task is not None:
             dead_volume_task.cancel()
